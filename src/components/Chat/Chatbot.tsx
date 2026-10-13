@@ -92,8 +92,8 @@ export default function AgentAssistant() {
           onClick={() => setIsOpen(!isOpen)}
           sx={{
             position: "fixed",
-            bottom: 24,
-            right: 24,
+            bottom: { xs: 76, lg: 24 },
+            right: { xs: 16, lg: 24 },
             width: 56,
             height: 56,
             background: "black",
@@ -119,8 +119,8 @@ export default function AgentAssistant() {
           elevation={12}
           sx={{
             position: "fixed",
-            bottom: 90,
-            right: 24,
+            bottom: { xs: 140, lg: 90 },
+            right: { xs: 16, lg: 24 },
             width: { xs: "90vw", sm: 320 },
             height: "480px",
             maxHeight: "70vh",
