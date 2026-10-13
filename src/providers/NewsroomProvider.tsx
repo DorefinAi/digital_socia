@@ -15,7 +15,11 @@ import {
   AIContentStatus,
   ActivityAction,
   NotificationType,
+  FtpNewsItem,
+  SocialPost,
 } from "@/types/newsroom";
+import { CHANNEL } from "@/constants";
+import { fetchNewFtpNews } from "@/data/ftpNewsData";
 import {
   generateAndStoreData,
   loadData,
@@ -46,6 +50,14 @@ interface NewsroomContextType {
   // AI Content actions
   updateAIContentStatus: (contentId: string, status: AIContentStatus) => void;
   updateAIContentCaption: (contentId: string, caption: string) => void;
+
+  // Breaking Desk (FTP → social)
+  ftpNews: FtpNewsItem[];
+  socialPosts: SocialPost[];
+  ftpSyncedAt: string;
+  /** Pulls newly tagged breaking items from the FTP; returns how many arrived */
+  fetchFtpNews: () => number;
+  publishSocialPost: (post: Omit<SocialPost, "id" | "postUrl" | "postedAt">) => SocialPost;
 
   // Notifications
   markNotificationRead: (id: string) => void;
@@ -164,6 +176,39 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // ─── Breaking Desk ──────────────────────────────────────────────────────
+  const fetchFtpNews = useCallback(() => {
+    const incoming = fetchNewFtpNews((data?.ftpNews ?? []).map((n) => n.id));
+    setData((prev) => {
+      if (!prev) return prev;
+      const fresh = incoming.filter((n) => !prev.ftpNews.some((p) => p.id === n.id));
+      return { ...prev, ftpNews: [...fresh, ...prev.ftpNews], ftpSyncedAt: new Date().toISOString() };
+    });
+    return incoming.length;
+  }, [data?.ftpNews]);
+
+  const publishSocialPost = useCallback((post: Omit<SocialPost, "id" | "postUrl" | "postedAt">) => {
+    const stamp = Date.now();
+    const postUrl =
+      post.platform === "Instagram"
+        ? `https://www.instagram.com/${CHANNEL.instagramHandle}/p/${stamp.toString(36).toUpperCase()}/`
+        : `https://x.com/${CHANNEL.xHandle}/status/${stamp}${Math.floor(Math.random() * 900000 + 100000)}`;
+    const created: SocialPost = { ...post, id: `post-${stamp}`, postUrl, postedAt: new Date(stamp).toISOString() };
+    setData((prev) => {
+      if (!prev) return prev;
+      const activityItem: ActivityItem = {
+        id: `a-${stamp}`,
+        action: "published",
+        actor: post.postedBy,
+        target: `${post.platform}: ${post.headline}`,
+        timestamp: created.postedAt,
+        details: postUrl,
+      };
+      return { ...prev, socialPosts: [created, ...prev.socialPosts], activity: [activityItem, ...prev.activity] };
+    });
+    return created;
+  }, []);
+
   // ─── Notifications ──────────────────────────────────────────────────────
   const markNotificationRead = useCallback((id: string) => {
     setData((prev) => {
@@ -250,6 +295,11 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
         addStory,
         updateAIContentStatus,
         updateAIContentCaption,
+        ftpNews: data.ftpNews,
+        socialPosts: data.socialPosts,
+        ftpSyncedAt: data.ftpSyncedAt,
+        fetchFtpNews,
+        publishSocialPost,
         markNotificationRead,
         markAllNotificationsRead,
         unreadCount,

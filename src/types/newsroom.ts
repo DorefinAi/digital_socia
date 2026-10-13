@@ -211,3 +211,49 @@ export interface ScraperItem {
   timeFrame: "24h" | "12h" | "7d"; // Default "24h"
   scrapedAt: string;
 }
+
+// ─── Breaking Desk (FTP → Social) ─────────────────────────────────────────────
+export type BreakingTag = "breaking" | "big_breaking";
+
+export type SocialPlatform = "X (Twitter)" | "Instagram";
+
+export interface FtpMedia {
+  kind: "image" | "video";
+  url: string;
+  fileName: string;
+  /** Still frame used for thumbnails when kind is "video" */
+  posterUrl?: string;
+}
+
+export interface FtpNewsItem {
+  id: string;
+  headline: string;
+  body: string;
+  /** Short, crisp version of the story used as the starting post text */
+  shortText: string;
+  tag: BreakingTag;
+  /** District / city the story belongs to — drives hashtag suggestions */
+  area: string;
+  /** People & organisations named in the story — drives @mention suggestions */
+  people: string[];
+  ftpPath: string;
+  media: FtpMedia[];
+  receivedAt: string;
+}
+
+export interface SocialPost {
+  id: string;
+  newsId: string;
+  platform: SocialPlatform;
+  /** Text printed on the template */
+  headline: string;
+  /** Final text as posted, including mentions and hashtags */
+  text: string;
+  hashtags: string[];
+  mentions: string[];
+  mediaKind: "image" | "video";
+  thumbUrl: string;
+  postUrl: string;
+  postedAt: string;
+  postedBy: string;
+}

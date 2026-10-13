@@ -10,7 +10,10 @@ import {
   StoryStatus,
   Platform,
   AIContentStatus,
+  FtpNewsItem,
+  SocialPost,
 } from "@/types/newsroom";
+import { generateFtpNews, generatePostedSeed } from "@/data/ftpNewsData";
 
 // ─── Rajasthan Regional Reporters ──────────────────────────────────────────────
 export const DEMO_REPORTERS: Reporter[] = [
@@ -119,7 +122,7 @@ const TOPIC_POSTS = [
   },
   {
     caption: "Western Rajasthan leads India's solar wave! Bikaner Solar Park hits 3,000 MW capacity in Thar Desert. ☀️⚡ #CleanEnergy #RajasthanSolar",
-    imageUrl: "https://images.unsplash.com/photo-1509391365360-2e959784a276?auto=format&fit=crop&w=800&q=80",
+    imageUrl: "https://images.unsplash.com/photo-1508514177221-188b1cf16e9d?auto=format&fit=crop&w=800&q=80",
     campaign: "Thar Desert Green Energy Drive",
   },
   {
@@ -268,11 +271,14 @@ export interface NewsroomData {
   activity: ActivityItem[];
   notifications: Notification[];
   reporters: Reporter[];
+  ftpNews: FtpNewsItem[];
+  socialPosts: SocialPost[];
+  ftpSyncedAt: string;
   version?: string;
 }
 
 const STORAGE_KEY = "newsroom_data";
-const CURRENT_VERSION = "v4_assignment_calendar";
+const CURRENT_VERSION = "v6_breaking_desk";
 
 export function generateAndStoreData(): NewsroomData {
   const data: NewsroomData = {
@@ -282,6 +288,9 @@ export function generateAndStoreData(): NewsroomData {
     activity: generateActivity(),
     notifications: generateNotifications(),
     reporters: DEMO_REPORTERS,
+    ftpNews: generateFtpNews(),
+    socialPosts: generatePostedSeed(),
+    ftpSyncedAt: new Date().toISOString(),
     version: CURRENT_VERSION,
   };
 
