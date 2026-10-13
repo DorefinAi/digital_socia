@@ -4,7 +4,7 @@ import React from "react";
 import LeftNavigation from "@/components/leftNavigation/leftNavigation";
 import { Box } from "@mui/material";
 import DashBoardCommonHeader from "@/components/Header/DashBoardCommonHeader";
-import XAIReview from "@/components/Newsroom/XAIReview";
+import BreakingDesk from "@/components/Newsroom/BreakingDesk/BreakingDesk";
 
 export default function XAIReviewPage() {
   return (
@@ -15,7 +15,7 @@ export default function XAIReviewPage() {
       <Box sx={{ flexGrow: 1, px: { xs: "14px", md: "20px" }, paddingBottom: "20px" }}>
         <DashBoardCommonHeader />
         <Box sx={{ mx: "auto", width: "100%", maxWidth: "1100px" }}>
-          <XAIReview />
+          <BreakingDesk platform="X (Twitter)" />
         </Box>
       </Box>
     </Box>
