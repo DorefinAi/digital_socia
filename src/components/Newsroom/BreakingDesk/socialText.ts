@@ -1,5 +1,4 @@
-import { FtpNewsItem, SocialPlatform } from "@/types/newsroom";
-import { AREA_HASHTAGS, PEOPLE_HANDLES } from "@/data/ftpNewsData";
+import { FtpNewsItem, HandleEntry, HashtagRule, SocialPlatform } from "@/types/newsroom";
 
 export const PLATFORM_LIMITS: Record<SocialPlatform, { text: number; hashtags: number; mentions: number }> = {
   "X (Twitter)": { text: 280, hashtags: 6, mentions: 10 },
@@ -51,10 +50,13 @@ export function shortenToFit(text: string, max: number, platform: SocialPlatform
 export interface TagSuggestion {
   value: string;
   reason: string;
+  /** Proposed by the model rather than the directory; never pre-accepted */
+  ai?: boolean;
 }
 
-export function suggestHashtags(item: FtpNewsItem): TagSuggestion[] {
-  const area = (AREA_HASHTAGS[item.area] ?? []).map((value) => ({ value, reason: `Area: ${item.area}` }));
+export function suggestHashtags(item: FtpNewsItem, rules: HashtagRule[]): TagSuggestion[] {
+  const rule = rules.find((r) => r.area.toLowerCase() === item.area.toLowerCase());
+  const area = (rule?.hashtags ?? []).map((value) => ({ value, reason: `Rule: ${item.area}` }));
   return [
     { value: item.tag === "big_breaking" ? "#BigBreaking" : "#BreakingNews", reason: "FTP tag" },
     ...area,
@@ -63,13 +65,23 @@ export function suggestHashtags(item: FtpNewsItem): TagSuggestion[] {
   ];
 }
 
-export function suggestMentions(item: FtpNewsItem, platform: SocialPlatform): TagSuggestion[] {
-  return item.people
-    .filter((name) => PEOPLE_HANDLES[name])
-    .map((name) => ({
-      value: platform === "Instagram" ? PEOPLE_HANDLES[name].instagram : PEOPLE_HANDLES[name].x,
-      reason: name,
-    }));
+/** Directory matches come first and are trusted; model suggestions follow and need a click to accept. */
+export function suggestMentions(item: FtpNewsItem, platform: SocialPlatform, directory: HandleEntry[]): TagSuggestion[] {
+  const pick = (h: { x: string; instagram: string }) => (platform === "Instagram" ? h.instagram : h.x);
+  const known = item.people.flatMap((name) => {
+    const entry = directory.find((h) => h.entity.toLowerCase() === name.toLowerCase());
+    return entry ? [{ value: pick(entry), reason: `Directory: ${name}` }] : [];
+  });
+  const ai = (item.aiMentions ?? [])
+    .filter((m) => !known.some((k) => k.value.toLowerCase() === pick(m).toLowerCase()))
+    .map((m) => ({ value: pick(m), reason: `AI ${Math.round(m.confidence * 100)}%: ${m.entity}`, ai: true }));
+  return [...known, ...ai];
+}
+
+/** Returns the first link-looking piece of text, or null. X posts must not contain one. */
+export function findUrl(text: string): string | null {
+  const match = text.match(/\b(?:https?:\/\/|www\.)\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|in|org|net|co|news|ly|io|me|tv)\b(?:\/\S*)?/i);
+  return match ? match[0] : null;
 }
 
 /** Accepts "tag", "#tag" or "@handle" typed by the editor and normalises it. */

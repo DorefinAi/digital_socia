@@ -13,9 +13,10 @@ import {
   RotateCcw,
   Plus,
   Minus,
-  CheckCircle,
-  Copy,
-  ExternalLink,
+  Check,
+  CalendarClock,
+  Save,
+  Ban,
   Image as ImageIcon,
   Type,
   FileText,
@@ -26,7 +27,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
-import { FtpMedia, FtpNewsItem, ROLE_LABELS, SocialPlatform, SocialPost } from "@/types/newsroom";
+import { FtpMedia, FtpNewsItem, PostPayload, ROLE_LABELS, SocialPlatform } from "@/types/newsroom";
 import TemplateCanvas, {
   BREAKING_RED,
   CanvasSelection,
@@ -39,7 +40,8 @@ import TemplateCanvas, {
   TrimRange,
   defaultLayout,
 } from "./TemplateCanvas";
-import { PLATFORM_LIMITS, composePostText, countChars, shortenToFit, suggestHashtags, suggestMentions } from "./socialText";
+import { PLATFORM_LIMITS, TagSuggestion, composePostText, countChars, findUrl, shortenToFit, suggestHashtags, suggestMentions } from "./socialText";
+import { RejectDialog, ScheduleDialog } from "./actionDialogs";
 import { PLATFORM_META, PlatformIcon, TagChip } from "./shared";
 import { PostMock, TagOption, TagPicker, fieldSx, sectionLabel } from "./composerParts";
 import VideoTimeline from "./VideoTimeline";
@@ -71,6 +73,13 @@ const toolbarDivider = <Box sx={{ width: "1px", height: 20, backgroundColor: "di
 const panelTitle = { fontSize: "0.9375rem", fontWeight: 700, mb: 1.5 };
 const floatingSx = { backgroundColor: "background.paper", border: "1px solid", borderColor: "divider", boxShadow: "0 4px 14px rgba(0,0,0,0.08)" };
 
+/** Fresh suggestions with the draft's selections applied; AI suggestions start unticked. */
+function withDraftChoices(suggestions: TagSuggestion[], chosen?: string[]): TagOption[] {
+  const options = suggestions.map((s) => ({ ...s, checked: chosen ? chosen.includes(s.value) : !s.ai }));
+  const extra = (chosen ?? []).filter((v) => !suggestions.some((s) => s.value === v)).map((value) => ({ value, reason: "Added by editor", checked: true }));
+  return [...options, ...extra];
+}
+
 interface PostEditorProps {
   item: FtpNewsItem;
   platform: SocialPlatform;
@@ -78,7 +87,9 @@ interface PostEditorProps {
 }
 
 export default function PostEditor({ item, platform, onClose }: PostEditorProps) {
-  const { publishSocialPost, permissions, currentRole } = useNewsroom();
+  const { queuePost, saveDraft, scheduleDraft, rejectDraft, socialDrafts, hashtagRules, handleDirectory, permissions, currentRole } = useNewsroom();
+  // Reopening a saved or scheduled story picks up where the operator left off
+  const [draft] = useState(() => socialDrafts.find((d) => d.newsId === item.id && d.platform === platform && (d.status === "saved" || d.status === "scheduled")));
   const canvasRef = useRef<TemplateCanvasHandle>(null);
   // The dialog mounts its content after this component, so the stage is tracked as state
   const [stageEl, setStageEl] = useState<HTMLDivElement | null>(null);
@@ -90,20 +101,22 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
 
   const [uploads, setUploads] = useState<FtpMedia[]>([]);
   const mediaList = useMemo(() => [...item.media, ...uploads], [item.media, uploads]);
-  const [mediaIndex, setMediaIndex] = useState(0);
+  const [mediaIndex, setMediaIndex] = useState(() => Math.max(0, item.media.findIndex((m) => m.fileName === draft?.mediaFile)));
   const media = mediaList[mediaIndex] ?? mediaList[0];
-  const [igFormat, setIgFormat] = useState<TemplateFormat>(item.media[0].kind === "video" ? "ig_reel" : "ig_post");
+  const [igFormat, setIgFormat] = useState<TemplateFormat>(() =>
+    draft?.format === "ig_post" || draft?.format === "ig_reel" ? draft.format : item.media[0].kind === "video" ? "ig_reel" : "ig_post"
+  );
   const format: TemplateFormat = isX ? "x" : igFormat;
 
-  const [layout, setLayout] = useState<TemplateLayout>(() => defaultLayout(item.headline, format));
+  const [layout, setLayout] = useState<TemplateLayout>(() => draft?.layout ?? defaultLayout(draft?.headline ?? item.headline, format));
   const [tool, setTool] = useState<Tool>("background");
   const [selection, setSelection] = useState<CanvasSelection>(null);
   const [zoom, setZoom] = useState(1);
   const [stage, setStage] = useState({ w: 0, h: 0 });
 
-  const [text, setText] = useState(item.shortText);
-  const [hashtags, setHashtags] = useState<TagOption[]>(() => suggestHashtags(item).map((s) => ({ ...s, checked: true })));
-  const [mentions, setMentions] = useState<TagOption[]>(() => suggestMentions(item, platform).map((s) => ({ ...s, checked: true })));
+  const [text, setText] = useState(draft?.caption ?? item.shortText);
+  const [hashtags, setHashtags] = useState<TagOption[]>(() => withDraftChoices(suggestHashtags(item, hashtagRules), draft?.hashtags));
+  const [mentions, setMentions] = useState<TagOption[]>(() => withDraftChoices(suggestMentions(item, platform, handleDirectory), draft?.mentions));
   const [previewOpen, setPreviewOpen] = useState(false);
   const [videoPaused, setVideoPaused] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -113,8 +126,8 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
   const [time, setTime] = useState(0);
   const [exporting, setExporting] = useState<number | null>(null);
   const [notice, setNotice] = useState("");
-  const [posted, setPosted] = useState<SocialPost | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [dialog, setDialog] = useState<"reject" | "schedule" | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
 
   // Keep the frame fitted to the workspace
   useEffect(() => {
@@ -142,7 +155,9 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
   const used = countChars(finalText, platform);
   const overLimit = used > limits.text;
   const tooManyTags = selectedHashtags.length > limits.hashtags || selectedMentions.length > limits.mentions;
-  const canPost = permissions.canApproveSocialContent && !overLimit && !tooManyTags && text.trim().length > 0 && layout.headline.trim().length > 0;
+  // Links multiply the cost of an X post, so the X formatter refuses them outright
+  const url = isX ? findUrl(finalText) : null;
+  const canPost = permissions.canApproveSocialContent && !overLimit && !tooManyTags && !url && text.trim().length > 0 && layout.headline.trim().length > 0;
 
   let blockedReason = "";
   if (!permissions.canApproveSocialContent) blockedReason = "Your role can view posts but not publish them";
@@ -150,6 +165,7 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
   else if (!layout.headline.trim()) blockedReason = "The template needs a headline";
   else if (overLimit) blockedReason = `${used - limits.text} characters over the ${meta.short} limit`;
   else if (tooManyTags) blockedReason = "Too many hashtags or mentions selected";
+  else if (url) blockedReason = `Remove the link "${url}" first`;
 
   const patch = (changes: Partial<TemplateLayout>) => setLayout((l) => ({ ...l, ...changes }));
 
@@ -179,7 +195,9 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
 
   const handleDuration = (seconds: number) => {
     setDuration(seconds);
-    setSegments([{ start: 0, end: seconds }]);
+    // Restore the saved cut when it belongs to this file, otherwise keep the whole video
+    const saved = draft?.mediaFile === media.fileName ? draft?.clipSegments?.filter((c) => c.end <= seconds + 0.05) : undefined;
+    setSegments(saved?.length ? saved : [{ start: 0, end: seconds }]);
   };
 
   const exportVideo = async () => {
@@ -228,33 +246,37 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
     if (!ok) setNotice("This media file does not allow image export from the browser. The post itself is unaffected.");
   };
 
-  const publish = () => {
-    if (!canPost) return;
+  const buildPayload = (): PostPayload => {
     const cover = item.media[0];
-    const thumbUrl = canvasRef.current?.snapshot(320) ?? media.posterUrl ?? cover.posterUrl ?? cover.url;
-    const created = publishSocialPost({
+    return {
       newsId: item.id,
       platform,
       headline: layout.headline.trim(),
       text: finalText,
+      caption: text,
       hashtags: selectedHashtags,
       mentions: selectedMentions,
       mediaKind: media.kind,
-      thumbUrl,
+      thumbUrl: canvasRef.current?.snapshot(320) ?? media.posterUrl ?? cover.posterUrl ?? cover.url,
       postedBy: ROLE_LABELS[currentRole],
-    });
-    setPreviewOpen(false);
-    setPosted(created);
+      format,
+      mediaFile: media.fileName,
+      layout,
+      clipSegments: media.kind === "video" && segments.length ? segments : undefined,
+    };
   };
 
-  const copyLink = async () => {
-    if (!posted) return;
-    try {
-      await navigator.clipboard.writeText(posted.postUrl);
-      setCopied(true);
-    } catch {
-      // Clipboard unavailable; the link is shown in full for manual copy
-    }
+  // The post waits out the undo window on the desk, so the editor can close straight away
+  const publish = () => {
+    if (!canPost) return;
+    queuePost(buildPayload());
+    setPreviewOpen(false);
+    onClose();
+  };
+
+  const save = () => {
+    saveDraft(buildPayload());
+    setSavedAt(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }));
   };
 
   const postButton = (
@@ -272,39 +294,6 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
       </span>
     </Tooltip>
   );
-
-  if (posted) {
-    return (
-      <Dialog open onClose={onClose} maxWidth="xs" fullWidth slotProps={{ paper: { sx: { borderRadius: "14px", backgroundImage: "none" } } }}>
-        <Box sx={{ p: 3, display: "flex", flexDirection: "column", gap: 2 }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <CheckCircle size={20} color="#2E7D32" />
-            <Typography sx={{ fontWeight: 700, fontSize: "1.0625rem" }}>Posted to {meta.short}</Typography>
-          </Box>
-          <Typography sx={{ fontSize: "0.875rem", color: "text.secondary" }}>{posted.headline}</Typography>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, border: "1px solid", borderColor: "divider", borderRadius: "8px", pl: 1.25 }}>
-            <Typography sx={{ flex: 1, minWidth: 0, fontSize: "0.75rem", fontFamily: "var(--font-mono), ui-monospace, monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {posted.postUrl}
-            </Typography>
-            <Tooltip title={copied ? "Copied" : "Copy link"}>
-              <IconButton size="small" onClick={copyLink} aria-label="Copy post link">
-                {copied ? <CheckCircle size={15} /> : <Copy size={15} />}
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="Open post">
-              <IconButton size="small" component="a" href={posted.postUrl} target="_blank" rel="noopener noreferrer" aria-label="Open post">
-                <ExternalLink size={15} />
-              </IconButton>
-            </Tooltip>
-          </Box>
-          <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>Saved under Posted on this desk and on the dashboard.</Typography>
-          <Button variant="contained" onClick={onClose} sx={{ fontWeight: 700, alignSelf: "flex-end" }}>
-            Done
-          </Button>
-        </Box>
-      </Dialog>
-    );
-  }
 
   return (
     <Dialog open fullScreen onClose={onClose} transitionDuration={150} slotProps={{ paper: { sx: { borderRadius: 0, backgroundImage: "none", backgroundColor: "background.default" } } }}>
@@ -654,9 +643,38 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
                 </Typography>
               </Box>
               <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.25 }}>Count includes the selected mentions and hashtags.</Typography>
+              {url && (
+                <Alert severity="error" sx={{ mt: 1, py: 0, fontSize: "0.75rem", borderRadius: "8px" }}>
+                  X posts can&apos;t carry links. &ldquo;{url}&rdquo; would make this post cost about 13 times more (roughly $0.20 instead of $0.015). Remove it to post.
+                </Alert>
+              )}
             </Box>
             <TagPicker label="Hashtags" prefix="#" options={hashtags} max={limits.hashtags} onChange={setHashtags} />
             <TagPicker label="Mentions" prefix="@" options={mentions} max={limits.mentions} onChange={setMentions} />
+
+            <Box sx={{ position: { lg: "sticky" }, bottom: { lg: -16 }, mt: "auto", mx: -2, mb: -2, px: 2, py: 1.25, backgroundColor: "background.paper", borderTop: "1px solid", borderColor: "divider" }}>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+                <Button color="error" onClick={() => setDialog("reject")} disabled={!permissions.canApproveSocialContent} startIcon={<Ban size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1 }}>
+                  Reject
+                </Button>
+                <Box sx={{ flex: 1 }} />
+                <Button variant="outlined" onClick={save} disabled={!permissions.canApproveSocialContent} startIcon={<Save size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25, whiteSpace: "nowrap" }}>
+                  Save draft
+                </Button>
+                <Tooltip title={blockedReason}>
+                  <span>
+                    <Button variant="outlined" onClick={() => setDialog("schedule")} disabled={!canPost} startIcon={<CalendarClock size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25 }}>
+                      Schedule
+                    </Button>
+                  </span>
+                </Tooltip>
+              </Box>
+              {savedAt && (
+                <Typography sx={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 0.4, mt: 0.5, fontSize: "0.6875rem", color: "text.secondary" }}>
+                  <Check size={12} /> Draft saved at {savedAt}
+                </Typography>
+              )}
+            </Box>
           </Box>
         </Box>
       </Box>
@@ -684,6 +702,30 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
           {postButton}
         </Box>
       </Dialog>
+
+      {dialog === "reject" && (
+        <RejectDialog
+          open
+          headline={layout.headline}
+          onClose={() => setDialog(null)}
+          onConfirm={(reason, note) => {
+            rejectDraft(buildPayload(), reason, note);
+            onClose();
+          }}
+        />
+      )}
+      {dialog === "schedule" && (
+        <ScheduleDialog
+          open
+          headline={layout.headline}
+          initial={draft?.status === "scheduled" ? draft.scheduledFor : undefined}
+          onClose={() => setDialog(null)}
+          onConfirm={(when) => {
+            scheduleDraft(buildPayload(), when);
+            onClose();
+          }}
+        />
+      )}
 
       <Snackbar open={!!notice} autoHideDuration={5000} onClose={() => setNotice("")} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
         <Alert severity="warning" onClose={() => setNotice("")} sx={{ fontSize: "0.8125rem" }}>

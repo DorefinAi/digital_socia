@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { BreakingTag, FtpMedia } from "@/types/newsroom";
+import { BreakingTag, CardLayout, ClipSegment, FtpMedia } from "@/types/newsroom";
 import { CHANNEL } from "@/constants";
 
 export type TemplateFormat = "x" | "ig_post" | "ig_reel";
@@ -18,24 +18,7 @@ export const BIG_BREAKING_YELLOW = "#FFD400";
 export const HEADLINE_COLORS = ["#FFFFFF", BIG_BREAKING_YELLOW] as const;
 
 /** The parts of the fixed template an editor can change. */
-export interface TemplateLayout {
-  headline: string;
-  /** Multiplier on the template's base headline size */
-  fontScale: number;
-  /** Vertical centre of the headline block, 0 (top) – 1 (bottom) */
-  textY: number;
-  align: "left" | "center";
-  color: string;
-  /** "cover" crops the media to fill the frame, "contain" shows all of it over a backdrop */
-  fit: "cover" | "contain";
-  /** What shows behind the media when it does not fill the frame: "blur" or a CSS colour */
-  backdrop: string;
-  /** Media zoom on top of the fit, 1 = no extra zoom */
-  bgZoom: number;
-  /** Background pan, -1 – 1 across the slack left by cover + zoom */
-  bgX: number;
-  bgY: number;
-}
+export type TemplateLayout = CardLayout;
 
 export const DEFAULT_TEXT_Y: Record<TemplateFormat, number> = { x: 0.68, ig_post: 0.72, ig_reel: 0.7 };
 
@@ -75,10 +58,7 @@ function fittedSize(source: Source, W: number, H: number, zoom: number, fit: Tem
   return { dw: w * scale, dh: h * scale };
 }
 
-export interface TrimRange {
-  start: number;
-  end: number;
-}
+export type TrimRange = ClipSegment;
 
 function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
   const lines: string[] = [];

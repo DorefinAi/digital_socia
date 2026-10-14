@@ -86,7 +86,12 @@ export function TagPicker({
             <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
               {option.value}
             </Typography>
-            <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", whiteSpace: "nowrap" }}>{option.reason}</Typography>
+            <Typography
+              title={option.ai && !option.checked ? `${option.reason}. Not in the directory: tick to accept.` : option.reason}
+              sx={{ maxWidth: "58%", fontSize: "0.6875rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: option.ai && !option.checked ? "warning.main" : "text.secondary", fontWeight: option.ai && !option.checked ? 600 : 400 }}
+            >
+              {option.ai && !option.checked ? `Confirm · ${option.reason}` : option.reason}
+            </Typography>
           </Box>
         ))}
         <Box sx={{ display: "flex", borderTop: options.length ? "1px solid" : "none", borderColor: "divider" }}>
