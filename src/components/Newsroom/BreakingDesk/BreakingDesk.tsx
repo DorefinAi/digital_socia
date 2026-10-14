@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Box, Typography, Button, TextField, InputAdornment, Tabs, Tab, Snackbar, CircularProgress, Tooltip, LinearProgress, ToggleButtonGroup, ToggleButton } from "@mui/material";
+import { Box, Typography, Button, TextField, InputAdornment, Tabs, Tab, Snackbar, CircularProgress, LinearProgress, ToggleButtonGroup, ToggleButton } from "@mui/material";
 import { Search, RefreshCw, LayoutGrid, List } from "lucide-react";
 import { useThemeMode } from "@/providers/MuiProvider";
 import { useNewsroom } from "@/providers/NewsroomProvider";
