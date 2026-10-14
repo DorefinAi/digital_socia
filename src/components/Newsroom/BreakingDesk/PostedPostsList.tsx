@@ -11,9 +11,11 @@ interface PostedPostsListProps {
   platform?: SocialPlatform;
   limit?: number;
   emptyHint?: string;
+  /** Drop the outer border when the list sits inside a card */
+  bare?: boolean;
 }
 
-export default function PostedPostsList({ platform, limit, emptyHint }: PostedPostsListProps) {
+export default function PostedPostsList({ platform, limit, emptyHint, bare }: PostedPostsListProps) {
   const { socialPosts } = useNewsroom();
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -41,7 +43,7 @@ export default function PostedPostsList({ platform, limit, emptyHint }: PostedPo
   }
 
   return (
-    <Box sx={{ backgroundColor: "background.paper", border: "1px solid", borderColor: "divider", borderRadius: "8px", overflow: "hidden" }}>
+    <Box sx={bare ? undefined : { backgroundColor: "background.paper", border: "1px solid", borderColor: "divider", borderRadius: "8px", overflow: "hidden" }}>
       {posts.map((post, i) => (
         <Box
           key={post.id}

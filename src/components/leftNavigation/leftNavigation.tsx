@@ -1,133 +1,181 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { Box, Typography, Drawer, IconButton, useMediaQuery, useTheme, Tooltip } from "@mui/material";
-import { Menu, Lock, LayoutDashboard, CheckCircle, BarChart3, LogOut, Pin, PinOff, Globe } from "lucide-react";
-import { useRouter, usePathname } from "next/navigation";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import {
+  Box,
+  Typography,
+  Drawer,
+  IconButton,
+  useMediaQuery,
+  useTheme,
+  Tooltip,
+  Collapse,
+} from "@mui/material";
+import {
+  Menu,
+  Lock,
+  LayoutDashboard,
+  CheckCircle,
+  BarChart3,
+  Sparkles,
+  LogOut,
+  ChevronDown,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Globe,
+} from "lucide-react";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import NavigationLabel from "../Overview/NavigationLabel";
 import { useNewsroom } from "@/providers/NewsroomProvider";
-import { ROLE_LABELS, SocialPlatform } from "@/types/newsroom";
 
-const YoutubeIcon: React.FC<{ size?: number }> = ({ size = 18 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-    <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+const YoutubeIcon: React.FC<{ size?: number; color?: string }> = ({ size = 16, color = "#FF0000" }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+    <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
   </svg>
 );
 
-const InstagramIcon: React.FC<{ size?: number }> = ({ size = 18 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
-    <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
-    <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
+const InstagramIcon: React.FC<{ size?: number; color?: string }> = ({ size = 16, color = "#E4405F" }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
+    <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
+    <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
   </svg>
 );
 
-const XIcon: React.FC<{ size?: number }> = ({ size = 16 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+const XIcon: React.FC<{ size?: number; color?: string }> = ({ size = 16, color = "#1DA1F2" }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
   </svg>
 );
 
-const DOCK_WIDTH = 60;
-const OPEN_WIDTH = 248;
-const INSET = 12;
-const CELL = 36;
-const STORAGE_KEY = "sidebar_state";
-const EASE = "cubic-bezier(0.32, 0.72, 0, 1)";
+const COLLAPSED_WIDTH = 60;
+const EXPANDED_WIDTH = 220;
+const MIN_WIDTH = 60;
+const MAX_WIDTH = 280;
 
-// The dock keeps its own dark palette in both light and dark mode
-const DOCK = {
-  bg: "#101012",
-  line: "rgba(255,255,255,0.09)",
-  text: "rgba(255,255,255,0.62)",
-  strong: "#FFFFFF",
-  hover: "rgba(255,255,255,0.07)",
-  accent: "#D7141A",
-};
-
-interface NavItem {
-  label: string;
-  icon: React.ReactNode;
-  path: string;
-  accessible: boolean;
-  badge?: number;
-}
-
-function readPinned(): boolean {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}").pinned === true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Floating dock: rests as an icon strip, opens over the page on hover or focus,
- * and can be pinned open (Ctrl+B) so the page makes room for it.
- */
 const LeftNavigation: React.FC = () => {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const currentPlatform = searchParams.get("platform");
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("lg"));
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { permissions, currentRole, ftpNews, socialPosts } = useNewsroom();
+  const [aiSubmenuOpen, setAiSubmenuOpen] = useState(true);
+  const { permissions, currentRole } = useNewsroom();
 
-  // Pages only render on the client, so reading storage here avoids a flash of the wrong state
-  const [pinned, setPinned] = useState(readPinned);
-  const [peeking, setPeeking] = useState(false);
-  const peekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Sidebar state: collapsed or custom width
+  const [collapsed, setCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(EXPANDED_WIDTH);
+  const isResizing = useRef(false);
+  const startX = useRef(0);
+  const startWidth = useRef(0);
 
-  const togglePin = useCallback(() => {
-    setPinned((prev) => {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ pinned: !prev }));
-      } catch {}
-      return !prev;
-    });
+  // Restore from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("sidebar_state");
+      if (saved) {
+        const state = JSON.parse(saved);
+        setCollapsed(state.collapsed ?? false);
+        setSidebarWidth(state.width ?? EXPANDED_WIDTH);
+      }
+    } catch {}
+  }, []);
+
+  // Save to localStorage
+  const saveState = (c: boolean, w: number) => {
+    try {
+      localStorage.setItem("sidebar_state", JSON.stringify({ collapsed: c, width: w }));
+    } catch {}
+  };
+
+  const toggleCollapse = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    if (next) setSidebarWidth(COLLAPSED_WIDTH);
+    else setSidebarWidth(EXPANDED_WIDTH);
+    saveState(next, next ? COLLAPSED_WIDTH : EXPANDED_WIDTH);
+  };
+
+  // Resize handlers
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizing.current = true;
+    startX.current = e.clientX;
+    startWidth.current = sidebarWidth;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing.current) return;
+      const delta = e.clientX - startX.current;
+      let newWidth = startWidth.current + delta;
+      newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, newWidth));
+      // Auto-collapse if dragged below threshold
+      if (newWidth < 80) {
+        setCollapsed(true);
+        setSidebarWidth(COLLAPSED_WIDTH);
+      } else {
+        setCollapsed(false);
+        setSidebarWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (!isResizing.current) return;
+      isResizing.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      // Snap: if between collapsed and expanded, snap to one
+      setSidebarWidth((prev) => {
+        const snapThreshold = (COLLAPSED_WIDTH + EXPANDED_WIDTH) / 2;
+        const snapped = prev < snapThreshold ? COLLAPSED_WIDTH : EXPANDED_WIDTH;
+        const isCollapsed = snapped === COLLAPSED_WIDTH;
+        setCollapsed(isCollapsed);
+        saveState(isCollapsed, snapped);
+        return snapped;
+      });
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
   }, []);
 
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "b" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        togglePin();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      clearTimeout(peekTimer.current);
-    };
-  }, [togglePin]);
+    if (pathname.startsWith("/ai-content")) {
+      setAiSubmenuOpen(true);
+    }
+  }, [pathname]);
 
-  // Small delays stop the dock from flickering when the pointer only passes over it
-  const peek = (open: boolean) => {
-    clearTimeout(peekTimer.current);
-    peekTimer.current = setTimeout(() => setPeeking(open), open ? 90 : 220);
+  const handleDrawerToggle = () => {
+    setMobileOpen(!mobileOpen);
   };
 
-  const toPost = (platform: SocialPlatform) => {
-    const posted = new Set(socialPosts.filter((p) => p.platform === platform).map((p) => p.newsId));
-    return ftpNews.filter((n) => !posted.has(n.id)).length;
-  };
+  const isCollapsed = sidebarWidth < 80;
 
-  const sections: { title: string; items: NavItem[] }[] = [
+  const navItems = [
+    { label: "Dashboard", icon: <LayoutDashboard size={20} />, path: "/dashboard", accessible: permissions.canAccessDashboard },
+    { label: "Approval Portal", icon: <CheckCircle size={20} />, path: "/approval", accessible: permissions.canAccessApprovalPortal },
+    { label: "Digital Dashboard", icon: <BarChart3 size={20} />, path: "/digital", accessible: permissions.canAccessDigitalDashboard },
+    { label: "Web Scraper", icon: <Globe size={20} />, path: "/web-scraper", accessible: permissions.canAccessWebScraper !== false },
     {
-      title: "Workspace",
-      items: [
-        { label: "Dashboard", icon: <LayoutDashboard size={18} />, path: "/dashboard", accessible: permissions.canAccessDashboard },
-        { label: "Approval Portal", icon: <CheckCircle size={18} />, path: "/approval", accessible: permissions.canAccessApprovalPortal },
-        { label: "Digital Dashboard", icon: <BarChart3 size={18} />, path: "/digital", accessible: permissions.canAccessDigitalDashboard },
-        { label: "Web Scraper", icon: <Globe size={18} />, path: "/web-scraper", accessible: permissions.canAccessWebScraper !== false },
-      ],
-    },
-    {
-      title: "AI Content Review",
-      items: [
-        { label: "X (Twitter)", icon: <XIcon />, path: "/ai-content/x", accessible: permissions.canAccessAIContentReview, badge: toPost("X (Twitter)") },
-        { label: "Instagram", icon: <InstagramIcon />, path: "/ai-content/instagram", accessible: permissions.canAccessAIContentReview, badge: toPost("Instagram") },
-        { label: "YouTube", icon: <YoutubeIcon />, path: "/ai-content/youtube", accessible: permissions.canAccessAIContentReview },
+      label: "AI Content Review",
+      icon: <Sparkles size={20} />,
+      path: "/ai-content",
+      accessible: permissions.canAccessAIContentReview,
+      hasSubmenu: true,
+      subItems: [
+        { label: "YouTube", icon: <YoutubeIcon size={16} color="#FF0000" />, platformKey: "YouTube", path: "/ai-content/youtube" },
+        { label: "Instagram", icon: <InstagramIcon size={16} color="#E4405F" />, platformKey: "Instagram", path: "/ai-content/instagram" },
+        { label: "X (Twitter)", icon: <XIcon size={16} color="#1DA1F2" />, platformKey: "X", path: "/ai-content/x" },
       ],
     },
   ];
@@ -137,208 +185,276 @@ const LeftNavigation: React.FC = () => {
     router.push("/");
   };
 
-  /** Everything is laid out for the open width; the dock clips it and fades the labels. */
-  const renderContent = (open: boolean, showPin: boolean) => {
-    const fade = { opacity: open ? 1 : 0, transition: `opacity ${open ? 220 : 90}ms ease ${open ? 60 : 0}ms`, whiteSpace: "nowrap" as const };
-    const cell = { width: CELL, height: CELL, flexShrink: 0, display: "grid", placeItems: "center", borderRadius: "10px" };
-
-    return (
-      <Box sx={{ display: "flex", flexDirection: "column", width: OPEN_WIDTH, height: "100%", p: `${INSET}px`, color: DOCK.text }}>
-        {/* Brand + pin */}
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, mb: 2.5 }}>
-          <Box sx={{ ...cell, backgroundColor: DOCK.accent, color: "#fff", fontWeight: 800, fontSize: "1rem", letterSpacing: "-0.02em" }}>V</Box>
-          <Box sx={{ ...fade, flex: 1, minWidth: 0 }}>
-            <Typography sx={{ fontSize: "0.9375rem", fontWeight: 700, color: DOCK.strong, lineHeight: 1.2 }}>Vartaman AI</Typography>
-            <Typography sx={{ fontSize: "0.6875rem", color: DOCK.text, lineHeight: 1.3 }}>Digital desk</Typography>
-          </Box>
-          {showPin && (
-            <Tooltip title={`${pinned ? "Unpin" : "Keep open"} (Ctrl+B)`} placement="right">
-              <IconButton
-                onClick={togglePin}
-                tabIndex={open ? 0 : -1}
-                aria-label={pinned ? "Unpin sidebar" : "Keep sidebar open"}
-                aria-pressed={pinned}
-                sx={{ ...fade, width: 30, height: 30, borderRadius: "8px", color: pinned ? DOCK.strong : DOCK.text, backgroundColor: pinned ? DOCK.hover : "transparent", "&:hover": { backgroundColor: DOCK.hover, color: DOCK.strong } }}
-              >
-                {pinned ? <PinOff size={16} /> : <Pin size={16} />}
-              </IconButton>
-            </Tooltip>
-          )}
-        </Box>
-
-        {/* Navigation */}
-        <Box component="nav" aria-label="Main" sx={{ display: "flex", flexDirection: "column", gap: 1.5, flexGrow: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", scrollbarWidth: "none", "&::-webkit-scrollbar": { display: "none" } }}>
-          {sections.map((section) => (
-            <Box key={section.title}>
-              <Box sx={{ position: "relative", height: 22, mb: 0.5 }}>
-                <Box sx={{ position: "absolute", left: 8, top: 10, width: CELL - 16, height: "1px", backgroundColor: DOCK.line, opacity: open ? 0 : 1, transition: "opacity 120ms ease" }} />
-                <Typography sx={{ ...fade, position: "absolute", left: 10, top: 3, fontSize: "0.6875rem", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.38)" }}>
-                  {section.title}
-                </Typography>
-              </Box>
-              <Box sx={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                {section.items.map((item) => {
-                  const isActive = pathname === item.path;
-                  const rowSx = {
-                    position: "relative" as const,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 1.25,
-                    pr: 1,
-                    borderRadius: "10px",
-                    color: isActive ? DOCK.strong : DOCK.text,
-                    backgroundColor: isActive && open ? DOCK.hover : "transparent",
-                    transition: "background-color 140ms ease, color 140ms ease",
-                    "&:hover": { backgroundColor: DOCK.hover, color: DOCK.strong },
-                    "&:focus-visible": { outline: `2px solid ${DOCK.accent}`, outlineOffset: 1 },
-                  };
-                  const inner = (
-                    <>
-                      <Box sx={{ ...cell, position: "relative", transition: "background-color 140ms ease, color 140ms ease", ...(isActive && { backgroundColor: "#fff", color: "#101012" }) }}>
-                        {item.icon}
-                        {item.accessible && !!item.badge && !open && (
-                          <Box sx={{ position: "absolute", top: 3, right: 3, width: 8, height: 8, borderRadius: "50%", backgroundColor: DOCK.accent, border: `2px solid ${isActive ? "#fff" : DOCK.bg}`, boxSizing: "content-box" }} />
-                        )}
-                      </Box>
-                      <Typography sx={{ ...fade, flex: 1, minWidth: 0, fontSize: "0.8125rem", fontWeight: isActive ? 600 : 500, color: "inherit" }}>{item.label}</Typography>
-                      {!item.accessible && (
-                        <Box sx={{ ...fade, display: "flex" }}>
-                          <Lock size={13} />
-                        </Box>
-                      )}
-                      {item.accessible && !!item.badge && (
-                        <Box sx={{ ...fade, minWidth: 20, px: 0.75, height: 18, borderRadius: "9px", backgroundColor: DOCK.accent, color: "#fff", fontSize: "0.6875rem", fontWeight: 700, display: "grid", placeItems: "center", fontVariantNumeric: "tabular-nums" }}>
-                          {item.badge}
-                        </Box>
-                      )}
-                    </>
-                  );
-
-                  return item.accessible ? (
-                    <Box key={item.path} component={Link} href={item.path} aria-current={isActive ? "page" : undefined} aria-label={item.label} onClick={() => setMobileOpen(false)} sx={rowSx}>
-                      {inner}
-                    </Box>
-                  ) : (
-                    <Tooltip key={item.path} title={`Not available for ${ROLE_LABELS[currentRole]}`} placement="right">
-                      <Box aria-disabled sx={{ ...rowSx, opacity: 0.38, cursor: "not-allowed", "&:hover": {} }}>
-                        {inner}
-                      </Box>
-                    </Tooltip>
-                  );
-                })}
-              </Box>
-            </Box>
-          ))}
-        </Box>
-
-        {/* Account */}
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, pt: 1.5, mt: 1.5, borderTop: `1px solid ${DOCK.line}` }}>
-          <Box sx={{ ...cell, borderRadius: "50%", backgroundColor: "rgba(255,255,255,0.12)", color: DOCK.strong, fontSize: "0.75rem", fontWeight: 700 }}>AD</Box>
-          <Box sx={{ ...fade, flex: 1, minWidth: 0 }}>
-            <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, color: DOCK.strong, lineHeight: 1.25 }}>Admin</Typography>
-            <Typography sx={{ fontSize: "0.6875rem", color: DOCK.text, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis" }}>{ROLE_LABELS[currentRole]}</Typography>
-          </Box>
-          <Tooltip title="Log out" placement="top">
-            <IconButton onClick={handleLogoutClick} tabIndex={open ? 0 : -1} aria-label="Log out" sx={{ ...fade, width: 30, height: 30, borderRadius: "8px", color: DOCK.text, "&:hover": { backgroundColor: DOCK.hover, color: DOCK.strong } }}>
-              <LogOut size={16} />
-            </IconButton>
-          </Tooltip>
-        </Box>
-      </Box>
-    );
-  };
-
-  if (isMobile) {
-    // Mobile: thumb-reach tab bar for the daily screens, everything else behind "More"
-    const all = sections.flatMap((section) => section.items);
-    const tabs = ["/dashboard", "/ai-content/x", "/ai-content/instagram", "/approval"]
-      .map((path) => all.find((item) => item.path === path))
-      .filter((item): item is NavItem => !!item && item.accessible);
-    const tabSx = {
-      position: "relative" as const,
-      flex: 1,
-      minWidth: 0,
-      display: "flex",
-      flexDirection: "column" as const,
-      alignItems: "center",
-      justifyContent: "center",
-      gap: "3px",
-      border: 0,
-      background: "transparent",
-      fontFamily: "inherit",
-      fontSize: "0.625rem",
-      fontWeight: 600,
-      cursor: "pointer",
-      color: DOCK.text,
-    };
-
-    return (
-      <>
-        <Box
-          component="nav"
-          aria-label="Main"
-          sx={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 1200, display: "flex", height: "calc(60px + env(safe-area-inset-bottom))", pb: "env(safe-area-inset-bottom)", backgroundColor: DOCK.bg, borderTop: `1px solid ${DOCK.line}` }}
-        >
-          {tabs.map((item) => {
-            const isActive = pathname === item.path;
-            return (
-              <Box key={item.path} component={Link} href={item.path} aria-current={isActive ? "page" : undefined} sx={{ ...tabSx, color: isActive ? DOCK.strong : DOCK.text }}>
-                <Box sx={{ position: "relative", display: "grid", placeItems: "center", width: 44, height: 26, borderRadius: "13px", backgroundColor: isActive ? "#fff" : "transparent", color: isActive ? "#101012" : "inherit" }}>
-                  {item.icon}
-                  {!!item.badge && <Box sx={{ position: "absolute", top: 0, right: 6, width: 7, height: 7, borderRadius: "50%", backgroundColor: DOCK.accent }} />}
-                </Box>
-                {item.label.replace(" (Twitter)", "").replace(" Portal", "")}
-              </Box>
-            );
-          })}
-          <Box component="button" onClick={() => setMobileOpen(true)} aria-label="More navigation" sx={tabSx}>
-            <Box sx={{ display: "grid", placeItems: "center", height: 26 }}>
-              <Menu size={18} />
-            </Box>
-            More
-          </Box>
-        </Box>
-        <Drawer
-          anchor="bottom"
-          open={mobileOpen}
-          onClose={() => setMobileOpen(false)}
-          sx={{ zIndex: 1250, "& .MuiDrawer-paper": { height: "min(560px, 86dvh)", border: 0, borderRadius: "18px 18px 0 0", backgroundColor: DOCK.bg, "& > div": { width: "100%" } } }}
-        >
-          {renderContent(true, false)}
-        </Drawer>
-      </>
-    );
-  }
-
-  const open = pinned || peeking;
-  const reserved = (pinned ? OPEN_WIDTH : DOCK_WIDTH) + INSET;
-
-  return (
+  const drawerContent = (
     <Box
-      component="aside"
-      sx={{ position: "sticky", top: 0, height: "100vh", flexShrink: 0, width: reserved, minWidth: reserved, zIndex: 1100, transition: `width 320ms ${EASE}, min-width 320ms ${EASE}` }}
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        pt: 1.5,
+        pb: 1,
+        px: isCollapsed ? 0.75 : 1.25,
+        overflowY: "auto",
+        overflowX: "hidden",
+        "&::-webkit-scrollbar": { display: "none" },
+        msOverflowStyle: "none",
+        scrollbarWidth: "none",
+        transition: "padding 0.2s ease",
+      }}
     >
-      <Box
-        onMouseEnter={() => peek(true)}
-        onMouseLeave={() => peek(false)}
-        onFocus={() => peek(true)}
-        onBlur={() => peek(false)}
-        sx={{
-          position: "absolute",
-          top: INSET,
-          bottom: INSET,
-          left: INSET,
-          width: open ? OPEN_WIDTH : DOCK_WIDTH,
-          overflow: "hidden",
-          borderRadius: "20px",
-          backgroundColor: DOCK.bg,
-          boxShadow: open && !pinned ? "0 24px 60px rgba(0,0,0,0.28), 0 2px 8px rgba(0,0,0,0.2)" : "0 1px 2px rgba(0,0,0,0.12)",
-          transition: `width 320ms ${EASE}, box-shadow 320ms ease`,
-        }}
-      >
-        {renderContent(open, true)}
+      {/* Brand */}
+      <Box sx={{ px: isCollapsed ? 0 : 0.5, py: 1, mb: 1, display: "flex", justifyContent: isCollapsed ? "center" : "flex-start", alignItems: "center", minHeight: 40 }}>
+        {isCollapsed ? (
+          <Tooltip title="Vartaman AI" placement="right" arrow>
+            <Typography sx={{ fontSize: "1rem", fontWeight: 900, color: "text.primary", letterSpacing: "-0.03em" }}>V</Typography>
+          </Tooltip>
+        ) : (
+          <Typography sx={{ fontSize: "1.05rem", fontWeight: 800, letterSpacing: "-0.02em", color: "text.primary", whiteSpace: "nowrap" }}>
+            Vartaman AI
+          </Typography>
+        )}
+      </Box>
+
+      {/* Nav items */}
+      <Box sx={{ display: "flex", flexDirection: "column", gap: "2px", flexGrow: 1 }}>
+        {navItems.map((item) => {
+          const isParentActive = pathname === item.path;
+          const isAIReview = item.hasSubmenu;
+
+          return (
+            <React.Fragment key={item.label}>
+              <Tooltip
+                title={isCollapsed ? item.label : (!item.accessible ? `${item.label} - Not available for ${currentRole.replace("_", " ")}` : "")}
+                placement="right"
+                arrow
+              >
+                <Box
+                  sx={{
+                    opacity: item.accessible ? 1 : 0.45,
+                    pointerEvents: item.accessible ? "auto" : "none",
+                    position: "relative",
+                  }}
+                >
+                  <Box
+                    onClick={() => {
+                      if (item.accessible) {
+                        if (isAIReview) {
+                          if (isCollapsed) {
+                            setCollapsed(false);
+                            setSidebarWidth(EXPANDED_WIDTH);
+                            saveState(false, EXPANDED_WIDTH);
+                          }
+                          setAiSubmenuOpen((prev) => !prev);
+                        } else {
+                          router.push(item.path);
+                        }
+                        if (isMobile && !isAIReview) setMobileOpen(false);
+                      }
+                    }}
+                    sx={{ position: "relative" }}
+                  >
+                    <NavigationLabel
+                      label={item.label}
+                      logo={item.icon}
+                      isActive={isParentActive && !currentPlatform}
+                      collapsed={isCollapsed}
+                    />
+                    {!isCollapsed && isAIReview && item.accessible && (
+                      <Box
+                        sx={{
+                          position: "absolute",
+                          right: 8,
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          color: "text.secondary",
+                          display: "flex",
+                          alignItems: "center",
+                        }}
+                      >
+                        {aiSubmenuOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      </Box>
+                    )}
+                  </Box>
+                  {!item.accessible && (
+                    <Box
+                      sx={{
+                        position: "absolute",
+                        right: 8,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        color: "text.secondary",
+                        display: "flex",
+                        alignItems: "center",
+                      }}
+                    >
+                      <Lock size={14} />
+                    </Box>
+                  )}
+                </Box>
+              </Tooltip>
+
+              {!isCollapsed && isAIReview && item.accessible && (
+                <Collapse in={aiSubmenuOpen} timeout="auto" unmountOnExit>
+                  <Box sx={{ pl: 2, display: "flex", flexDirection: "column", gap: "2px", mt: 0.25, mb: 0.25 }}>
+                    {item.subItems?.map((sub) => {
+                      const isSubActive =
+                        pathname === sub.path ||
+                        (pathname === "/ai-content" && currentPlatform?.toLowerCase() === sub.platformKey.toLowerCase());
+
+                      return (
+                        <Box
+                          key={sub.label}
+                          onClick={() => {
+                            router.push(sub.path);
+                            if (isMobile) setMobileOpen(false);
+                          }}
+                          sx={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 1,
+                            py: 0.6,
+                            px: 1.25,
+                            borderRadius: "6px",
+                            cursor: "pointer",
+                            backgroundColor: isSubActive ? (theme.palette.mode === "light" ? "#f0f0f0" : "#2a2a2a") : "transparent",
+                            color: isSubActive ? "text.primary" : "text.secondary",
+                            transition: "all 0.15s ease",
+                            "&:hover": { backgroundColor: theme.palette.action.hover, color: "text.primary" },
+                          }}
+                        >
+                          <Box sx={{ display: "flex", alignItems: "center", flexShrink: 0 }}>{sub.icon}</Box>
+                          <Typography sx={{ fontSize: "0.75rem", fontWeight: isSubActive ? 600 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {sub.label}
+                          </Typography>
+                        </Box>
+                      );
+                    })}
+                  </Box>
+                </Collapse>
+              )}
+            </React.Fragment>
+          );
+        })}
+      </Box>
+
+      {/* Bottom section */}
+      <Box sx={{ mt: "auto", pt: 1, borderTop: "1px solid", borderColor: theme.palette.divider, display: "flex", flexDirection: "column", gap: 0.5 }}>
+        {/* Collapse toggle */}
+        <Tooltip title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"} placement="right" arrow>
+          <Box
+            onClick={toggleCollapse}
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: isCollapsed ? "center" : "flex-start",
+              gap: 1,
+              px: isCollapsed ? 0 : 1.25,
+              py: 0.85,
+              borderRadius: "8px",
+              cursor: "pointer",
+              color: "text.secondary",
+              transition: "all 0.15s ease",
+              "&:hover": { backgroundColor: theme.palette.action.hover, color: "text.primary" },
+            }}
+          >
+            {isCollapsed ? <ChevronsRight size={18} /> : <ChevronsLeft size={18} />}
+            {!isCollapsed && (
+              <Typography sx={{ fontWeight: 500, fontSize: "0.8125rem" }}>Collapse</Typography>
+            )}
+          </Box>
+        </Tooltip>
+
+        {/* Logout */}
+        <Tooltip title={isCollapsed ? "Logout" : ""} placement="right" arrow>
+          <Box
+            onClick={handleLogoutClick}
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: isCollapsed ? "center" : "flex-start",
+              gap: 1,
+              px: isCollapsed ? 0 : 1.25,
+              py: 0.85,
+              borderRadius: "8px",
+              cursor: "pointer",
+              color: theme.palette.text.secondary,
+              transition: "all 0.15s ease",
+              "&:hover": { backgroundColor: theme.palette.action.hover, color: "text.primary" },
+            }}
+          >
+            <LogOut size={18} />
+            {!isCollapsed && (
+              <Typography sx={{ fontWeight: 500, fontSize: "0.8125rem" }}>Logout</Typography>
+            )}
+          </Box>
+        </Tooltip>
       </Box>
     </Box>
+  );
+
+  return (
+    <>
+      {isMobile && (
+        <IconButton
+          color="inherit"
+          aria-label="open drawer"
+          edge="start"
+          onClick={handleDrawerToggle}
+          sx={{ position: "fixed", top: 16, left: 16, zIndex: 1201, backgroundColor: "#fff", boxShadow: 1, "&:hover": { backgroundColor: "#f5f5f5" } }}
+        >
+          <Menu size={20} />
+        </IconButton>
+      )}
+
+      {isMobile ? (
+        <Drawer
+          variant="temporary"
+          open={mobileOpen}
+          onClose={handleDrawerToggle}
+          ModalProps={{ keepMounted: true }}
+          sx={{ "& .MuiDrawer-paper": { boxSizing: "border-box", width: 240 } }}
+        >
+          {drawerContent}
+        </Drawer>
+      ) : (
+        <Box
+          sx={{
+            width: sidebarWidth,
+            minWidth: sidebarWidth,
+            height: "100vh",
+            position: "sticky",
+            top: 0,
+            flexShrink: 0,
+            backgroundColor: theme.palette.background.paper,
+            borderRight: "1px solid",
+            borderColor: theme.palette.divider,
+            transition: isResizing.current ? "none" : "width 0.2s ease, min-width 0.2s ease",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {drawerContent}
+
+          {/* Resize handle */}
+          <Box
+            onMouseDown={handleResizeStart}
+            sx={{
+              position: "absolute",
+              top: 0,
+              right: -2,
+              width: 4,
+              height: "100%",
+              cursor: "col-resize",
+              zIndex: 10,
+              "&:hover, &:active": {
+                backgroundColor: theme.palette.primary.main,
+                opacity: 0.5,
+              },
+            }}
+          />
+        </Box>
+      )}
+    </>
   );
 };
 

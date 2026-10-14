@@ -1,5 +1,6 @@
 "use client";
 
+import { BLACK_COLOR, LIGHT_GRAY } from "@/assets/colors";
 import {
   Box,
   Typography,
@@ -20,7 +21,7 @@ import {
 } from "@mui/material";
 import React, { useState, useEffect } from "react";
 import {
-  Search,
+  Zap,
   Moon,
   Sun,
   Bell,
@@ -69,10 +70,6 @@ const DashBoardCommonHeader: React.FC = () => {
       approval: "Approval Portal",
       digital: "Digital Dashboard",
       "ai-content": "AI Content Review",
-      "web-scraper": "Web Scraper",
-      x: "X breaking desk",
-      instagram: "Instagram breaking desk",
-      youtube: "YouTube review",
     };
     return titles[lastPart] || lastPart.charAt(0).toUpperCase() + lastPart.slice(1);
   };
@@ -104,58 +101,40 @@ const DashBoardCommonHeader: React.FC = () => {
         display: "flex",
         justifyContent: "space-between",
         alignItems: { xs: "flex-start", sm: "center" },
-        mt: 0,
-        py: { xs: 1.5, lg: 1.75 },
+        mt: { xs: "56px", lg: "24px" },
+        pb: { xs: 2, lg: 2.5 },
         position: "relative",
         mx: "auto",
         borderBottom: "1px solid",
-        borderColor: "divider",
+        borderColor: mode === "light" ? "#E5E7EB" : "#333",
         width: "100%",
         maxWidth: "1100px",
         flexDirection: { xs: "column", sm: "row" },
         gap: { xs: 1.5, sm: 0 },
       }}
     >
-      <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary" }}>
-        Digital desk <span style={{ opacity: 0.5, margin: "0 4px" }}>/</span>
-        <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
-          {getPageTitle()}
-        </Box>
-      </Typography>
-
-      <Box sx={{ display: "flex", alignItems: "center", gap: { xs: 0.75, sm: 1 }, flexWrap: "wrap", minWidth: 0 }}>
-        {/* Search */}
-        <Box
-          component="button"
-          onClick={() => setSearchOpen(true)}
-          aria-label="Search (Ctrl+K)"
+      <Box sx={{ gap: "4px", display: "flex", flexDirection: "column" }}>
+        <Typography
           sx={{
-            display: { xs: "none", md: "flex" },
-            alignItems: "center",
-            gap: 1,
-            width: 240,
-            height: 36,
-            px: 1.25,
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: "8px",
-            backgroundColor: "background.paper",
-            color: "text.secondary",
-            fontFamily: "inherit",
+            fontWeight: 400,
             fontSize: "0.8125rem",
-            cursor: "pointer",
-            "&:hover": { borderColor: "text.secondary" },
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "center"
           }}
         >
-          <Search size={15} />
-          <Box component="span" sx={{ flex: 1, textAlign: "left" }}>
-            Search stories and posts
-          </Box>
-          <Box component="kbd" sx={{ px: 0.6, fontSize: "0.6875rem", fontFamily: "inherit", fontWeight: 600, border: "1px solid", borderColor: "divider", borderRadius: "4px" }}>
-            Ctrl K
-          </Box>
-        </Box>
+          <span style={{ color: mode === "light" ? LIGHT_GRAY : "rgba(255,255,255,0.5)" }}>vartaman / </span>
+          <span style={{ color: mode === "light" ? BLACK_COLOR : "#fff", fontWeight: 600, marginLeft: "4px" }}>
+            {getPageTitle()}
+          </span>
+        </Typography>
+        <Typography sx={{ color: mode === "light" ? BLACK_COLOR : "#fff" }}>
+          <span style={{ fontSize: "1.125rem" }}>Hi </span>
+          <span style={{ fontWeight: 600, fontSize: "1.125rem" }}>Admin</span>
+        </Typography>
+      </Box>
 
+      <Box sx={{ display: "flex", alignItems: "center", gap: { xs: 0.75, sm: 1.5 }, flexWrap: "wrap", minWidth: 0 }}>
         {/* Role Switcher */}
         <Button
           variant="outlined"
@@ -163,12 +142,13 @@ const DashBoardCommonHeader: React.FC = () => {
           onClick={(e) => setRoleAnchorEl(e.currentTarget)}
           sx={{
             textTransform: "none",
-            borderRadius: "8px",
+            borderRadius: "12px",
             color: mode === "light" ? "#1f2937" : "#fff",
             borderColor: mode === "light" ? "#e5e7eb" : "#333",
             backgroundColor: mode === "light" ? "#fff" : "#1e1e1e",
+            boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
             "&:hover": { borderColor: mode === "light" ? "#d1d5db" : "#444", backgroundColor: mode === "light" ? "#f9fafb" : "#2a2a2a" },
-            minHeight: 36,
+            minHeight: 40,
             px: { xs: 1, sm: 1.5 },
             py: 0.75,
             fontSize: "0.8125rem",
@@ -219,9 +199,9 @@ const DashBoardCommonHeader: React.FC = () => {
           sx={{
             border: "1px solid",
             borderColor: mode === "light" ? "#e5e7eb" : "#333",
-            borderRadius: "8px",
-            width: 36,
-            height: 36,
+            borderRadius: "12px",
+            width: 40,
+            height: 40,
             p: 0,
             minWidth: 0,
             flexShrink: 0,
@@ -286,9 +266,9 @@ const DashBoardCommonHeader: React.FC = () => {
           sx={{
             border: "1px solid",
             borderColor: mode === "light" ? "#e5e7eb" : "#333",
-            borderRadius: "8px",
-            width: 36,
-            height: 36,
+            borderRadius: "12px",
+            width: 40,
+            height: 40,
             p: 0,
             minWidth: 0,
             flexShrink: 0,
@@ -371,9 +351,9 @@ const DashBoardCommonHeader: React.FC = () => {
           sx={{
             border: "1px solid",
             borderColor: mode === "light" ? "#e5e7eb" : "#333",
-            borderRadius: "8px",
-            width: 36,
-            height: 36,
+            borderRadius: "12px",
+            width: 40,
+            height: 40,
             p: 0,
             minWidth: 0,
             flexShrink: 0,
@@ -382,22 +362,77 @@ const DashBoardCommonHeader: React.FC = () => {
           {mode === "light" ? <Moon size={18} color="#374151" /> : <Sun size={18} color="#fff" />}
         </IconButton>
 
+        {/* Quick Access */}
+        <Button
+          variant="outlined"
+          onClick={() => setSearchOpen(true)}
+          sx={{
+            display: { xs: "none", sm: "inline-flex" },
+            textTransform: "none",
+            borderRadius: "10px",
+            color: mode === "light" ? "#374151" : "#d1d5db",
+            borderColor: mode === "light" ? "#e5e7eb" : "#333",
+            backgroundColor: mode === "light" ? "#f9fafb" : "#1e1e1e",
+            boxShadow: "0 1px 2px rgba(0, 0, 0, 0.03)",
+            transition: "all 0.15s ease",
+            "&:hover": {
+              borderColor: mode === "light" ? "#d1d5db" : "#444",
+              backgroundColor: mode === "light" ? "#f3f4f6" : "#2a2a2a",
+              color: mode === "light" ? "#111827" : "#fff",
+              boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
+            },
+            minHeight: 38,
+            px: 1.5,
+            py: 0.5,
+            minWidth: 0,
+            flexShrink: 0,
+            alignItems: "center",
+            gap: 1,
+          }}
+        >
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+            <Zap size={15} style={{ color: mode === "light" ? "#2563eb" : "#60a5fa" }} />
+            <Typography sx={{ fontSize: "0.8125rem", fontWeight: 500 }}>
+              Quick Access
+            </Typography>
+          </Box>
+          <Box
+            component="span"
+            sx={{
+              px: 0.75,
+              py: 0.2,
+              fontSize: "0.7rem",
+              fontWeight: 600,
+              fontFamily: "monospace, sans-serif",
+              letterSpacing: "0.5px",
+              color: mode === "light" ? "#6b7280" : "#9ca3af",
+              backgroundColor: mode === "light" ? "#ffffff" : "#2a2a2a",
+              border: "1px solid",
+              borderColor: mode === "light" ? "#e5e7eb" : "#444",
+              borderRadius: "6px",
+              boxShadow: mode === "light" ? "0 1px 1px rgba(0,0,0,0.05)" : "none",
+              ml: 0.5,
+            }}
+          >
+            ⌘K
+          </Box>
+        </Button>
         {/* Mobile search icon */}
         <IconButton
           onClick={() => setSearchOpen(true)}
           sx={{
-            display: { xs: "flex", md: "none" },
+            display: { xs: "flex", sm: "none" },
             border: "1px solid",
             borderColor: mode === "light" ? "#e5e7eb" : "#333",
-            borderRadius: "8px",
-            width: 36,
-            height: 36,
+            borderRadius: "12px",
+            width: 40,
+            height: 40,
             p: 0,
             minWidth: 0,
             flexShrink: 0,
           }}
         >
-          <Search size={18} color={mode === "light" ? "#374151" : "#fff"} />
+          <Zap size={18} color={mode === "light" ? "#374151" : "#fff"} />
         </IconButton>
       </Box>
 

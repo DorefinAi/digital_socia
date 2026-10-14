@@ -40,23 +40,19 @@ export default function MuiProvider({ children }: { children: ReactNode }) {
         palette: {
           mode,
           primary: {
-            main: mode === "light" ? "#111113" : "#F4F4F5",
-          },
-          secondary: {
-            main: "#D7141A",
+            main: mode === "light" ? "#000000" : "#ffffff",
           },
           background: {
-            default: mode === "light" ? "#F5F5F3" : "#0E0E10",
-            paper: mode === "light" ? "#ffffff" : "#18181B",
+            default: mode === "light" ? "#f8f9fa" : "#121212",
+            paper: mode === "light" ? "#ffffff" : "#1e1e1e",
           },
           text: {
-            primary: mode === "light" ? "#111113" : "#F4F4F5",
-            secondary: mode === "light" ? "#62636A" : "#A1A1AA",
+            primary: mode === "light" ? "#000000" : "#ffffff",
+            secondary: mode === "light" ? "#6D6E6F" : "#b0b0b0",
           },
-          divider: mode === "light" ? "#E6E5E1" : "#2A2A2E",
         },
         typography: {
-          fontFamily: `var(--font-sans), var(--font-deva), "Nirmala UI", system-ui, sans-serif`,
+          fontFamily: "Inter, sans-serif",
           fontSize: 13,
           body1: {
             fontSize: "0.875rem",
@@ -92,12 +88,11 @@ export default function MuiProvider({ children }: { children: ReactNode }) {
             },
           },
           MuiButton: {
-            defaultProps: { disableElevation: true },
             styleOverrides: {
               root: {
-                borderRadius: "6px",
+                borderRadius: "12px",
                 textTransform: "none",
-                minHeight: 34,
+                minHeight: 38,
                 fontSize: "0.8125rem",
               },
             },
@@ -125,7 +120,7 @@ export default function MuiProvider({ children }: { children: ReactNode }) {
           MuiPaper: {
             styleOverrides: {
               root: {
-                borderRadius: "8px",
+                borderRadius: "12px",
               },
             },
           },
