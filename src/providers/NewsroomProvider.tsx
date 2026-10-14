@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from "react";
 import {
   Story,
   AIContent,
@@ -17,9 +17,15 @@ import {
   NotificationType,
   FtpNewsItem,
   SocialPost,
+  SocialDraft,
+  PostPayload,
+  PendingPost,
+  RejectReason,
+  HashtagRule,
+  HandleEntry,
 } from "@/types/newsroom";
-import { CHANNEL } from "@/constants";
 import { fetchNewFtpNews } from "@/data/ftpNewsData";
+import { UNDO_SECONDS, buildPost, draftToPayload, withDraft, withPublished } from "@/data/socialDesk";
 import {
   generateAndStoreData,
   loadData,
@@ -57,7 +63,30 @@ interface NewsroomContextType {
   ftpSyncedAt: string;
   /** Pulls newly tagged breaking items from the FTP; returns how many arrived */
   fetchFtpNews: () => number;
-  publishSocialPost: (post: Omit<SocialPost, "id" | "postUrl" | "postedAt">) => SocialPost;
+  /** Sends a post immediately, with no undo window */
+  publishSocialPost: (post: PostPayload) => SocialPost;
+  socialDrafts: SocialDraft[];
+  /** Posts waiting out their undo window, plus ones that went out in the last few seconds */
+  pendingPosts: PendingPost[];
+  /** Holds the post for the undo window, then sends it */
+  queuePost: (post: PostPayload) => void;
+  undoPost: (pendingId: string) => void;
+  dismissPending: (pendingId: string) => void;
+  saveDraft: (post: PostPayload) => void;
+  scheduleDraft: (post: PostPayload, when: string) => void;
+  rejectDraft: (post: PostPayload, reason: RejectReason, note: string) => void;
+  /** Rejected → back to the queue; scheduled → back to the queue as a saved draft */
+  restoreDraft: (draftId: string) => void;
+  deleteDraft: (draftId: string) => void;
+  rescheduleDraft: (draftId: string, when: string) => void;
+  publishDraftNow: (draftId: string) => void;
+  recallPost: (postId: string, reason: string) => void;
+  hashtagRules: HashtagRule[];
+  handleDirectory: HandleEntry[];
+  saveHashtagRule: (rule: Omit<HashtagRule, "id"> & { id?: string }) => void;
+  deleteHashtagRule: (id: string) => void;
+  saveHandle: (entry: Omit<HandleEntry, "id" | "verifiedAt"> & { id?: string }) => void;
+  deleteHandle: (id: string) => void;
 
   // Notifications
   markNotificationRead: (id: string) => void;
@@ -187,26 +216,140 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
     return incoming.length;
   }, [data?.ftpNews]);
 
-  const publishSocialPost = useCallback((post: Omit<SocialPost, "id" | "postUrl" | "postedAt">) => {
-    const stamp = Date.now();
-    const postUrl =
-      post.platform === "Instagram"
-        ? `https://www.instagram.com/${CHANNEL.instagramHandle}/p/${stamp.toString(36).toUpperCase()}/`
-        : `https://x.com/${CHANNEL.xHandle}/status/${stamp}${Math.floor(Math.random() * 900000 + 100000)}`;
-    const created: SocialPost = { ...post, id: `post-${stamp}`, postUrl, postedAt: new Date(stamp).toISOString() };
+  const publishSocialPost = useCallback((payload: PostPayload) => {
+    const post = buildPost(payload);
+    setData((prev) => (prev ? withPublished(prev, post) : prev));
+    return post;
+  }, []);
+
+  // Undo window: the post is held here and only written to socialPosts when its timer fires
+  const [pendingPosts, setPendingPosts] = useState<PendingPost[]>([]);
+  const pendingTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const dismissPending = useCallback((pendingId: string) => {
+    clearTimeout(pendingTimers.current.get(pendingId));
+    pendingTimers.current.delete(pendingId);
+    setPendingPosts((prev) => prev.filter((p) => p.id !== pendingId));
+  }, []);
+
+  const queuePost = useCallback((payload: PostPayload) => {
+    const id = `pending-${Date.now()}`;
+    setPendingPosts((prev) => [...prev, { id, payload, sendAt: new Date(Date.now() + UNDO_SECONDS * 1000).toISOString() }]);
+    pendingTimers.current.set(
+      id,
+      setTimeout(() => {
+        const post = buildPost(payload);
+        setData((prev) => (prev ? withPublished(prev, post) : prev));
+        setPendingPosts((prev) => prev.map((p) => (p.id === id ? { ...p, post } : p)));
+        // Keep the "posted" confirmation on screen briefly, then clear it
+        pendingTimers.current.set(id, setTimeout(() => dismissPending(id), 8000));
+      }, UNDO_SECONDS * 1000)
+    );
+  }, [dismissPending]);
+
+  const undoPost = useCallback((pendingId: string) => dismissPending(pendingId), [dismissPending]);
+
+  useEffect(() => {
+    const timers = pendingTimers.current;
+    return () => timers.forEach((t) => clearTimeout(t));
+  }, []);
+
+  const saveDraft = useCallback((post: PostPayload) => {
+    setData((prev) => (prev ? withDraft(prev, { ...post, status: "saved" }) : prev));
+  }, []);
+
+  const scheduleDraft = useCallback((post: PostPayload, when: string) => {
+    setData((prev) => (prev ? withDraft(prev, { ...post, status: "scheduled", scheduledFor: when }) : prev));
+  }, []);
+
+  const rejectDraft = useCallback((post: PostPayload, reason: RejectReason, note: string) => {
+    setData((prev) => (prev ? withDraft(prev, { ...post, status: "rejected", rejectReason: reason, rejectNote: note }) : prev));
+  }, []);
+
+  const updateDrafts = useCallback((fn: (drafts: SocialDraft[]) => SocialDraft[]) => {
+    setData((prev) => (prev ? { ...prev, socialDrafts: fn(prev.socialDrafts) } : prev));
+  }, []);
+
+  const restoreDraft = useCallback((draftId: string) => {
+    updateDrafts((drafts) =>
+      drafts.flatMap((d) => {
+        if (d.id !== draftId) return [d];
+        if (d.status === "scheduled") return [{ ...d, status: "saved" as const, scheduledFor: undefined, updatedAt: new Date().toISOString() }];
+        return [];
+      })
+    );
+  }, [updateDrafts]);
+
+  const deleteDraft = useCallback((draftId: string) => {
+    updateDrafts((drafts) => drafts.map((d) => (d.id === draftId ? { ...d, status: "deleted" as const, updatedAt: new Date().toISOString() } : d)));
+  }, [updateDrafts]);
+
+  const rescheduleDraft = useCallback((draftId: string, when: string) => {
+    updateDrafts((drafts) => drafts.map((d) => (d.id === draftId ? { ...d, scheduledFor: when, updatedAt: new Date().toISOString() } : d)));
+  }, [updateDrafts]);
+
+  const publishDraftNow = useCallback((draftId: string) => {
+    setData((prev) => {
+      const draft = prev?.socialDrafts.find((d) => d.id === draftId);
+      if (!prev || !draft) return prev;
+      return withPublished(prev, buildPost(draftToPayload(draft)));
+    });
+  }, []);
+
+  // Send scheduled posts when they fall due (the backend's publish worker does this for real)
+  useEffect(() => {
+    if (!mounted) return;
+    const tick = () => {
+      const now = Date.now();
+      setData((prev) => {
+        if (!prev) return prev;
+        const due = prev.socialDrafts.filter((d) => d.status === "scheduled" && d.scheduledFor && new Date(d.scheduledFor).getTime() <= now);
+        return due.reduce((acc, d) => withPublished(acc, buildPost(draftToPayload(d))), prev);
+      });
+    };
+    tick();
+    const timer = setInterval(tick, 15000);
+    return () => clearInterval(timer);
+  }, [mounted]);
+
+  const recallPost = useCallback((postId: string, reason: string) => {
     setData((prev) => {
       if (!prev) return prev;
-      const activityItem: ActivityItem = {
-        id: `a-${stamp}`,
-        action: "published",
-        actor: post.postedBy,
-        target: `${post.platform}: ${post.headline}`,
-        timestamp: created.postedAt,
-        details: postUrl,
+      const post = prev.socialPosts.find((p) => p.id === postId);
+      if (!post) return prev;
+      const recalled: ActivityItem = { id: `a-${Date.now()}`, action: "rejected", actor: post.postedBy, target: `Recalled ${post.platform}: ${post.headline}`, timestamp: new Date().toISOString(), details: reason };
+      return {
+        ...prev,
+        socialPosts: prev.socialPosts.map((p) => (p.id === postId ? { ...p, status: "recalled" as const, recalledAt: new Date().toISOString(), recallReason: reason } : p)),
+        activity: [recalled, ...prev.activity],
       };
-      return { ...prev, socialPosts: [created, ...prev.socialPosts], activity: [activityItem, ...prev.activity] };
     });
-    return created;
+  }, []);
+
+  const saveHashtagRule = useCallback((rule: Omit<HashtagRule, "id"> & { id?: string }) => {
+    setData((prev) => {
+      if (!prev) return prev;
+      const next = { ...rule, id: rule.id ?? `rule-${Date.now()}` };
+      const exists = prev.hashtagRules.some((r) => r.id === next.id);
+      return { ...prev, hashtagRules: exists ? prev.hashtagRules.map((r) => (r.id === next.id ? next : r)) : [...prev.hashtagRules, next] };
+    });
+  }, []);
+
+  const deleteHashtagRule = useCallback((id: string) => {
+    setData((prev) => (prev ? { ...prev, hashtagRules: prev.hashtagRules.filter((r) => r.id !== id) } : prev));
+  }, []);
+
+  const saveHandle = useCallback((entry: Omit<HandleEntry, "id" | "verifiedAt"> & { id?: string }) => {
+    setData((prev) => {
+      if (!prev) return prev;
+      const next: HandleEntry = { ...entry, id: entry.id ?? `handle-${Date.now()}`, verifiedAt: new Date().toISOString() };
+      const exists = prev.handleDirectory.some((h) => h.id === next.id);
+      return { ...prev, handleDirectory: exists ? prev.handleDirectory.map((h) => (h.id === next.id ? next : h)) : [...prev.handleDirectory, next] };
+    });
+  }, []);
+
+  const deleteHandle = useCallback((id: string) => {
+    setData((prev) => (prev ? { ...prev, handleDirectory: prev.handleDirectory.filter((h) => h.id !== id) } : prev));
   }, []);
 
   // ─── Notifications ──────────────────────────────────────────────────────
@@ -300,6 +443,25 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
         ftpSyncedAt: data.ftpSyncedAt,
         fetchFtpNews,
         publishSocialPost,
+        socialDrafts: data.socialDrafts,
+        pendingPosts,
+        queuePost,
+        undoPost,
+        dismissPending,
+        saveDraft,
+        scheduleDraft,
+        rejectDraft,
+        restoreDraft,
+        deleteDraft,
+        rescheduleDraft,
+        publishDraftNow,
+        recallPost,
+        hashtagRules: data.hashtagRules,
+        handleDirectory: data.handleDirectory,
+        saveHashtagRule,
+        deleteHashtagRule,
+        saveHandle,
+        deleteHandle,
         markNotificationRead,
         markAllNotificationsRead,
         unreadCount,

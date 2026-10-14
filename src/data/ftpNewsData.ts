@@ -1,4 +1,4 @@
-import { FtpNewsItem, SocialPost } from "@/types/newsroom";
+import { FtpNewsItem, HandleEntry, HashtagRule, SocialDraft, SocialPost } from "@/types/newsroom";
 import { CHANNEL } from "@/constants";
 
 const img = (id: string) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=1400&q=80`;
@@ -16,6 +16,7 @@ const FTP_SEED: FtpSeed[] = [
     tag: "big_breaking",
     area: "Jaipur",
     people: ["Bhajanlal Sharma", "CMO Rajasthan", "Jaipur Metro"],
+    aiMentions: [{ entity: "Jaipur Development Authority", x: "@JDAJaipur", instagram: "@jdajaipur", confidence: 0.72 }],
     ftpPath: "/var/ftp/incoming/breaking/2026-10-13/JPR_METRO_PHASE2/",
     media: [
       { kind: "image", url: img("photo-1544620347-c4fd4a3d5957"), fileName: "JPR_METRO_01.jpg" },
@@ -30,6 +31,7 @@ const FTP_SEED: FtpSeed[] = [
     tag: "breaking",
     area: "Kota",
     people: ["NTA", "Rajasthan Police"],
+    aiMentions: [{ entity: "Kota District Collector", x: "@DMKota", instagram: "@dm_kota", confidence: 0.61 }],
     ftpPath: "/var/ftp/incoming/breaking/2026-10-13/KOTA_NEET_PROTEST/",
     media: [
       {
@@ -108,6 +110,7 @@ const FTP_INCOMING: FtpSeed[] = [
     tag: "big_breaking",
     area: "Ajmer",
     people: ["Rajasthan Tourism"],
+    aiMentions: [{ entity: "Pushkar Mela", x: "@PushkarMela", instagram: "@pushkarmela", confidence: 0.54 }],
     ftpPath: "/var/ftp/incoming/breaking/2026-10-13/PUSHKAR_FAIR_DATES/",
     media: [{ kind: "image", url: img("photo-1609949279531-cf48d64bed89"), fileName: "PUSHKAR_FAIR_01.jpg" }],
   },
@@ -181,3 +184,53 @@ export const PEOPLE_HANDLES: Record<string, { x: string; instagram: string }> = 
   "Forest Department": { x: "@ForestRajasthan", instagram: "@forestrajasthan" },
   "Rajasthan Tourism": { x: "@my_rajasthan", instagram: "@rajasthan_tourism" },
 };
+
+// ─── Editable library seeds ───────────────────────────────────────────────────
+export function generateHashtagRules(): HashtagRule[] {
+  return Object.entries(AREA_HASHTAGS).map(([area, hashtags], i) => ({ id: `rule-${i + 1}`, area, hashtags }));
+}
+
+export function generateHandleDirectory(): HandleEntry[] {
+  const verifiedAt = new Date(Date.now() - 6 * 86400000).toISOString();
+  return Object.entries(PEOPLE_HANDLES).map(([entity, handles], i) => ({ id: `handle-${i + 1}`, entity, ...handles, verifiedAt }));
+}
+
+/** One scheduled and one rejected draft so every console tab has something to show. */
+export function generateDraftSeed(): SocialDraft[] {
+  const now = Date.now();
+  const thumb = (id: string) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=320&q=60`;
+  return [
+    {
+      id: "draft-seed-1",
+      newsId: "ftp-3",
+      platform: "X (Twitter)",
+      status: "scheduled",
+      headline: "बीकानेर सोलर पार्क ने पार किया 3,000 मेगावाट का आंकड़ा",
+      text: "बीकानेर सोलर पार्क की क्षमता 3,000 मेगावाट पहुंची। देश के सबसे बड़े सोलर पार्कों में शामिल।\n\n#BreakingNews #Bikaner #Rajasthan #FirstIndiaNews",
+      hashtags: ["#BreakingNews", "#Bikaner", "#Rajasthan", "#FirstIndiaNews"],
+      mentions: [],
+      mediaKind: "image",
+      thumbUrl: thumb("photo-1508514177221-188b1cf16e9d"),
+      postedBy: "Digital Content Team",
+      format: "x",
+      scheduledFor: new Date(now + 45 * 60000).toISOString(),
+      updatedAt: new Date(now - 10 * 60000).toISOString(),
+    },
+    {
+      id: "draft-seed-2",
+      newsId: "ftp-4",
+      platform: "Instagram",
+      status: "rejected",
+      headline: "इंदिरा गांधी नहर में पानी बढ़ाया, किसानों को बड़ी राहत",
+      text: "इंदिरा गांधी नहर में पानी बढ़ाया गया।",
+      hashtags: [],
+      mentions: [],
+      mediaKind: "image",
+      thumbUrl: thumb("photo-1500382017468-9049fed747ef"),
+      postedBy: "Digital Content Team",
+      rejectReason: "duplicate",
+      rejectNote: "Same update went out as a Reel yesterday evening.",
+      updatedAt: new Date(now - 25 * 60000).toISOString(),
+    },
+  ];
+}

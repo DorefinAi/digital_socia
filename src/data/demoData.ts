@@ -12,8 +12,11 @@ import {
   AIContentStatus,
   FtpNewsItem,
   SocialPost,
+  SocialDraft,
+  HashtagRule,
+  HandleEntry,
 } from "@/types/newsroom";
-import { generateFtpNews, generatePostedSeed } from "@/data/ftpNewsData";
+import { generateDraftSeed, generateFtpNews, generateHandleDirectory, generateHashtagRules, generatePostedSeed } from "@/data/ftpNewsData";
 
 // ─── Rajasthan Regional Reporters ──────────────────────────────────────────────
 export const DEMO_REPORTERS: Reporter[] = [
@@ -273,12 +276,15 @@ export interface NewsroomData {
   reporters: Reporter[];
   ftpNews: FtpNewsItem[];
   socialPosts: SocialPost[];
+  socialDrafts: SocialDraft[];
+  hashtagRules: HashtagRule[];
+  handleDirectory: HandleEntry[];
   ftpSyncedAt: string;
   version?: string;
 }
 
 const STORAGE_KEY = "newsroom_data";
-const CURRENT_VERSION = "v6_breaking_desk";
+const CURRENT_VERSION = "v7_socia_console";
 
 export function generateAndStoreData(): NewsroomData {
   const data: NewsroomData = {
@@ -290,6 +296,9 @@ export function generateAndStoreData(): NewsroomData {
     reporters: DEMO_REPORTERS,
     ftpNews: generateFtpNews(),
     socialPosts: generatePostedSeed(),
+    socialDrafts: generateDraftSeed(),
+    hashtagRules: generateHashtagRules(),
+    handleDirectory: generateHandleDirectory(),
     ftpSyncedAt: new Date().toISOString(),
     version: CURRENT_VERSION,
   };
