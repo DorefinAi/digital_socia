@@ -2,8 +2,8 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Box, Typography, Button, TextField, InputAdornment, Tabs, Tab, Snackbar, CircularProgress, LinearProgress, ToggleButtonGroup, ToggleButton } from "@mui/material";
-import { Search, RefreshCw, LayoutGrid, List } from "lucide-react";
+import { Box, Typography, TextField, InputAdornment, Tabs, Tab, Snackbar, LinearProgress, ToggleButtonGroup, ToggleButton } from "@mui/material";
+import { Search, LayoutGrid, List, ArrowUp } from "lucide-react";
 import { useThemeMode } from "@/providers/MuiProvider";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { BreakingTag, FtpNewsItem, PostPayload, ROLE_LABELS, SocialPlatform } from "@/types/newsroom";
@@ -14,8 +14,9 @@ import { RejectDialog } from "./actionDialogs";
 import { RejectedList, ScheduledList } from "./DraftLists";
 import TemplatesPanel from "./TemplatesPanel";
 import UndoToast from "./UndoToast";
+import FtpStatus from "./FtpStatus";
 import { QueueCards, QueueTable } from "./QueueViews";
-import { PLATFORM_META, PlatformIcon, timeAgo } from "./shared";
+import { PLATFORM_META, PlatformIcon } from "./shared";
 
 type TagFilter = "all" | BreakingTag;
 type ConsoleTab = "queue" | "scheduled" | "published" | "rejected" | "templates";
@@ -41,7 +42,7 @@ const isToday = (iso: string) => new Date(iso).toDateString() === new Date().toD
 const tileSx = { backgroundColor: "background.paper", borderRadius: "12px", px: 2, py: 1.5, border: "1px solid", borderColor: "divider", boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.03)" };
 
 export default function BreakingDesk({ platform }: { platform: SocialPlatform }) {
-  const { ftpNews, socialPosts, socialDrafts, pendingPosts, ftpSyncedAt, fetchFtpNews, rejectDraft, permissions, currentRole } = useNewsroom();
+  const { ftpNews, socialPosts, socialDrafts, pendingPosts, rejectDraft, permissions, currentRole } = useNewsroom();
   const meta = PLATFORM_META[platform];
   const otherPlatforms = (["X (Twitter)", "Instagram", "Facebook"] as SocialPlatform[]).filter((p) => p !== platform);
 
@@ -63,7 +64,11 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   );
   const [rejecting, setRejecting] = useState<FtpNewsItem | null>(null);
   const [focusIndex, setFocusIndex] = useState(0);
-  const [fetching, setFetching] = useState(false);
+  // Stories the operator has already seen; new arrivals wait behind a banner so the list never moves under the cursor
+  const [seenUntil, setSeenUntil] = useState(() => Date.now());
+  // A second of slack covers stories stamped by a fetch that is finishing as the operator clicks
+  const revealNew = () => setSeenUntil(Date.now() + 1000);
+  const isSeen = (n: FtpNewsItem) => new Date(n.receivedAt).getTime() <= seenUntil;
   const [notice, setNotice] = useState("");
 
   const drafts = useMemo(() => socialDrafts.filter((d) => d.platform === platform), [socialDrafts, platform]);
@@ -75,7 +80,9 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     const status = draftFor(n.id)?.status;
     return !isLiveOn(socialPosts, n.id, platform) && !pendingHere.has(n.id) && (!status || status === "saved");
   });
+  const arrived = queue.filter((n) => !isSeen(n));
   const visible = queue.filter((n) => {
+    if (!isSeen(n)) return false;
     const q = query.trim().toLowerCase();
     const matchesQuery = !q || [n.headline, n.shortText, n.area, n.ftpPath].some((field) => field.toLowerCase().includes(q));
     return matchesQuery && (tagFilter === "all" || n.tag === tagFilter);
@@ -129,15 +136,6 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     return () => window.removeEventListener("keydown", onKey);
   }, [tab, composing, rejecting, visible.length, focused, permissions.canApproveSocialContent]);
 
-  const handleFetch = () => {
-    setFetching(true);
-    // Brief delay stands in for the FTP round-trip
-    setTimeout(() => {
-      const added = fetchFtpNews();
-      setFetching(false);
-      setNotice(added ? `${added} new breaking ${added === 1 ? "story" : "stories"} pulled from FTP` : "FTP checked. No new breaking stories.");
-    }, 700);
-  };
 
   const openStory = (newsId: string) => {
     const item = ftpNews.find((n) => n.id === newsId);
@@ -167,7 +165,6 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
           </Typography>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
-          <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>FTP checked {timeAgo(ftpSyncedAt)}</Typography>
           <ToggleButtonGroup
             value={viewMode}
             exclusive
@@ -195,15 +192,13 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
               <List size={15} /> List
             </ToggleButton>
           </ToggleButtonGroup>
-          <Button
-            variant="outlined"
-            onClick={handleFetch}
-            disabled={fetching}
-            startIcon={fetching ? <CircularProgress size={14} color="inherit" /> : <RefreshCw size={15} />}
-            sx={{ fontWeight: 600, borderColor: "divider", color: "text.primary" }}
-          >
-            {fetching ? "Checking FTP" : "Fetch from FTP"}
-          </Button>
+          <FtpStatus
+            onManualFetch={(added) => {
+              // A check the operator asked for shows its results straight away
+              revealNew();
+              setNotice(added ? `${added} new breaking ${added === 1 ? "story" : "stories"} pulled from FTP` : "FTP checked. No new breaking stories.");
+            }}
+          />
         </Box>
       </Box>
 
@@ -298,11 +293,21 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       {/* Queue */}
       {tab === "queue" && (
         <>
+          {arrived.length > 0 && (
+            <Box
+              component="button"
+              onClick={revealNew}
+              sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 1, py: 1, border: "1px solid", borderColor: "success.main", borderRadius: "10px", backgroundColor: (t) => (t.palette.mode === "light" ? "#E8F5E9" : "#12301A"), color: "success.main", fontFamily: "inherit", fontSize: "0.8125rem", fontWeight: 700, cursor: "pointer", "&:hover": { filter: "brightness(0.97)" } }}
+            >
+              <ArrowUp size={15} />
+              {arrived.length} new breaking {arrived.length === 1 ? "story" : "stories"} from FTP · Show
+            </Box>
+          )}
           {visible.length === 0 ? (
             <Box sx={{ py: 6, textAlign: "center", border: "1px dashed", borderColor: "divider", borderRadius: "12px" }}>
               <Typography sx={{ fontSize: "0.9375rem", fontWeight: 600 }}>{queue.length === 0 ? "All drafts cleared" : "No stories match these filters"}</Typography>
               <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", mt: 0.5 }}>
-                {queue.length === 0 ? "New breaking stories will appear here. Fetch from FTP to check now." : "Clear the search or switch the tag filter."}
+                {queue.length === 0 ? "New breaking stories appear here as the FTP is checked automatically." : "Clear the search or switch the tag filter."}
               </Typography>
             </Box>
           ) : (

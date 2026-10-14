@@ -33,6 +33,7 @@ import Link from "next/link";
 import { Button } from "@mui/material";
 import { SocialPlatform } from "@/types/newsroom";
 import PostedPostsList from "./BreakingDesk/PostedPostsList";
+import FtpStatus from "./BreakingDesk/FtpStatus";
 import { PLATFORM_META, PlatformIcon, TagChip, timeAgo } from "./BreakingDesk/shared";
 
 function AnimatedCounter({ value, duration = 1200 }: { value: number; duration?: number }) {
@@ -245,6 +246,9 @@ const NewsroomDashboard: React.FC = () => {
           <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1.5 }}>
             <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>Breaking Queue (FTP)</Typography>
             <Chip label={`${breakingQueue.length} to post`} size="small" sx={{ fontSize: "0.6875rem", height: 22, fontWeight: 600, borderRadius: "6px" }} />
+          </Box>
+          <Box sx={{ mb: 1.5 }}>
+            <FtpStatus />
           </Box>
           {breakingQueue.length === 0 ? (
             <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", py: 3, textAlign: "center" }}>

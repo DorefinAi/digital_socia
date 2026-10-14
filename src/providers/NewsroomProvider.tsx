@@ -24,7 +24,7 @@ import {
   HashtagRule,
   HandleEntry,
 } from "@/types/newsroom";
-import { fetchNewFtpNews } from "@/data/ftpNewsData";
+import { FtpFetchRun, fetchNewFtpNews } from "@/data/ftpNewsData";
 import { UNDO_SECONDS, buildPost, draftToPayload, withDraft, withPublished } from "@/data/socialDesk";
 import {
   generateAndStoreData,
@@ -63,6 +63,9 @@ interface NewsroomContextType {
   ftpSyncedAt: string;
   /** Pulls newly tagged breaking items from the FTP; returns how many arrived */
   fetchFtpNews: () => number;
+  ftpFetchLog: FtpFetchRun[];
+  /** Epoch ms of the next automatic FTP check */
+  nextFetchAt: number;
   /** Sends a post immediately, with no undo window */
   publishSocialPost: (post: PostPayload) => SocialPost;
   socialDrafts: SocialDraft[];
@@ -113,6 +116,9 @@ interface NewsroomContextType {
 const NewsroomContext = createContext<NewsroomContextType | undefined>(undefined);
 
 const ROLE_STORAGE_KEY = "newsroom_role";
+
+/** Seconds between automatic FTP checks in the demo. The spec has the backend poll every 5 seconds. */
+export const FTP_POLL_SECONDS = 20;
 
 export function NewsroomProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<NewsroomData | null>(null);
@@ -206,15 +212,44 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ─── Breaking Desk ──────────────────────────────────────────────────────
-  const fetchFtpNews = useCallback(() => {
-    const incoming = fetchNewFtpNews((data?.ftpNews ?? []).map((n) => n.id));
+  // Latest data for callbacks that run outside render (timers)
+  const dataRef = useRef(data);
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
+
+  // Every check, manual or automatic, schedules the next one, so the countdown stays honest
+  const fetchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const scheduleNext = useRef<() => void>(() => undefined);
+  const [nextFetchAt, setNextFetchAt] = useState(() => Date.now() + FTP_POLL_SECONDS * 1000);
+
+  const runFtpFetch = useCallback((trigger: FtpFetchRun["trigger"]): number => {
+    scheduleNext.current();
+    const current = dataRef.current;
+    if (!current) return 0;
+    const incoming = fetchNewFtpNews(current.ftpNews.map((n) => n.id));
+    const run: FtpFetchRun = { id: `fetch-${Date.now()}`, at: new Date().toISOString(), trigger, added: incoming.length, headlines: incoming.map((n) => n.headline) };
     setData((prev) => {
       if (!prev) return prev;
       const fresh = incoming.filter((n) => !prev.ftpNews.some((p) => p.id === n.id));
-      return { ...prev, ftpNews: [...fresh, ...prev.ftpNews], ftpSyncedAt: new Date().toISOString() };
+      return { ...prev, ftpNews: [...fresh, ...prev.ftpNews], ftpSyncedAt: run.at, ftpFetchLog: [run, ...(prev.ftpFetchLog ?? [])].slice(0, 20) };
     });
     return incoming.length;
-  }, [data?.ftpNews]);
+  }, []);
+
+  const fetchFtpNews = useCallback(() => runFtpFetch("manual"), [runFtpFetch]);
+
+  // The FTP is checked on a timer from every page; the backend's ingest worker does this for real
+  useEffect(() => {
+    if (!mounted) return;
+    scheduleNext.current = () => {
+      clearTimeout(fetchTimer.current);
+      fetchTimer.current = setTimeout(() => runFtpFetch("auto"), FTP_POLL_SECONDS * 1000);
+      setNextFetchAt(Date.now() + FTP_POLL_SECONDS * 1000);
+    };
+    scheduleNext.current();
+    return () => clearTimeout(fetchTimer.current);
+  }, [mounted, runFtpFetch]);
 
   const publishSocialPost = useCallback((payload: PostPayload) => {
     const post = buildPost(payload);
@@ -442,6 +477,8 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
         socialPosts: data.socialPosts,
         ftpSyncedAt: data.ftpSyncedAt,
         fetchFtpNews,
+        ftpFetchLog: data.ftpFetchLog ?? [],
+        nextFetchAt,
         publishSocialPost,
         socialDrafts: data.socialDrafts,
         pendingPosts,

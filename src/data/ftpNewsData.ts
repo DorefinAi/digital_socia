@@ -114,6 +114,50 @@ const FTP_INCOMING: FtpSeed[] = [
     ftpPath: "/var/ftp/incoming/breaking/2026-10-13/PUSHKAR_FAIR_DATES/",
     media: [{ kind: "image", url: img("photo-1609949279531-cf48d64bed89"), fileName: "PUSHKAR_FAIR_01.jpg" }],
   },
+  {
+    id: "ftp-9",
+    headline: "जोधपुर में भीषण गर्मी, पारा 44 डिग्री के पार",
+    body: "जोधपुर में गर्मी ने रिकॉर्ड तोड़ दिया है। मौसम विभाग ने अगले तीन दिन लू का अलर्ट जारी किया है। जिला प्रशासन ने दोपहर में बाहर न निकलने की सलाह दी है।",
+    shortText: "जोधपुर में पारा 44 डिग्री के पार। मौसम विभाग ने तीन दिन लू का अलर्ट जारी किया।",
+    tag: "breaking",
+    area: "Jodhpur",
+    people: [],
+    ftpPath: "/var/ftp/incoming/breaking/2026-10-14/JDH_HEATWAVE/",
+    media: [{ kind: "image", url: img("photo-1599661046289-e31897846e41"), fileName: "JDH_HEATWAVE_01.jpg" }],
+  },
+  {
+    id: "ftp-10",
+    headline: "जयपुर में ट्रैफिक के नए नियम लागू, चालान की राशि बढ़ी",
+    body: "जयपुर ट्रैफिक पुलिस ने शहर में नए नियम लागू कर दिए हैं। बिना हेलमेट और रेड लाइट जंप पर अब ज्यादा जुर्माना लगेगा। नियम सोमवार से प्रभावी होंगे।",
+    shortText: "जयपुर में ट्रैफिक के नए नियम लागू। बिना हेलमेट और रेड लाइट जंप पर अब ज्यादा जुर्माना।",
+    tag: "breaking",
+    area: "Jaipur",
+    people: ["Rajasthan Police"],
+    ftpPath: "/var/ftp/incoming/breaking/2026-10-14/JPR_TRAFFIC_RULES/",
+    media: [{ kind: "image", url: img("photo-1544620347-c4fd4a3d5957"), fileName: "JPR_TRAFFIC_01.jpg" }],
+  },
+  {
+    id: "ftp-11",
+    headline: "कोटा में कोचिंग संस्थानों के लिए नई गाइडलाइन जारी",
+    body: "जिला प्रशासन ने कोटा के कोचिंग संस्थानों के लिए नई गाइडलाइन जारी की है। छात्रों की काउंसलिंग और साप्ताहिक अवकाश अनिवार्य किया गया है।",
+    shortText: "कोटा के कोचिंग संस्थानों के लिए नई गाइडलाइन। काउंसलिंग और साप्ताहिक अवकाश अनिवार्य।",
+    tag: "big_breaking",
+    area: "Kota",
+    people: [],
+    ftpPath: "/var/ftp/incoming/breaking/2026-10-14/KOTA_COACHING_RULES/",
+    media: [{ kind: "image", url: img("photo-1523240795612-9a054b0db644"), fileName: "KOTA_COACHING_01.jpg" }],
+  },
+  {
+    id: "ftp-12",
+    headline: "बीकानेर में ऊंट उत्सव की तैयारियां शुरू",
+    body: "बीकानेर में होने वाले अंतरराष्ट्रीय ऊंट उत्सव की तैयारियां शुरू हो गई हैं। पर्यटन विभाग इस बार नए सांस्कृतिक कार्यक्रम जोड़ रहा है।",
+    shortText: "बीकानेर में ऊंट उत्सव की तैयारियां शुरू। इस बार नए सांस्कृतिक कार्यक्रम जुड़ेंगे।",
+    tag: "breaking",
+    area: "Bikaner",
+    people: ["Rajasthan Tourism"],
+    ftpPath: "/var/ftp/incoming/breaking/2026-10-14/BKN_CAMEL_FESTIVAL/",
+    media: [{ kind: "image", url: img("photo-1609949279531-cf48d64bed89"), fileName: "BKN_CAMEL_01.jpg" }],
+  },
 ];
 
 export function generateFtpNews(): FtpNewsItem[] {
@@ -233,4 +277,13 @@ export function generateDraftSeed(): SocialDraft[] {
       updatedAt: new Date(now - 25 * 60000).toISOString(),
     },
   ];
+}
+
+export interface FtpFetchRun {
+  id: string;
+  at: string;
+  /** "auto" for the timed check, "manual" when an operator pressed Check now */
+  trigger: "auto" | "manual";
+  added: number;
+  headlines: string[];
 }

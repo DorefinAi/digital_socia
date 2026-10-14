@@ -16,7 +16,7 @@ import {
   HashtagRule,
   HandleEntry,
 } from "@/types/newsroom";
-import { generateDraftSeed, generateFtpNews, generateHandleDirectory, generateHashtagRules, generatePostedSeed } from "@/data/ftpNewsData";
+import { FtpFetchRun, generateDraftSeed, generateFtpNews, generateHandleDirectory, generateHashtagRules, generatePostedSeed } from "@/data/ftpNewsData";
 
 // ─── Rajasthan Regional Reporters ──────────────────────────────────────────────
 export const DEMO_REPORTERS: Reporter[] = [
@@ -280,11 +280,13 @@ export interface NewsroomData {
   hashtagRules: HashtagRule[];
   handleDirectory: HandleEntry[];
   ftpSyncedAt: string;
+  /** Most recent FTP checks, newest first */
+  ftpFetchLog: FtpFetchRun[];
   version?: string;
 }
 
 const STORAGE_KEY = "newsroom_data";
-const CURRENT_VERSION = "v7_socia_console";
+const CURRENT_VERSION = "v8_auto_fetch";
 
 export function generateAndStoreData(): NewsroomData {
   const data: NewsroomData = {
@@ -300,6 +302,7 @@ export function generateAndStoreData(): NewsroomData {
     hashtagRules: generateHashtagRules(),
     handleDirectory: generateHandleDirectory(),
     ftpSyncedAt: new Date().toISOString(),
+    ftpFetchLog: [],
     version: CURRENT_VERSION,
   };
 
