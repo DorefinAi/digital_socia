@@ -163,6 +163,29 @@ export function PostMock({ platform, text, children }: { platform: SocialPlatfor
     );
   }
 
+  if (platform === "Facebook") {
+    return (
+      <Box sx={{ backgroundColor: "#fff", color: "#050505", borderRadius: "12px", border: "1px solid #DADDE1", overflow: "hidden" }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, p: 1.5 }}>
+          {avatar}
+          <Box>
+            <Typography sx={{ fontSize: "0.9375rem", fontWeight: 700, lineHeight: 1.2 }}>First India News</Typography>
+            <Typography sx={{ fontSize: "0.75rem", color: "#65676B" }}>Just now · Public</Typography>
+          </Box>
+        </Box>
+        <Typography sx={{ fontSize: "0.9375rem", lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", px: 1.5, pb: 1.25 }}>
+          <RichPostText text={text} linkColor="#1877F2" />
+        </Typography>
+        <Box sx={{ lineHeight: 0, backgroundColor: "#000", display: "flex", justifyContent: "center" }}>{children}</Box>
+        <Box sx={{ display: "flex", justifyContent: "space-around", py: 1, color: "#65676B", fontSize: "0.875rem", fontWeight: 600, borderTop: "1px solid #DADDE1", mx: 1.5 }}>
+          <span>Like</span>
+          <span>Comment</span>
+          <span>Share</span>
+        </Box>
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ backgroundColor: "#fff", color: "#111", borderRadius: "12px", border: "1px solid #DBDBDB", overflow: "hidden" }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, p: 1.25 }}>

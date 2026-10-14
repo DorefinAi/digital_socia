@@ -3,6 +3,8 @@ import { FtpNewsItem, HandleEntry, HashtagRule, SocialPlatform } from "@/types/n
 export const PLATFORM_LIMITS: Record<SocialPlatform, { text: number; hashtags: number; mentions: number }> = {
   "X (Twitter)": { text: 280, hashtags: 6, mentions: 10 },
   Instagram: { text: 2200, hashtags: 30, mentions: 20 },
+  // Facebook allows far longer posts; this keeps captions readable in the feed
+  Facebook: { text: 5000, hashtags: 30, mentions: 50 },
 };
 
 // X counts most Latin and Indic scripts as 1 and everything else (emoji, CJK) as 2.
@@ -10,7 +12,7 @@ const isSingleWeight = (cp: number) =>
   cp <= 4351 || (cp >= 8192 && cp <= 8205) || (cp >= 8208 && cp <= 8223) || (cp >= 8242 && cp <= 8247);
 
 export function countChars(text: string, platform: SocialPlatform): number {
-  if (platform === "Instagram") return text.length;
+  if (platform !== "X (Twitter)") return text.length;
   let total = 0;
   for (const ch of text.normalize("NFC")) {
     total += isSingleWeight(ch.codePointAt(0) ?? 0) ? 1 : 2;
@@ -67,7 +69,8 @@ export function suggestHashtags(item: FtpNewsItem, rules: HashtagRule[]): TagSug
 
 /** Directory matches come first and are trusted; model suggestions follow and need a click to accept. */
 export function suggestMentions(item: FtpNewsItem, platform: SocialPlatform, directory: HandleEntry[]): TagSuggestion[] {
-  const pick = (h: { x: string; instagram: string }) => (platform === "Instagram" ? h.instagram : h.x);
+  // Facebook tagging uses the same handles as Instagram until the directory carries Page names
+  const pick = (h: { x: string; instagram: string }) => (platform === "X (Twitter)" ? h.x : h.instagram);
   const known = item.people.flatMap((name) => {
     const entry = directory.find((h) => h.entity.toLowerCase() === name.toLowerCase());
     return entry ? [{ value: pick(entry), reason: `Directory: ${name}` }] : [];

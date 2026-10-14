@@ -43,7 +43,7 @@ const tileSx = { backgroundColor: "background.paper", borderRadius: "12px", px: 
 export default function BreakingDesk({ platform }: { platform: SocialPlatform }) {
   const { ftpNews, socialPosts, socialDrafts, pendingPosts, ftpSyncedAt, fetchFtpNews, rejectDraft, permissions, currentRole } = useNewsroom();
   const meta = PLATFORM_META[platform];
-  const otherPlatform: SocialPlatform = platform === "Instagram" ? "X (Twitter)" : "Instagram";
+  const otherPlatforms = (["X (Twitter)", "Instagram", "Facebook"] as SocialPlatform[]).filter((p) => p !== platform);
 
   const { mode } = useThemeMode();
   const [tab, setTab] = useState<ConsoleTab>("queue");
@@ -314,7 +314,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
                 onOpen: setComposing,
                 onReject: setRejecting,
                 isSaved: (newsId: string) => draftFor(newsId)?.status === "saved",
-                liveElsewhere: (newsId: string) => (isLiveOn(socialPosts, newsId, otherPlatform) ? PLATFORM_META[otherPlatform].short : null),
+                liveElsewhere: (newsId: string) => otherPlatforms.filter((p) => isLiveOn(socialPosts, newsId, p)).map((p) => PLATFORM_META[p].short).join(", ") || null,
                 canAct: permissions.canApproveSocialContent,
               };
               return viewMode === "list" ? <QueueTable {...props} /> : <QueueCards {...props} />;

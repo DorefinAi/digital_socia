@@ -521,6 +521,7 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
                   ref={canvasRef}
                   media={media}
                   format={format}
+                  handle={`@${meta.handle}`}
                   tag={item.tag}
                   layout={layout}
                   onLayoutChange={setLayout}
@@ -625,7 +626,7 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
           <Box sx={{ order: { xs: 3, lg: 0 }, flexShrink: 0, p: 2, overflowY: { lg: "auto" }, display: "flex", flexDirection: "column", gap: 2.5, backgroundColor: "background.paper", borderLeft: { lg: "1px solid" }, borderColor: "divider" }}>
             <Box>
               <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 0.75 }}>
-                <Typography sx={{ fontSize: "0.9375rem", fontWeight: 700 }}>{isX ? "Tweet" : "Caption"}</Typography>
+                <Typography sx={{ fontSize: "0.9375rem", fontWeight: 700 }}>{isX ? "Tweet" : platform === "Facebook" ? "Post text" : "Caption"}</Typography>
                 <Box sx={{ display: "flex", gap: 0.25 }}>
                   <Button size="small" onClick={makeCrisp} startIcon={<Scissors size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem" }}>
                     Make it crisp
@@ -693,7 +694,7 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
         <Box sx={{ p: 2.5, backgroundColor: "action.hover", overflowY: "auto" }}>
           <Box sx={{ maxWidth: isX ? 520 : 380, mx: "auto" }}>
             <PostMock platform={platform} text={finalText}>
-              {previewOpen && <TemplateCanvas media={media} format={format} tag={item.tag} layout={layout} style={{ width: `min(100%, calc(58vh * ${frame.w} / ${frame.h}))` }} />}
+              {previewOpen && <TemplateCanvas media={media} format={format} handle={`@${meta.handle}`} tag={item.tag} layout={layout} style={{ width: `min(100%, calc(58vh * ${frame.w} / ${frame.h}))` }} />}
             </PostMock>
           </Box>
         </Box>

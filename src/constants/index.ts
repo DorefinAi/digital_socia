@@ -6,4 +6,5 @@ export const CHANNEL = {
   name: "FIRST INDIA NEWS",
   xHandle: "1stIndiaNews",
   instagramHandle: "1stindianews",
+  facebookPage: "1stIndiaNews",
 };

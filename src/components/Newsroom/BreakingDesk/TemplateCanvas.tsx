@@ -79,7 +79,7 @@ function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number
 }
 
 /** Paints the fixed breaking-news template and returns where the headline block landed. */
-function drawTemplate(ctx: CanvasRenderingContext2D, format: TemplateFormat, source: Source | null, layout: TemplateLayout, tag: BreakingTag): Rect | null {
+function drawTemplate(ctx: CanvasRenderingContext2D, format: TemplateFormat, source: Source | null, layout: TemplateLayout, tag: BreakingTag, handle: string): Rect | null {
   const { w: W, h: H } = TEMPLATE_FORMATS[format];
   const u = Math.min(W, H) / 1080;
   const pad = 56 * u;
@@ -149,7 +149,7 @@ function drawTemplate(ctx: CanvasRenderingContext2D, format: TemplateFormat, sou
   ctx.fillStyle = "#FFFFFF";
   ctx.font = `700 ${28 * u}px ${latinFontStack()}`;
   ctx.textAlign = "left";
-  ctx.fillText(`@${format === "x" ? CHANNEL.xHandle : CHANNEL.instagramHandle}`, pad, H - bandH / 2 + 2 * u);
+  ctx.fillText(handle, pad, H - bandH / 2 + 2 * u);
   ctx.textAlign = "right";
   ctx.font = `600 ${26 * u}px ${latinFontStack()}`;
   const stamp = new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -198,6 +198,8 @@ export interface TemplateCanvasHandle {
 interface TemplateCanvasProps {
   media: FtpMedia;
   format: TemplateFormat;
+  /** Account name printed in the footer band, e.g. "@1stIndiaNews" */
+  handle?: string;
   tag: BreakingTag;
   layout: TemplateLayout;
   /** Passing this makes the canvas editable: click to select, drag to move */
@@ -216,12 +218,12 @@ interface TemplateCanvasProps {
 
 const SELECT_BLUE = "#2F7BFF";
 
-export default function TemplateCanvas({ media, format, tag, layout, onLayoutChange, selection, onSelect, onEditHeadline, paused, segments, onDuration, onTime, ref, style }: TemplateCanvasProps) {
+export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHandle}`, tag, layout, onLayoutChange, selection, onSelect, onEditHeadline, paused, segments, onDuration, onTime, ref, style }: TemplateCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sourceRef = useRef<Source | null>(null);
   const rectRef = useRef<Rect | null>(null);
   const dragRef = useRef<{ target: "headline" | "background"; x: number; y: number; layout: TemplateLayout; grabOffset: number } | null>(null);
-  const stateRef = useRef({ format, tag, layout });
+  const stateRef = useRef({ format, tag, layout, handle });
   const playbackRef = useRef({ segments, onDuration, onTime, recording: false, lastReport: 0 });
   // Headline box as percentages of the frame, for the selection outline
   const [box, setBox] = useState<Rect | null>(null);
@@ -230,8 +232,8 @@ export default function TemplateCanvas({ media, format, tag, layout, onLayoutCha
   const paint = useCallback(() => {
     const ctx = canvasRef.current?.getContext("2d");
     if (!ctx) return;
-    const { format: f, tag: t, layout: l } = stateRef.current;
-    const rect = drawTemplate(ctx, f, sourceRef.current, l, t);
+    const { format: f, tag: t, layout: l, handle: h } = stateRef.current;
+    const rect = drawTemplate(ctx, f, sourceRef.current, l, t, h);
     rectRef.current = rect;
     const { w: W, h: H } = TEMPLATE_FORMATS[f];
     const next = rect && { x: (rect.x / W) * 100, y: (rect.y / H) * 100, w: (rect.w / W) * 100, h: (rect.h / H) * 100 };
@@ -239,9 +241,9 @@ export default function TemplateCanvas({ media, format, tag, layout, onLayoutCha
   }, []);
 
   useEffect(() => {
-    stateRef.current = { format, tag, layout };
+    stateRef.current = { format, tag, layout, handle };
     paint();
-  }, [format, tag, layout, paint]);
+  }, [format, tag, layout, handle, paint]);
 
   useEffect(() => {
     Object.assign(playbackRef.current, { segments, onDuration, onTime });

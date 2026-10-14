@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import NavigationLabel from "../Overview/NavigationLabel";
+import { FacebookIcon } from "@/components/Newsroom/BreakingDesk/shared";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 
 const YoutubeIcon: React.FC<{ size?: number; color?: string }> = ({ size = 16, color = "#FF0000" }) => (
@@ -176,6 +177,7 @@ const LeftNavigation: React.FC = () => {
         { label: "YouTube", icon: <YoutubeIcon size={16} color="#FF0000" />, platformKey: "YouTube", path: "/ai-content/youtube" },
         { label: "Instagram", icon: <InstagramIcon size={16} color="#E4405F" />, platformKey: "Instagram", path: "/ai-content/instagram" },
         { label: "X (Twitter)", icon: <XIcon size={16} color="#1DA1F2" />, platformKey: "X", path: "/ai-content/x" },
+        { label: "Facebook", icon: <FacebookIcon size={16} />, platformKey: "Facebook", path: "/ai-content/facebook" },
       ],
     },
   ];

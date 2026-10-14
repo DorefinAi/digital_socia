@@ -5,13 +5,15 @@ import { NewsroomData } from "@/data/demoData";
 /** Seconds a post waits before it is sent, so the operator can undo it. */
 export const UNDO_SECONDS = 10;
 
-/** Daily posting volume the desk plans around; Instagram's is Meta's API publishing limit. */
-export const DAILY_CAP = { "X (Twitter)": 800, Instagram: 100 } as const;
+/** Daily posting volume the desk plans around. Instagram's is Meta's API publishing limit; Facebook's is a planning figure to confirm. */
+export const DAILY_CAP = { "X (Twitter)": 800, Instagram: 100, Facebook: 100 } as const;
 
 export function buildPost(payload: PostPayload, stamp = Date.now()): SocialPost {
   const postUrl =
     payload.platform === "Instagram"
       ? `https://www.instagram.com/${CHANNEL.instagramHandle}/p/${stamp.toString(36).toUpperCase()}/`
+      : payload.platform === "Facebook"
+      ? `https://www.facebook.com/${CHANNEL.facebookPage}/posts/${stamp}`
       : `https://x.com/${CHANNEL.xHandle}/status/${stamp}${Math.floor(Math.random() * 900000 + 100000)}`;
   return { ...payload, id: `post-${stamp}-${Math.floor(Math.random() * 1000)}`, postUrl, postedAt: new Date(stamp).toISOString(), status: "live" };
 }

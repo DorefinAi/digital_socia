@@ -70,6 +70,7 @@ const DashBoardCommonHeader: React.FC = () => {
       approval: "Approval Portal",
       digital: "Digital Dashboard",
       "ai-content": "AI Content Review",
+      "web-scraper": "Web Scraper",
     };
     return titles[lastPart] || lastPart.charAt(0).toUpperCase() + lastPart.slice(1);
   };

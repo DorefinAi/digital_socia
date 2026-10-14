@@ -61,9 +61,9 @@ const NewsroomDashboard: React.FC = () => {
 
   // Breaking stories from the FTP that are not yet out on both platforms
   const postedOn = (platform: SocialPlatform) => new Set(socialPosts.filter((p) => p.platform === platform && p.status !== "recalled").map((p) => p.newsId));
-  const onX = postedOn("X (Twitter)");
-  const onInstagram = postedOn("Instagram");
-  const breakingQueue = ftpNews.filter((n) => !onX.has(n.id) || !onInstagram.has(n.id));
+  const DESKS: SocialPlatform[] = ["X (Twitter)", "Instagram", "Facebook"];
+  const postedSets = Object.fromEntries(DESKS.map((p) => [p, postedOn(p)])) as Record<SocialPlatform, Set<string>>;
+  const breakingQueue = ftpNews.filter((n) => DESKS.some((p) => !postedSets[p].has(n.id)));
   const { mode } = useThemeMode();
   const theme = useTheme();
 
@@ -248,7 +248,7 @@ const NewsroomDashboard: React.FC = () => {
           </Box>
           {breakingQueue.length === 0 ? (
             <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", py: 3, textAlign: "center" }}>
-              Every breaking story is posted on X and Instagram.
+              Every breaking story is posted on X, Instagram and Facebook.
             </Typography>
           ) : (
             <Box sx={{ display: "flex", flexDirection: "column", maxHeight: 320, overflowY: "auto" }}>
@@ -263,8 +263,8 @@ const NewsroomDashboard: React.FC = () => {
                       </Typography>
                     </Box>
                   </Box>
-                  {(["X (Twitter)", "Instagram"] as SocialPlatform[]).map((platform) => {
-                    const done = (platform === "Instagram" ? onInstagram : onX).has(item.id);
+                  {DESKS.map((platform) => {
+                    const done = postedSets[platform].has(item.id);
                     return (
                       <Button
                         key={platform}

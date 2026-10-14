@@ -215,7 +215,7 @@ export interface ScraperItem {
 // ─── Breaking Desk (FTP → Social) ─────────────────────────────────────────────
 export type BreakingTag = "breaking" | "big_breaking";
 
-export type SocialPlatform = "X (Twitter)" | "Instagram";
+export type SocialPlatform = "X (Twitter)" | "Instagram" | "Facebook";
 
 export interface FtpMedia {
   kind: "image" | "video";
