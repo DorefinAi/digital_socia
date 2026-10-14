@@ -2,8 +2,9 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Box, Typography, Button, TextField, InputAdornment, Tabs, Tab, Snackbar, CircularProgress, Tooltip, LinearProgress, Chip, IconButton } from "@mui/material";
-import { Search, RefreshCw, Film, Image as ImageIcon, MapPin, PenLine, Lock, CheckCircle, Ban, Save } from "lucide-react";
+import { Box, Typography, Button, TextField, InputAdornment, Tabs, Tab, Snackbar, CircularProgress, Tooltip, LinearProgress, ToggleButtonGroup, ToggleButton } from "@mui/material";
+import { Search, RefreshCw, LayoutGrid, List } from "lucide-react";
+import { useThemeMode } from "@/providers/MuiProvider";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { BreakingTag, FtpNewsItem, PostPayload, ROLE_LABELS, SocialPlatform } from "@/types/newsroom";
 import { DAILY_CAP, draftToPayload, isLiveOn } from "@/data/socialDesk";
@@ -13,7 +14,8 @@ import { RejectDialog } from "./actionDialogs";
 import { RejectedList, ScheduledList } from "./DraftLists";
 import TemplatesPanel from "./TemplatesPanel";
 import UndoToast from "./UndoToast";
-import { PLATFORM_META, PlatformIcon, TagChip, timeAgo } from "./shared";
+import { QueueCards, QueueTable } from "./QueueViews";
+import { PLATFORM_META, PlatformIcon, timeAgo } from "./shared";
 
 type TagFilter = "all" | BreakingTag;
 type ConsoleTab = "queue" | "scheduled" | "published" | "rejected" | "templates";
@@ -24,6 +26,16 @@ const TAG_FILTERS: { value: TagFilter; label: string }[] = [
   { value: "breaking", label: "Breaking" },
 ];
 
+const VIEW_KEY = "socia_queue_view";
+
+function readView(): "cards" | "list" {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "cards";
+  } catch {
+    return "cards";
+  }
+}
+
 const isToday = (iso: string) => new Date(iso).toDateString() === new Date().toDateString();
 
 const tileSx = { backgroundColor: "background.paper", borderRadius: "12px", px: 2, py: 1.5, border: "1px solid", borderColor: "divider", boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.03)" };
@@ -33,7 +45,15 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const meta = PLATFORM_META[platform];
   const otherPlatform: SocialPlatform = platform === "Instagram" ? "X (Twitter)" : "Instagram";
 
+  const { mode } = useThemeMode();
   const [tab, setTab] = useState<ConsoleTab>("queue");
+  const [viewMode, setViewMode] = useState<"cards" | "list">(readView);
+  const changeView = (next: "cards" | "list") => {
+    setViewMode(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {}
+  };
   const [tagFilter, setTagFilter] = useState<TagFilter>("all");
   const [query, setQuery] = useState("");
   // The dashboard links straight into the editor with ?compose=<news id>
@@ -146,8 +166,35 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
             Stories tagged Breaking or Big Breaking on the FTP, ready for the @{meta.handle} template.
           </Typography>
         </Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
           <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>FTP checked {timeAgo(ftpSyncedAt)}</Typography>
+          <ToggleButtonGroup
+            value={viewMode}
+            exclusive
+            onChange={(_, val) => val && changeView(val)}
+            size="small"
+            aria-label="Queue view"
+            sx={{
+              height: 36,
+              "& .MuiToggleButton-root": {
+                px: 1.25,
+                borderRadius: "8px",
+                borderColor: "divider",
+                textTransform: "none",
+                gap: 0.5,
+                fontSize: "0.75rem",
+                fontWeight: 600,
+                "&.Mui-selected": { backgroundColor: mode === "light" ? "#000" : "#fff", color: mode === "light" ? "#fff" : "#000", "&:hover": { backgroundColor: mode === "light" ? "#000" : "#fff" } },
+              },
+            }}
+          >
+            <ToggleButton value="cards" aria-label="Cards view">
+              <LayoutGrid size={15} /> Cards
+            </ToggleButton>
+            <ToggleButton value="list" aria-label="List view">
+              <List size={15} /> List
+            </ToggleButton>
+          </ToggleButtonGroup>
           <Button
             variant="outlined"
             onClick={handleFetch}
@@ -259,100 +306,19 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
               </Typography>
             </Box>
           ) : (
-            <Box sx={{ backgroundColor: "background.paper", border: "1px solid", borderColor: "divider", borderRadius: "8px", overflow: "hidden" }}>
-              {visible.map((item, i) => {
-                const cover = item.media[0];
-                const videos = item.media.filter((m) => m.kind === "video").length;
-                const images = item.media.length - videos;
-                const saved = draftFor(item.id)?.status === "saved";
-                const isFocused = item === focused;
-                return (
-                  <Box
-                    key={item.id}
-                    onClick={() => setFocusIndex(i)}
-                    sx={{
-                      display: "grid",
-                      gridTemplateColumns: { xs: "96px minmax(0, 1fr)", sm: "132px minmax(0, 1fr) auto" },
-                      gap: 1.5,
-                      alignItems: "center",
-                      p: 1.25,
-                      borderTop: i === 0 ? "none" : "1px solid",
-                      borderColor: "divider",
-                      borderLeft: "3px solid",
-                      borderLeftColor: item.tag === "big_breaking" ? "#FFD400" : "transparent",
-                      backgroundColor: isFocused ? "action.hover" : "transparent",
-                    }}
-                  >
-                    <Box sx={{ position: "relative", aspectRatio: "16 / 9", borderRadius: "6px", overflow: "hidden", backgroundColor: "#111" }}>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={cover.posterUrl ?? cover.url} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                      <Box sx={{ position: "absolute", left: 6, top: 6 }}>
-                        <TagChip tag={item.tag} />
-                      </Box>
-                    </Box>
-
-                    <Box sx={{ minWidth: 0 }}>
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                        <Typography sx={{ fontSize: "0.875rem", fontWeight: 600, lineHeight: 1.45 }}>{item.headline}</Typography>
-                        {saved && <Chip icon={<Save size={11} />} label="Draft saved" size="small" sx={{ height: 20, fontSize: "0.6875rem", borderRadius: "6px", flexShrink: 0 }} />}
-                      </Box>
-                      <Typography
-                        sx={{ fontSize: "0.75rem", color: "text.secondary", lineHeight: 1.55, mt: 0.25, display: { xs: "none", sm: "-webkit-box" }, WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}
-                      >
-                        {item.shortText}
-                      </Typography>
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap", mt: 0.5, fontSize: "0.6875rem", color: "text.secondary" }}>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.4 }}>
-                          <MapPin size={12} /> {item.area}
-                        </Box>
-                        {images > 0 && (
-                          <Box sx={{ display: "flex", alignItems: "center", gap: 0.4 }}>
-                            <ImageIcon size={12} /> {images}
-                          </Box>
-                        )}
-                        {videos > 0 && (
-                          <Box sx={{ display: "flex", alignItems: "center", gap: 0.4 }}>
-                            <Film size={12} /> {videos}
-                          </Box>
-                        )}
-                        <span>{timeAgo(item.receivedAt)}</span>
-                        {isLiveOn(socialPosts, item.id, otherPlatform) && (
-                          <Box sx={{ display: "flex", alignItems: "center", gap: 0.4, color: "success.main" }}>
-                            <CheckCircle size={12} /> on {PLATFORM_META[otherPlatform].short}
-                          </Box>
-                        )}
-                      </Box>
-                      <Typography sx={{ fontSize: "0.6875rem", fontFamily: "var(--font-mono), ui-monospace, monospace", color: "text.disabled", mt: 0.5, display: { xs: "none", sm: "block" }, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {item.ftpPath}
-                      </Typography>
-                    </Box>
-
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, gridColumn: { xs: "1 / -1", sm: "auto" } }}>
-                      {permissions.canApproveSocialContent && (
-                        <Tooltip title="Reject (R)">
-                          <IconButton aria-label={`Reject ${item.headline}`} onClick={() => setRejecting(item)} sx={{ borderRadius: "8px", color: "text.secondary", "&:hover": { color: "error.main" } }}>
-                            <Ban size={16} />
-                          </IconButton>
-                        </Tooltip>
-                      )}
-                      <Tooltip title={permissions.canApproveSocialContent ? "Open (Enter)" : "Your role can view posts but not publish them"}>
-                        <Box component="span" sx={{ flex: { xs: 1, sm: "none" } }}>
-                          <Button
-                            variant="contained"
-                            onClick={() => setComposing(item)}
-                            disabled={!permissions.canApproveSocialContent}
-                            startIcon={permissions.canApproveSocialContent ? <PenLine size={15} /> : <Lock size={15} />}
-                            sx={{ fontWeight: 600, whiteSpace: "nowrap", width: { xs: "100%", sm: "auto" } }}
-                          >
-                            {saved ? "Continue" : "Create post"}
-                          </Button>
-                        </Box>
-                      </Tooltip>
-                    </Box>
-                  </Box>
-                );
-              })}
-            </Box>
+            (() => {
+              const props = {
+                items: visible,
+                focusedId: focused?.id,
+                onFocus: setFocusIndex,
+                onOpen: setComposing,
+                onReject: setRejecting,
+                isSaved: (newsId: string) => draftFor(newsId)?.status === "saved",
+                liveElsewhere: (newsId: string) => (isLiveOn(socialPosts, newsId, otherPlatform) ? PLATFORM_META[otherPlatform].short : null),
+                canAct: permissions.canApproveSocialContent,
+              };
+              return viewMode === "list" ? <QueueTable {...props} /> : <QueueCards {...props} />;
+            })()
           )}
           <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", display: { xs: "none", md: "block" } }}>
             Keyboard: J / K to move, Enter or E to open, R to reject.
