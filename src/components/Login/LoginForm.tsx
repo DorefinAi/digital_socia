@@ -107,18 +107,10 @@ const LoginForm: React.FC = () => {
           }}
         >
           <Box sx={{ display: "inline-flex" }}>
-            <img
-              src="/vartaman-logo.png"
-              alt="VARTAMAN AI Logo"
-              style={{
-                height: "44px",
-                width: "auto",
-                maxWidth: "100%",
-                objectFit: "contain",
-                objectPosition: "center",
-                display: "block",
-              }}
-            />
+            {/* Text wordmark until the Socia logo file is supplied */}
+            <Typography component="span" sx={{ fontSize: "2rem", lineHeight: "44px", fontWeight: 800, letterSpacing: "-0.03em", color: "text.primary" }}>
+              Socia
+            </Typography>
           </Box>
         </Box>
         <Box
@@ -134,7 +126,7 @@ const LoginForm: React.FC = () => {
           }}
         >
           <Typography sx={{ textAlign: "center", fontWeight: 600 }}>
-            Sign in to VARTAMAN AI
+            Sign in to Socia
           </Typography>
           <TextField
             type="email"

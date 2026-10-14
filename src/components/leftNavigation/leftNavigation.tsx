@@ -205,12 +205,12 @@ const LeftNavigation: React.FC = () => {
       {/* Brand */}
       <Box sx={{ px: isCollapsed ? 0 : 0.5, py: 1, mb: 1, display: "flex", justifyContent: isCollapsed ? "center" : "flex-start", alignItems: "center", minHeight: 40 }}>
         {isCollapsed ? (
-          <Tooltip title="Vartaman AI" placement="right" arrow>
-            <Typography sx={{ fontSize: "1rem", fontWeight: 900, color: "text.primary", letterSpacing: "-0.03em" }}>V</Typography>
+          <Tooltip title="Socia" placement="right" arrow>
+            <Typography sx={{ fontSize: "1rem", fontWeight: 900, color: "text.primary", letterSpacing: "-0.03em" }}>S</Typography>
           </Tooltip>
         ) : (
           <Typography sx={{ fontSize: "1.05rem", fontWeight: 800, letterSpacing: "-0.02em", color: "text.primary", whiteSpace: "nowrap" }}>
-            Vartaman AI
+            Socia
           </Typography>
         )}
       </Box>

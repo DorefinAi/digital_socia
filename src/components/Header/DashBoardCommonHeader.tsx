@@ -123,7 +123,7 @@ const DashBoardCommonHeader: React.FC = () => {
             alignItems: "center"
           }}
         >
-          <span style={{ color: mode === "light" ? LIGHT_GRAY : "rgba(255,255,255,0.5)" }}>vartaman / </span>
+          <span style={{ color: mode === "light" ? LIGHT_GRAY : "rgba(255,255,255,0.5)" }}>socia / </span>
           <span style={{ color: mode === "light" ? BLACK_COLOR : "#fff", fontWeight: 600, marginLeft: "4px" }}>
             {getPageTitle()}
           </span>
