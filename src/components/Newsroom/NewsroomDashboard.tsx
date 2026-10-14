@@ -60,7 +60,7 @@ const NewsroomDashboard: React.FC = () => {
   const { metrics, stories, aiContent, engagement, activity, ftpNews, socialPosts, permissions } = useNewsroom();
 
   // Breaking stories from the FTP that are not yet out on both platforms
-  const postedOn = (platform: SocialPlatform) => new Set(socialPosts.filter((p) => p.platform === platform).map((p) => p.newsId));
+  const postedOn = (platform: SocialPlatform) => new Set(socialPosts.filter((p) => p.platform === platform && p.status !== "recalled").map((p) => p.newsId));
   const onX = postedOn("X (Twitter)");
   const onInstagram = postedOn("Instagram");
   const breakingQueue = ftpNews.filter((n) => !onX.has(n.id) || !onInstagram.has(n.id));

@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useState } from "react";
-import { Box, Typography, IconButton, Tooltip, Link as MuiLink } from "@mui/material";
-import { Check, Copy, ExternalLink, Film } from "lucide-react";
+import { Box, Typography, IconButton, Tooltip, Link as MuiLink, Chip, Button } from "@mui/material";
+import { Check, Copy, ExternalLink, Film, Undo2 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
-import { SocialPlatform } from "@/types/newsroom";
-import { PlatformIcon, timeAgo } from "./shared";
+import { SocialPlatform, SocialPost } from "@/types/newsroom";
+import { RecallDialog } from "./actionDialogs";
+import { PLATFORM_META, PlatformIcon, timeAgo } from "./shared";
 
 interface PostedPostsListProps {
   platform?: SocialPlatform;
@@ -13,10 +14,13 @@ interface PostedPostsListProps {
   emptyHint?: string;
   /** Drop the outer border when the list sits inside a card */
   bare?: boolean;
+  /** Show the Recall action on live posts */
+  allowRecall?: boolean;
 }
 
-export default function PostedPostsList({ platform, limit, emptyHint, bare }: PostedPostsListProps) {
-  const { socialPosts } = useNewsroom();
+export default function PostedPostsList({ platform, limit, emptyHint, bare, allowRecall }: PostedPostsListProps) {
+  const { socialPosts, recallPost, permissions } = useNewsroom();
+  const [recalling, setRecalling] = useState<SocialPost | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const posts = socialPosts.filter((p) => !platform || p.platform === platform).slice(0, limit);
@@ -71,9 +75,10 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare }: Po
           <Box sx={{ minWidth: 0 }}>
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
               <PlatformIcon platform={post.platform} size={13} />
-              <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: post.status === "recalled" ? "text.secondary" : "text.primary" }}>
                 {post.headline}
               </Typography>
+              {post.status === "recalled" && <Chip label="Recalled" size="small" color="error" variant="outlined" sx={{ height: 18, fontSize: "0.625rem", borderRadius: "5px", flexShrink: 0 }} />}
             </Box>
             <MuiLink
               href={post.postUrl}
@@ -86,6 +91,7 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare }: Po
                 fontSize: "0.6875rem",
                 fontFamily: "var(--font-mono), ui-monospace, monospace",
                 color: "text.secondary",
+                textDecoration: post.status === "recalled" ? "line-through" : undefined,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
@@ -95,10 +101,16 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare }: Po
             </MuiLink>
             <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.25 }}>
               {timeAgo(post.postedAt)} · {post.postedBy}
+              {post.status === "recalled" && post.recallReason ? ` · recalled: ${post.recallReason}` : ""}
             </Typography>
           </Box>
 
-          <Box sx={{ display: "flex" }}>
+          <Box sx={{ display: "flex", alignItems: "center" }}>
+            {allowRecall && permissions.canApproveSocialContent && post.status !== "recalled" && (
+              <Button size="small" color="error" startIcon={<Undo2 size={13} />} onClick={() => setRecalling(post)} sx={{ minHeight: 28, fontSize: "0.75rem", px: 1, mr: 0.5 }}>
+                Recall
+              </Button>
+            )}
             <Tooltip title={copiedId === post.id ? "Copied" : "Copy link"}>
               <IconButton size="small" onClick={() => copy(post.id, post.postUrl)} aria-label="Copy post link">
                 {copiedId === post.id ? <Check size={15} /> : <Copy size={15} />}
@@ -112,6 +124,18 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare }: Po
           </Box>
         </Box>
       ))}
+      {recalling && (
+        <RecallDialog
+          open
+          headline={recalling.headline}
+          platformName={PLATFORM_META[recalling.platform].short}
+          onClose={() => setRecalling(null)}
+          onConfirm={(reason) => {
+            recallPost(recalling.id, reason);
+            setRecalling(null);
+          }}
+        />
+      )}
     </Box>
   );
 }

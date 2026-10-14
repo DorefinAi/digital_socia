@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Box } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import { BreakingTag, SocialPlatform } from "@/types/newsroom";
 import { CHANNEL } from "@/constants";
 import { BIG_BREAKING_YELLOW, BREAKING_RED } from "./TemplateCanvas";
@@ -74,4 +74,26 @@ export const RichPostText: React.FC<{ text: string; linkColor: string }> = ({ te
       )
     )}
   </>
+);
+
+/** "13 Oct, 18:30": the spec's date format with a 24-hour clock. */
+export function formatStamp(iso: string): string {
+  return new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+/** Small thumbnail used by every console list. */
+export const ListThumb: React.FC<{ src: string; dim?: boolean }> = ({ src, dim }) => (
+  <Box sx={{ width: "100%", aspectRatio: "7 / 5", borderRadius: "4px", overflow: "hidden", backgroundColor: "#111", opacity: dim ? 0.5 : 1 }}>
+    {/* eslint-disable-next-line @next/next/no-img-element */}
+    <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+  </Box>
+);
+
+export const listFrameSx = { backgroundColor: "background.paper", border: "1px solid", borderColor: "divider", borderRadius: "8px", overflow: "hidden" };
+
+export const EmptyState: React.FC<{ title: string; hint: string }> = ({ title, hint }) => (
+  <Box sx={{ py: 5, px: 2, textAlign: "center", border: "1px dashed", borderColor: "divider", borderRadius: "8px" }}>
+    <Typography sx={{ fontSize: "0.875rem", fontWeight: 600 }}>{title}</Typography>
+    <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", mt: 0.5 }}>{hint}</Typography>
+  </Box>
 );
