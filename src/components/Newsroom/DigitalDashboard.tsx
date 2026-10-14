@@ -72,6 +72,8 @@ export default function DigitalDashboard() {
   const [sort, setSort] = useState<{ by: "reach" | "engagements" | "rate" | "postedAt"; dir: "asc" | "desc" }>({ by: "reach", dir: "desc" });
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState("");
+  // The page reads the clock once; ranges are measured back from when it opened
+  const [openedAt] = useState(() => Date.now());
 
   const platforms = view === "all" ? ANALYTICS_PLATFORMS : [view];
   const bucket = RANGES[range].bucket;
@@ -91,7 +93,7 @@ export default function DigitalDashboard() {
   };
 
   // Chart points: one entry per day or week, with a value per platform and the previous period for comparison
-  const series = useMemo(() => {
+  const series = (() => {
     const per = Object.fromEntries(
       ANALYTICS_PLATFORMS.map((p) => {
         const cur = bucketRows(periods[p].current, bucket);
@@ -121,7 +123,7 @@ export default function DigitalDashboard() {
       point.previous = +(metric === "rate" ? prevSum / platforms.length : prevSum).toFixed(2);
       return point;
     });
-  }, [periods, bucket, metric, platforms]);
+  })();
 
   const sparkFor = (key: MetricKey) =>
     bucketRows(periods[platforms[0]].current, bucket).map((_, i) =>
@@ -148,7 +150,7 @@ export default function DigitalDashboard() {
     color: PLATFORM_COLOR[p],
   }));
 
-  const since = Date.now() - RANGES[range].days * 86400000;
+  const since = openedAt - RANGES[range].days * 86400000;
   const posts = topPosts(socialPosts)
     .filter((p) => (view === "all" || p.platform === view) && new Date(p.postedAt).getTime() >= since)
     .sort((a, b) => {

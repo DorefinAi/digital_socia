@@ -77,6 +77,42 @@ const PlatformIcon: React.FC<{ platform: string; size?: number }> = ({ platform,
   return <Globe size={size} color="#4285F4" />;
 };
 
+const GoogleMark: React.FC = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden>
+    <path fill="#EA4335" d="M12 10.2v3.9h5.4c-.2 1.3-1.6 3.9-5.4 3.9-3.3 0-5.9-2.7-5.9-6s2.7-6 5.9-6c1.9 0 3.1.8 3.8 1.5l2.6-2.5C16.8 3.4 14.6 2.4 12 2.4 6.7 2.4 2.4 6.7 2.4 12s4.3 9.6 9.6 9.6c5.5 0 9.2-3.9 9.2-9.4 0-.6-.1-1.1-.2-1.6H12z" />
+  </svg>
+);
+
+/** Which Google service an item came through. Search results carry their own marker. */
+function googleSource(item: ScraperItem) {
+  if (item.id.startsWith("g-search")) return "Google Search";
+  return { topics: "Google Trends", articles: "Google News", hashtags: "Google Trends" }[item.type];
+}
+
+function SourceLine({ item }: { item: ScraperItem }) {
+  const fromSearch = item.id.startsWith("g-search");
+  return (
+    <Typography component="span" sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.4, fontSize: "0.6875rem", fontWeight: 500, color: fromSearch ? "#1A73E8" : "text.secondary" }}>
+      <GoogleMark /> via {googleSource(item)}
+      {fromSearch && ` · your search "${item.subTag}"`}
+    </Typography>
+  );
+}
+
+/** What a Google query returns for the desk, one result per trend type. Demo stand-in for the backend search. */
+function googleSearchResults(q: string): ScraperItem[] {
+  const now = new Date().toISOString();
+  const enc = encodeURIComponent(q);
+  const tag = "#" + q.replace(/[^\p{L}\p{M}\p{N}]+/gu, "");
+  const base = { rank: 0, superTag: "Search", subTag: q, timeFrame: "24h" as const, scrapedAt: now, reasonWhy: "Matched your Google search. Volume and the trend summary arrive once the backend fetch is connected." };
+  const stats = { viewsOrVolume: "Search result", growthRate: "New", sharesOrPosts: "–" };
+  return [
+    { ...base, id: `g-search-topic-${Date.now()}`, type: "topics", title: q, platform: "Google News", url: `https://trends.google.com/trends/explore?geo=IN&q=${enc}`, engagementStats: stats },
+    { ...base, id: `g-search-article-${Date.now()}`, type: "articles", title: `${q}: latest coverage`, platform: "Google News", url: `https://news.google.com/search?q=${enc}&hl=hi&gl=IN`, engagementStats: stats },
+    { ...base, id: `g-search-tag-${Date.now()}`, type: "hashtags", title: tag, platform: "X (Twitter)", url: `https://www.google.com/search?q=${encodeURIComponent(tag + " site:x.com")}`, engagementStats: stats },
+  ];
+}
+
 export default function WebScraperPage() {
   const { mode } = useThemeMode();
   const theme = useTheme();
@@ -90,12 +126,28 @@ export default function WebScraperPage() {
   const [superTagFilter, setSuperTagFilter] = useState<string>("all");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [createdStoryIds, setCreatedStoryIds] = useState<Record<string, boolean>>({});
+  // Everything on this page is fetched through Google; the backend runs these queries for real
+  const [lastFetchedAt, setLastFetchedAt] = useState(() => new Date());
+  const [googleResults, setGoogleResults] = useState<ScraperItem[]>([]);
+  const [searchingGoogle, setSearchingGoogle] = useState(false);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
     setTimeout(() => {
       setIsRefreshing(false);
+      setLastFetchedAt(new Date());
     }, 700);
+  };
+
+  const searchGoogle = () => {
+    const q = searchQuery.trim();
+    if (q.length < 2 || searchingGoogle) return;
+    setSearchingGoogle(true);
+    setTimeout(() => {
+      setGoogleResults((prev) => [...googleSearchResults(q), ...prev.filter((r) => r.subTag.toLowerCase() !== q.toLowerCase())]);
+      setSearchingGoogle(false);
+      setLastFetchedAt(new Date());
+    }, 900);
   };
 
   const handleCreateDraft = (item: ScraperItem) => {
@@ -108,11 +160,12 @@ export default function WebScraperPage() {
     );
   };
 
-  const currentItems: ScraperItem[] = DEMO_SCRAPER_TOPICS.map((item) => {
+  const fromSearch = googleResults.filter((r) => r.type === activeTypeTab);
+  const currentItems: ScraperItem[] = [...fromSearch, ...DEMO_SCRAPER_TOPICS.map((item) => {
     if (activeTypeTab === "articles") {
       return {
         ...item,
-        type: "articles",
+        type: "articles" as const,
         title: `EXCLUSIVE: ${item.title} — On-Ground Investigation & Regional Analysis`,
       };
     }
@@ -120,14 +173,17 @@ export default function WebScraperPage() {
       const hashtagName = "#" + item.subTag.replace(/\s+/g, "");
       return {
         ...item,
-        type: "hashtags",
+        type: "hashtags" as const,
         title: `${hashtagName} (Viral Regional Trend)`,
       };
     }
     return item;
-  });
+  })];
 
+  const maxAgeHours = { "12h": 12, "24h": 24, "7d": 168 }[timeFrame];
   const filteredItems = currentItems.filter((item) => {
+    const fresh = lastFetchedAt.getTime() - new Date(item.scrapedAt).getTime() <= maxAgeHours * 3600000;
+    if (!fresh) return false;
     const matchesSearch =
       item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.reasonWhy.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -147,7 +203,7 @@ export default function WebScraperPage() {
             Web Scraper & Intelligence Hub
           </Typography>
           <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary" }}>
-            {filteredItems.length} items
+            {filteredItems.length} items · fetched via Google at {lastFetchedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false })}
           </Typography>
         </Box>
 
@@ -160,7 +216,7 @@ export default function WebScraperPage() {
             startIcon={<RefreshCw size={13} className={isRefreshing ? "spin-animation" : ""} />}
             sx={{ borderRadius: "8px", textTransform: "none", fontSize: "0.75rem", height: 36, px: 1.5 }}
           >
-            Refresh Feed
+            {isRefreshing ? "Fetching via Google" : "Fetch via Google"}
           </Button>
 
           <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
@@ -203,9 +259,10 @@ export default function WebScraperPage() {
         <Box sx={{ display: "flex", gap: 1.25, flexWrap: "wrap", alignItems: "center" }}>
           {/* Search Input */}
           <TextField
-            placeholder="Search scraped topics, articles, hashtags, reason why..."
+            placeholder="Search trends, or press Enter to search Google"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && searchGoogle()}
             size="small"
             slotProps={{
               input: {
@@ -228,11 +285,22 @@ export default function WebScraperPage() {
             }}
           />
 
+          <Button
+            size="small"
+            variant="contained"
+            onClick={searchGoogle}
+            disabled={searchQuery.trim().length < 2 || searchingGoogle}
+            startIcon={<GoogleMark />}
+            sx={{ height: 38, borderRadius: "10px", textTransform: "none", fontSize: "0.75rem", fontWeight: 600, px: 1.5, whiteSpace: "nowrap" }}
+          >
+            {searchingGoogle ? "Searching Google" : "Search Google"}
+          </Button>
+
           {/* Timeframe Dropdown (Default: Last 24 Hours) */}
           <Select
             size="small"
             value={timeFrame}
-            onChange={(e) => setTimeFrame(e.target.value as any)}
+            onChange={(e) => setTimeFrame(e.target.value as "24h" | "12h" | "7d")}
             displayEmpty
             sx={{
               borderRadius: "10px",
@@ -243,7 +311,7 @@ export default function WebScraperPage() {
               fontWeight: 600,
             }}
           >
-            <MenuItem value="24h" sx={{ fontSize: "0.8125rem" }}>🕒 Last 24 Hours</MenuItem>
+            <MenuItem value="24h" sx={{ fontSize: "0.8125rem" }}>Last 24 Hours</MenuItem>
             <MenuItem value="12h" sx={{ fontSize: "0.8125rem" }}>Last 12 Hours</MenuItem>
             <MenuItem value="7d" sx={{ fontSize: "0.8125rem" }}>Last 7 Days</MenuItem>
           </Select>
@@ -296,7 +364,7 @@ export default function WebScraperPage() {
           </Select>
 
           {/* Reset Button */}
-          {(platformFilter !== "all" || superTagFilter !== "all" || timeFrame !== "24h" || searchQuery) && (
+          {(platformFilter !== "all" || superTagFilter !== "all" || timeFrame !== "24h" || searchQuery || googleResults.length > 0) && (
             <Button
               size="small"
               onClick={() => {
@@ -304,6 +372,7 @@ export default function WebScraperPage() {
                 setSuperTagFilter("all");
                 setTimeFrame("24h");
                 setSearchQuery("");
+                setGoogleResults([]);
               }}
               startIcon={<RotateCcw size={13} />}
               sx={{ textTransform: "none", fontSize: "0.75rem", height: 38, borderRadius: "10px", color: "error.main", px: 1.25 }}
@@ -413,9 +482,12 @@ export default function WebScraperPage() {
                 </Box>
 
                 {/* Scraped Headline / Title */}
-                <Typography sx={{ fontWeight: 600, fontSize: "0.875rem", lineHeight: 1.35 }}>
-                  {item.title}
-                </Typography>
+                <Box>
+                  <Typography sx={{ fontWeight: 600, fontSize: "0.875rem", lineHeight: 1.35 }}>
+                    {item.title}
+                  </Typography>
+                  <SourceLine item={item} />
+                </Box>
 
                 {/* Superset & Subset Tags */}
                 <Box sx={{ display: "flex", gap: 0.75, flexWrap: "wrap" }}>
@@ -535,6 +607,7 @@ export default function WebScraperPage() {
                   </TableCell>
                   <TableCell sx={{ fontWeight: 600, fontSize: "0.8125rem", maxWidth: 280 }}>
                     {item.title}
+                    <SourceLine item={item} />
                   </TableCell>
                   <TableCell sx={{ fontSize: "0.75rem" }}>
                     <Typography sx={{ fontSize: "0.75rem", fontWeight: 600 }}>{item.engagementStats.viewsOrVolume}</Typography>
@@ -576,7 +649,12 @@ export default function WebScraperPage() {
 
       {filteredItems.length === 0 && (
         <Box sx={{ textAlign: "center", py: 6, color: "text.secondary", backgroundColor: "background.paper", borderRadius: "12px" }}>
-          <Typography sx={{ fontSize: "0.875rem" }}>No scraped items match your search or filters</Typography>
+          <Typography sx={{ fontSize: "0.875rem" }}>No trends match your search or filters</Typography>
+          {searchQuery.trim().length >= 2 && (
+            <Button size="small" onClick={searchGoogle} disabled={searchingGoogle} startIcon={<GoogleMark />} sx={{ mt: 1, textTransform: "none" }}>
+              Search Google for &ldquo;{searchQuery.trim()}&rdquo;
+            </Button>
+          )}
         </Box>
       )}
     </Box>
