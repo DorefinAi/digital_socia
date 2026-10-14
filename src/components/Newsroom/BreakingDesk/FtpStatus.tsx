@@ -8,7 +8,7 @@ import { FTP_POLL_SECONDS, useNewsroom } from "@/providers/NewsroomProvider";
 const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
 /** Shows that the FTP is being checked automatically, when it last ran, and what recent checks brought in. */
-export default function FtpStatus({ onManualFetch }: { onManualFetch?: (added: number) => void }) {
+export default function FtpStatus({ onManualFetch, compact }: { onManualFetch?: (added: number) => void; compact?: boolean }) {
   const { ftpSyncedAt, ftpFetchLog, fetchFtpNews, nextFetchAt } = useNewsroom();
   const [now, setNow] = useState(() => Date.now());
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
@@ -54,7 +54,7 @@ export default function FtpStatus({ onManualFetch }: { onManualFetch?: (added: n
             }}
           />
           <Box sx={{ textAlign: "left", lineHeight: 1.2 }}>
-            <Typography sx={{ fontSize: "0.75rem", fontWeight: 600 }}>FTP auto-fetch on</Typography>
+            <Typography sx={{ fontSize: "0.75rem", fontWeight: 600 }}>{compact ? "Auto-fetch on" : "FTP auto-fetch on"}</Typography>
             <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
               checked {since < 2 ? "just now" : `${since}s ago`} · next in {nextIn}s
             </Typography>
@@ -66,10 +66,11 @@ export default function FtpStatus({ onManualFetch }: { onManualFetch?: (added: n
         variant="outlined"
         onClick={checkNow}
         disabled={checking}
-        startIcon={checking ? <CircularProgress size={14} color="inherit" /> : <RefreshCw size={14} />}
-        sx={{ height: 36, fontWeight: 600, borderColor: "divider", color: "text.primary", whiteSpace: "nowrap" }}
+        aria-label="Check the FTP now"
+        startIcon={compact ? undefined : checking ? <CircularProgress size={14} color="inherit" /> : <RefreshCw size={14} />}
+        sx={{ height: 36, minWidth: compact ? 36 : undefined, px: compact ? 0 : undefined, fontWeight: 600, borderColor: "divider", color: "text.primary", whiteSpace: "nowrap" }}
       >
-        {checking ? "Checking" : "Check now"}
+        {compact ? checking ? <CircularProgress size={14} color="inherit" /> : <RefreshCw size={14} /> : checking ? "Checking" : "Check now"}
       </Button>
 
       <Popover

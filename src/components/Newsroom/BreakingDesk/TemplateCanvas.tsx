@@ -155,19 +155,29 @@ function drawTemplate(ctx: CanvasRenderingContext2D, format: TemplateFormat, sou
   const stamp = new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
   ctx.fillText(stamp, W - pad, H - bandH / 2 + 2 * u);
 
-  // Headline block
-  const fontSize = (format === "x" ? 70 : 76) * u * layout.fontScale;
-  const lineHeight = fontSize * 1.32;
+  // Card text block. The text can run from a headline to about 500 characters, so the font starts at the
+  // template size (times the operator's size setting) and steps down until the block fits between tag and footer.
   const barW = 12 * u;
   const innerPad = 30 * u;
   const centered = layout.align === "center";
-  ctx.font = `700 ${fontSize}px ${headlineFontStack()}`;
   const textW = W - pad * 2 - barW - innerPad * 2;
-  const lines = wrapLines(ctx, layout.headline, textW);
+  const minY = pad + tagH + 24 * u;
+  const room = H - bandH - 24 * u - minY;
+  const fontStack = headlineFontStack();
+  let fontSize = (format === "x" ? 70 : 76) * u * layout.fontScale;
+  let lineHeight = fontSize * 1.32;
+  let lines: string[] = [];
+  let blockH = 0;
+  for (let step = 0; step < 60; step++) {
+    ctx.font = `700 ${fontSize}px ${fontStack}`;
+    lines = wrapLines(ctx, layout.headline, textW);
+    lineHeight = fontSize * 1.32;
+    blockH = lines.length * lineHeight + innerPad * 1.4;
+    if (blockH <= room || fontSize <= 16 * u) break;
+    fontSize *= 0.95;
+  }
   if (lines.length === 0) return null;
 
-  const blockH = lines.length * lineHeight + innerPad * 1.4;
-  const minY = pad + tagH + 24 * u;
   const maxY = H - bandH - 24 * u - blockH;
   const y = Math.max(minY, Math.min(maxY, H * layout.textY - blockH / 2));
 

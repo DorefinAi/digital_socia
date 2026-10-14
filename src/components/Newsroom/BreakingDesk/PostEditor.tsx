@@ -14,6 +14,8 @@ import {
   Plus,
   Minus,
   Check,
+  Copy,
+  Radio,
   CalendarClock,
   Save,
   Ban,
@@ -45,10 +47,13 @@ import { RejectDialog, ScheduleDialog } from "./actionDialogs";
 import { PLATFORM_META, PlatformIcon, TagChip } from "./shared";
 import { PostMock, TagOption, TagPicker, fieldSx, sectionLabel } from "./composerParts";
 import VideoTimeline from "./VideoTimeline";
+import FtpFeedPanel from "./FtpFeedPanel";
+import { DAILY_CAP, isLiveOn } from "@/data/socialDesk";
 
-type Tool = "background" | "text" | "story";
+type Tool = "ftp" | "background" | "text" | "story";
 
 const TOOLS: { id: Tool; label: string; icon: React.ReactNode }[] = [
+  { id: "ftp", label: "FTP feed", icon: <Radio size={19} /> },
   { id: "background", label: "Background", icon: <ImageIcon size={19} /> },
   { id: "text", label: "Text", icon: <Type size={19} /> },
   { id: "story", label: "Story", icon: <FileText size={19} /> },
@@ -73,6 +78,14 @@ const toolbarDivider = <Box sx={{ width: "1px", height: 20, backgroundColor: "di
 const panelTitle = { fontSize: "0.9375rem", fontWeight: 700, mb: 1.5 };
 const floatingSx = { backgroundColor: "background.paper", border: "1px solid", borderColor: "divider", boxShadow: "0 4px 14px rgba(0,0,0,0.08)" };
 
+/** Longest text the card template takes; the font shrinks to fit anything up to this. */
+const CARD_TEXT_MAX = 500;
+
+/** The card carries more than the headline: the story, trimmed at a sentence to fit the card. */
+function defaultCardText(item: FtpNewsItem) {
+  return shortenToFit(item.body, 400, "Instagram") || item.headline;
+}
+
 /** Fresh suggestions with the draft's selections applied; AI suggestions start unticked. */
 function withDraftChoices(suggestions: TagSuggestion[], chosen?: string[]): TagOption[] {
   const options = suggestions.map((s) => ({ ...s, checked: chosen ? chosen.includes(s.value) : !s.ai }));
@@ -84,10 +97,14 @@ interface PostEditorProps {
   item: FtpNewsItem;
   platform: SocialPlatform;
   onClose: () => void;
+  /** Opens another FTP story in the editor */
+  onSwitch?: (item: FtpNewsItem) => void;
+  /** Lets the desk confirm what happened after the editor closes */
+  onSaved?: (message: string) => void;
 }
 
-export default function PostEditor({ item, platform, onClose }: PostEditorProps) {
-  const { queuePost, saveDraft, scheduleDraft, rejectDraft, socialDrafts, hashtagRules, handleDirectory, permissions, currentRole } = useNewsroom();
+export default function PostEditor({ item, platform, onClose, onSwitch, onSaved }: PostEditorProps) {
+  const { publishSocialPost, saveDraft, scheduleDraft, rejectDraft, socialDrafts, socialPosts, hashtagRules, handleDirectory, permissions, currentRole } = useNewsroom();
   // Reopening a saved or scheduled story picks up where the operator left off
   const [draft] = useState(() => socialDrafts.find((d) => d.newsId === item.id && d.platform === platform && (d.status === "saved" || d.status === "scheduled")));
   const canvasRef = useRef<TemplateCanvasHandle>(null);
@@ -108,8 +125,8 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
   );
   const format: TemplateFormat = isX ? "x" : igFormat;
 
-  const [layout, setLayout] = useState<TemplateLayout>(() => draft?.layout ?? defaultLayout(draft?.headline ?? item.headline, format));
-  const [tool, setTool] = useState<Tool>("background");
+  const [layout, setLayout] = useState<TemplateLayout>(() => draft?.layout ?? defaultLayout(defaultCardText(item), format));
+  const [tool, setTool] = useState<Tool>("ftp");
   const [selection, setSelection] = useState<CanvasSelection>(null);
   const [zoom, setZoom] = useState(1);
   const [stage, setStage] = useState({ w: 0, h: 0 });
@@ -128,6 +145,16 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
   const [notice, setNotice] = useState("");
   const [dialog, setDialog] = useState<"reject" | "schedule" | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  // Set once the operator changes anything, so switching stories only saves real work
+  const edited = useRef(false);
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    edited.current = true;
+  }, [text, layout, hashtags, mentions]);
 
   // Keep the frame fitted to the workspace
   useEffect(() => {
@@ -155,9 +182,16 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
   const used = countChars(finalText, platform);
   const overLimit = used > limits.text;
   const tooManyTags = selectedHashtags.length > limits.hashtags || selectedMentions.length > limits.mentions;
+  // Saving a post counts against the platform's daily cap
+  const cap = DAILY_CAP[platform];
+  const today = new Date().toDateString();
+  const postedToday = socialPosts.filter((p) => p.platform === platform && p.status !== "recalled" && new Date(p.postedAt).toDateString() === today).length;
+  const capReached = postedToday >= cap;
+  const alreadyPosted = isLiveOn(socialPosts, item.id, platform);
+
   // Links multiply the cost of an X post, so the X formatter refuses them outright
   const url = isX ? findUrl(finalText) : null;
-  const canPost = permissions.canApproveSocialContent && !overLimit && !tooManyTags && !url && text.trim().length > 0 && layout.headline.trim().length > 0;
+  const canPost = permissions.canApproveSocialContent && !overLimit && !tooManyTags && !url && !capReached && text.trim().length > 0 && layout.headline.trim().length > 0;
 
   let blockedReason = "";
   if (!permissions.canApproveSocialContent) blockedReason = "Your role can view posts but not publish them";
@@ -166,6 +200,7 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
   else if (overLimit) blockedReason = `${used - limits.text} characters over the ${meta.short} limit`;
   else if (tooManyTags) blockedReason = "Too many hashtags or mentions selected";
   else if (url) blockedReason = `Remove the link "${url}" first`;
+  else if (capReached) blockedReason = `Today's ${meta.short} cap of ${cap} posts is reached`;
 
   const patch = (changes: Partial<TemplateLayout>) => setLayout((l) => ({ ...l, ...changes }));
 
@@ -200,16 +235,16 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
     setSegments(saved?.length ? saved : [{ start: 0, end: seconds }]);
   };
 
-  const exportVideo = async () => {
-    if (!segments.length || exporting !== null) return;
+  const exportVideo = async (): Promise<boolean> => {
+    if (!segments.length || exporting !== null) return false;
     setSelection(null);
     setVideoPaused(false);
     setExporting(0);
     const blob = await canvasRef.current?.record(segments, setExporting);
     setExporting(null);
     if (!blob) {
-      setNotice("This browser or media file does not allow video export. The post itself is unaffected.");
-      return;
+      setNotice("This browser or media file does not allow video export, so nothing was saved.");
+      return false;
     }
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -217,6 +252,7 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
     link.download = `${item.id}-${format}.${blob.type.includes("mp4") ? "mp4" : "webm"}`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
+    return true;
   };
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -241,17 +277,13 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
     setText(shortenToFit(source, Math.min(budget, isX ? 200 : 400), platform));
   };
 
-  const download = () => {
-    const ok = canvasRef.current?.download(`${item.id}-${format}.png`) ?? false;
-    if (!ok) setNotice("This media file does not allow image export from the browser. The post itself is unaffected.");
-  };
 
   const buildPayload = (): PostPayload => {
     const cover = item.media[0];
     return {
       newsId: item.id,
       platform,
-      headline: layout.headline.trim(),
+      headline: item.headline,
       text: finalText,
       caption: text,
       hashtags: selectedHashtags,
@@ -266,11 +298,29 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
     };
   };
 
-  // The post waits out the undo window on the desk, so the editor can close straight away
-  const publish = () => {
+  // Operators post by hand: Copy puts the post text on the clipboard, Save downloads the card or clip
+  // and marks the story posted, which is what moves it to Published and counts against the cap.
+  const [copied, setCopied] = useState(false);
+  const copyText = async () => {
+    try {
+      await navigator.clipboard.writeText(finalText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setNotice("The browser blocked the clipboard. Select the text in the box and copy it by hand.");
+    }
+  };
+
+  const saveAsPosted = async () => {
     if (!canPost) return;
-    queuePost(buildPayload());
+    const ok = isVideo ? await exportVideo() : canvasRef.current?.download(`${item.id}-${format}.png`) ?? false;
+    if (!ok) {
+      if (!isVideo) setNotice("This media file does not allow image export from the browser, so nothing was saved.");
+      return;
+    }
+    publishSocialPost(buildPayload());
     setPreviewOpen(false);
+    onSaved?.(`Saved. "${item.headline}" is marked as posted on ${meta.short}.`);
     onClose();
   };
 
@@ -279,20 +329,27 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
     setSavedAt(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }));
   };
 
-  const postButton = (
-    <Tooltip title={blockedReason}>
-      <span>
-        <Button
-          variant="contained"
-          onClick={publish}
-          disabled={!canPost}
-          startIcon={<Send size={15} />}
-          sx={{ minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", "&:hover": { backgroundColor: "#B50F14" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.7)" } }}
-        >
-          Post to {meta.short}
+  const actionButtons = (onDark: boolean) => (
+    <>
+      <Tooltip title={copied ? "Copied" : `Copy the ${meta.postNoun} with hashtags and mentions`}>
+        <Button onClick={copyText} startIcon={copied ? <Check size={15} /> : <Copy size={15} />} sx={onDark ? { ...chromeButton, border: `1px solid ${BAR.border}` } : { minHeight: 34 }} variant={onDark ? "text" : "outlined"}>
+          {copied ? "Copied" : "Copy"}
         </Button>
-      </span>
-    </Tooltip>
+      </Tooltip>
+      <Tooltip title={blockedReason || `Downloads the ${isVideo ? "clip" : "card"} and marks this story posted on ${meta.short}`}>
+        <span>
+          <Button
+            variant="contained"
+            onClick={saveAsPosted}
+            disabled={!canPost || exporting !== null}
+            startIcon={exporting !== null ? <CircularProgress size={14} sx={{ color: "#fff" }} variant="determinate" value={Math.max(4, exporting * 100)} /> : <Save size={15} />}
+            sx={{ minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", "&:hover": { backgroundColor: "#B50F14" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.7)" } }}
+          >
+            {exporting !== null ? `Saving ${Math.round(exporting * 100)}%` : alreadyPosted ? "Save again" : "Save as posted"}
+          </Button>
+        </span>
+      </Tooltip>
+    </>
   );
 
   return (
@@ -331,23 +388,18 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
               ))}
             </Box>
           )}
-          <Tooltip title={isVideo ? "Export the edited video" : "Download image"}>
-            <span>
-              <Button onClick={isVideo ? exportVideo : download} disabled={exporting !== null} aria-label={isVideo ? "Export video" : "Download image"} sx={{ ...chromeButton, minWidth: 0, gap: 0.75, "&.Mui-disabled": { color: "rgba(255,255,255,0.7)" } }}>
-                {exporting !== null ? <CircularProgress size={15} sx={{ color: "#fff" }} variant="determinate" value={Math.max(4, exporting * 100)} /> : <Download size={16} />}
-                <Box component="span" sx={{ display: { xs: "none", md: "inline" } }}>
-                  {exporting !== null ? `Exporting ${Math.round(exporting * 100)}%` : isVideo ? "Export" : "Download"}
-                </Box>
-              </Button>
-            </span>
-          </Tooltip>
           <Button onClick={() => setPreviewOpen(true)} aria-label="Preview" sx={{ ...chromeButton, minWidth: 0, gap: 0.75, border: `1px solid ${BAR.border}` }}>
             <Eye size={15} />
             <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
               Preview
             </Box>
           </Button>
-          {postButton}
+          <Tooltip title={`${meta.short} posts saved today against the daily cap`}>
+            <Typography sx={{ display: { xs: "none", md: "block" }, px: 0.75, fontSize: "0.75rem", fontVariantNumeric: "tabular-nums", color: capReached ? "#FF8A80" : BAR.text, whiteSpace: "nowrap" }}>
+              {postedToday} / {cap} today
+            </Typography>
+          </Tooltip>
+          {actionButtons(true)}
         </Box>
 
         {/* Workspace */}
@@ -387,6 +439,18 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
 
           {/* Tool panel */}
           <Box role="tabpanel" sx={{ order: { xs: 2, lg: 0 }, flexShrink: 0, p: 2, overflowY: { lg: "auto" }, backgroundColor: "background.paper", borderRight: { lg: "1px solid" }, borderColor: "divider" }}>
+            {tool === "ftp" && (
+              <FtpFeedPanel
+                platform={platform}
+                currentId={item.id}
+                onPick={(next) => {
+                  // Keep the operator's work before switching stories
+                  if (edited.current && permissions.canApproveSocialContent) saveDraft(buildPayload());
+                  onSwitch?.(next);
+                }}
+              />
+            )}
+
             {tool === "background" && (
               <>
                 <Typography sx={panelTitle}>Background</Typography>
@@ -467,16 +531,19 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
 
             {tool === "text" && (
               <>
-                <Typography sx={panelTitle}>Headline</Typography>
+                <Typography sx={panelTitle}>Card text</Typography>
                 <TextField
                   multiline
-                  minRows={3}
+                  minRows={6}
+                  maxRows={14}
+                  slotProps={{ htmlInput: { maxLength: CARD_TEXT_MAX } }}
+                  helperText={`${layout.headline.length} / ${CARD_TEXT_MAX} characters. The text shrinks to fit the card.`}
                   fullWidth
                   size="small"
                   value={layout.headline}
                   inputRef={headlineInputRef}
                   onFocus={() => setSelection("headline")}
-                  onChange={(e) => patch({ headline: e.target.value })}
+                  onChange={(e) => patch({ headline: e.target.value.slice(0, CARD_TEXT_MAX) })}
                   sx={{ ...fieldSx, "& textarea": { fontWeight: 600 } }}
                 />
                 <Typography sx={{ ...sectionLabel, mt: 2.5 }}>Size</Typography>
@@ -495,8 +562,8 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
                     <Box key={c} component="button" aria-label={`Headline colour ${c}`} aria-pressed={layout.color === c} onClick={() => patch({ color: c })} sx={{ width: 32, height: 32, borderRadius: "50%", cursor: "pointer", backgroundColor: c, border: "1px solid", borderColor: "divider", outline: layout.color === c ? `2px solid ${SELECT_BLUE}` : "none", outlineOffset: 2 }} />
                   ))}
                 </Box>
-                <Button size="small" onClick={() => setLayout((l) => ({ ...defaultLayout(item.headline, format), bgZoom: l.bgZoom, bgX: l.bgX, bgY: l.bgY }))} startIcon={<RotateCcw size={13} />} sx={{ mt: 2.5, px: 0.5, color: "text.secondary", fontSize: "0.75rem" }}>
-                  Reset headline
+                <Button size="small" onClick={() => setLayout((l) => ({ ...defaultLayout(defaultCardText(item), format), bgZoom: l.bgZoom, bgX: l.bgX, bgY: l.bgY }))} startIcon={<RotateCcw size={13} />} sx={{ mt: 2.5, px: 0.5, color: "text.secondary", fontSize: "0.75rem" }}>
+                  Reset card text
                 </Button>
               </>
             )}
@@ -615,7 +682,7 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
                 }}
                 paused={videoPaused}
                 onTogglePlay={() => setVideoPaused((p) => !p)}
-                headline={layout.headline}
+                headline={item.headline}
                 headlineSelected={selection === "headline"}
                 onSelectHeadline={() => select("headline")}
               />
@@ -700,14 +767,14 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
         </Box>
         <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1, px: 2.5, py: 1.5, borderTop: "1px solid", borderColor: "divider" }}>
           <Button onClick={() => setPreviewOpen(false)}>Back to editing</Button>
-          {postButton}
+          {actionButtons(false)}
         </Box>
       </Dialog>
 
       {dialog === "reject" && (
         <RejectDialog
           open
-          headline={layout.headline}
+          headline={item.headline}
           onClose={() => setDialog(null)}
           onConfirm={(reason, note) => {
             rejectDraft(buildPayload(), reason, note);
@@ -718,7 +785,7 @@ export default function PostEditor({ item, platform, onClose }: PostEditorProps)
       {dialog === "schedule" && (
         <ScheduleDialog
           open
-          headline={layout.headline}
+          headline={item.headline}
           initial={draft?.status === "scheduled" ? draft.scheduledFor : undefined}
           onClose={() => setDialog(null)}
           onConfirm={(when) => {

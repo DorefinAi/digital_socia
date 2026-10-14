@@ -336,7 +336,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       {tab === "rejected" && <RejectedList platform={platform} />}
       {tab === "templates" && <TemplatesPanel />}
 
-      {composing && <PostEditor key={composing.id} item={composing} platform={platform} onClose={() => setComposing(null)} />}
+      {composing && <PostEditor key={composing.id} item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />}
       {rejecting && (
         <RejectDialog
           open
