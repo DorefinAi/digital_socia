@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { notoDevanagari, roboto, robotoMono } from "@/constants/fonts";
 import ReduxProvider from "@/providers/ReduxProvider";
 import MuiProvider from "@/providers/MuiProvider";
 import { NewsroomProvider } from "@/providers/NewsroomProvider";
+
 export const metadata: Metadata = {
   title: "Socia - Digital Automation Platform",
   description: "Socia automates social publishing for 1st India News: FTP intake, branded cards and clips, approval and posting to X and Instagram, and analytics.",
@@ -15,7 +17,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={`${roboto.variable} ${robotoMono.variable} ${notoDevanagari.variable}`}>
       <body>
         <ReduxProvider>
           <MuiProvider>

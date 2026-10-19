@@ -48,12 +48,12 @@ function StatusChip({ saved, elsewhere }: { saved: boolean; elsewhere: string | 
   return <Chip label="New" size="small" sx={{ height: 22, fontSize: "0.6875rem", fontWeight: 600, borderRadius: "6px", backgroundColor: "#FFF8E1", color: "#F57F17" }} />;
 }
 
-function Actions({ item, saved, canAct, onOpen, onReject, compact }: { item: FtpNewsItem; saved: boolean; canAct: boolean; onOpen: () => void; onReject: () => void; compact?: boolean }) {
+function Actions({ item, saved, canAct, onOpen, onReject, compact, align = "end" }: { item: FtpNewsItem; saved: boolean; canAct: boolean; onOpen: () => void; onReject: () => void; compact?: boolean; align?: "start" | "end" }) {
   return (
-    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, justifyContent: "flex-end" }} onClick={(e) => e.stopPropagation()}>
+    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, justifyContent: align === "end" ? "flex-end" : "flex-start" }} onClick={(e) => e.stopPropagation()}>
       {canAct && (
         <Tooltip title="Reject (R)">
-          <IconButton size="small" aria-label={`Reject ${item.headline}`} onClick={onReject} sx={{ borderRadius: "8px", color: "text.secondary", "&:hover": { color: "error.main" } }}>
+          <IconButton size="small" aria-label={`Reject ${item.headline}`} onClick={onReject} sx={{ width: { xs: 40, md: 32 }, height: { xs: 40, md: 32 }, borderRadius: "8px", color: "text.secondary", "&:hover": { color: "error.main" } }}>
             <Ban size={15} />
           </IconButton>
         </Tooltip>
@@ -66,7 +66,7 @@ function Actions({ item, saved, canAct, onOpen, onReject, compact }: { item: Ftp
             onClick={onOpen}
             disabled={!canAct}
             startIcon={canAct ? <PenLine size={14} /> : <Lock size={14} />}
-            sx={{ borderRadius: "8px", textTransform: "none", fontSize: compact ? "0.7rem" : "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}
+            sx={{ minHeight: { xs: 40, md: 32 }, borderRadius: "8px", textTransform: "none", fontSize: compact ? "0.7rem" : "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}
           >
             {saved ? "Continue" : "Create post"}
           </Button>
@@ -136,29 +136,33 @@ export function QueueCards({ items, focusedId, onFocus, onOpen, onReject, isSave
 }
 
 // ─── List (table) ────────────────────────────────────────────────────────────
+// Fits the column at any width: tag, area, files and time sit under the
+// headline, the thumbnail appears from sm, status gets its own column from md,
+// and on phones the actions move into the story cell.
 export function QueueTable({ items, focusedId, onFocus, onOpen, onReject, isSaved, liveElsewhere, canAct }: QueueViewProps) {
   const { mode } = useThemeMode();
   const head = { fontWeight: 700, fontSize: "0.75rem", whiteSpace: "nowrap" as const };
+  const fromSm = { display: { xs: "none", sm: "table-cell" } };
+  const fromMd = { display: { xs: "none", md: "table-cell" } };
 
   return (
     <TableContainer component={Paper} sx={{ borderRadius: "12px", border: "1px solid", borderColor: "divider", boxShadow: "none" }}>
-      <Table size="small" sx={{ minWidth: 820 }}>
+      <Table size="small" sx={{ tableLayout: "fixed", width: "100%" }}>
         <TableHead>
           <TableRow sx={{ backgroundColor: mode === "light" ? "#f9fafb" : "#1a1a1a" }}>
-            <TableCell sx={head}>Media</TableCell>
-            <TableCell sx={head}>Headline</TableCell>
-            <TableCell sx={head}>Tag</TableCell>
-            <TableCell sx={head}>Area</TableCell>
-            <TableCell sx={head}>Files</TableCell>
-            <TableCell sx={head}>Received</TableCell>
-            <TableCell sx={head}>Status</TableCell>
-            <TableCell align="right" sx={head}>Actions</TableCell>
+            <TableCell sx={{ ...head, ...fromSm, width: 92 }}>Media</TableCell>
+            <TableCell sx={head}>Story</TableCell>
+            <TableCell sx={{ ...head, ...fromMd, width: 124 }}>Status</TableCell>
+            <TableCell align="right" sx={{ ...head, ...fromSm, width: { sm: 168 } }}>
+              Actions
+            </TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
           {items.map((item, i) => {
             const cover = item.media[0];
             const saved = isSaved(item.id);
+            const elsewhere = liveElsewhere(item.id);
             return (
               <TableRow
                 key={item.id}
@@ -166,32 +170,36 @@ export function QueueTable({ items, focusedId, onFocus, onOpen, onReject, isSave
                 selected={item.id === focusedId}
                 onClick={() => onFocus(i)}
                 onDoubleClick={() => canAct && onOpen(item)}
-                sx={{ cursor: "pointer" }}
+                sx={{ cursor: "pointer", verticalAlign: "top", "& > td": { py: 1.25 } }}
               >
-                <TableCell>
+                <TableCell sx={fromSm}>
                   <Box sx={{ position: "relative", width: 64, height: 40, borderRadius: "6px", overflow: "hidden", backgroundColor: "#111" }}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={cover.posterUrl ?? cover.url} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                   </Box>
                 </TableCell>
-                <TableCell sx={{ maxWidth: 360 }}>
-                  <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, lineHeight: 1.4 }}>{item.headline}</Typography>
-                  <Typography sx={{ fontSize: "0.6875rem", color: "text.disabled", fontFamily: "var(--font-mono), ui-monospace, monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.ftpPath}</Typography>
-                </TableCell>
-                <TableCell>
-                  <TagChip tag={item.tag} />
-                </TableCell>
-                <TableCell sx={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>{item.area}</TableCell>
-                <TableCell>
-                  <Box sx={{ display: "flex", gap: 1, fontSize: "0.75rem", color: "text.secondary" }}>
+                <TableCell sx={{ minWidth: 0 }}>
+                  <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, lineHeight: 1.4, overflowWrap: "anywhere" }}>{item.headline}</Typography>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", mt: 0.5, fontSize: "0.75rem", color: "text.secondary" }}>
+                    <TagChip tag={item.tag} />
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.4 }}>
+                      <MapPin size={12} /> {item.area}
+                    </Box>
                     <MediaCounts item={item} />
+                    <span>{timeAgo(item.receivedAt)}</span>
+                    <Box sx={{ display: { xs: "inline-flex", md: "none" } }}>
+                      <StatusChip saved={saved} elsewhere={elsewhere} />
+                    </Box>
+                  </Box>
+                  <Typography sx={{ display: { xs: "none", sm: "block" }, mt: 0.5, fontSize: "0.6875rem", color: "text.disabled", fontFamily: "var(--font-mono), monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.ftpPath}</Typography>
+                  <Box sx={{ display: { xs: "block", sm: "none" }, mt: 1 }}>
+                    <Actions item={item} saved={saved} canAct={canAct} onOpen={() => onOpen(item)} onReject={() => onReject(item)} align="start" />
                   </Box>
                 </TableCell>
-                <TableCell sx={{ fontSize: "0.75rem", color: "text.secondary", whiteSpace: "nowrap" }}>{timeAgo(item.receivedAt)}</TableCell>
-                <TableCell>
-                  <StatusChip saved={saved} elsewhere={liveElsewhere(item.id)} />
+                <TableCell sx={fromMd}>
+                  <StatusChip saved={saved} elsewhere={elsewhere} />
                 </TableCell>
-                <TableCell align="right">
+                <TableCell align="right" sx={fromSm}>
                   <Actions item={item} saved={saved} canAct={canAct} onOpen={() => onOpen(item)} onReject={() => onReject(item)} compact />
                 </TableCell>
               </TableRow>

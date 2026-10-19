@@ -89,7 +89,7 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare, allo
                 display: "block",
                 mt: 0.25,
                 fontSize: "0.6875rem",
-                fontFamily: "var(--font-mono), ui-monospace, monospace",
+                fontFamily: "var(--font-mono), monospace",
                 color: "text.secondary",
                 textDecoration: post.status === "recalled" ? "line-through" : undefined,
                 overflow: "hidden",

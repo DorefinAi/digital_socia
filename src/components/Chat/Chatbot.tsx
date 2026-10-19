@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import { usePathname } from "next/navigation";
 import {
   Box,
   IconButton,
@@ -39,6 +40,7 @@ export default function AgentAssistant() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
+  const pathname = usePathname();
 
   useEffect(() => {
     setMounted(true);
@@ -82,7 +84,8 @@ export default function AgentAssistant() {
     }, 500);
   };
 
-  if (!mounted) return null;
+  // No assistant on the login page
+  if (!mounted || pathname === "/") return null;
 
   return (
     <ThemeProvider theme={lightTheme}>
@@ -101,12 +104,14 @@ export default function AgentAssistant() {
             boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
             "&:hover": { transform: "scale(1.05)", background: "#333" },
             zIndex: 1100,
-            animation: !isOpen ? "pulse 2s infinite" : "none",
+            // The ring grows with transform and opacity, which the GPU animates without repainting every page it sits on
+            "&::after": { content: '""', position: "absolute", inset: 0, borderRadius: "50%", background: "rgba(0,0,0,0.4)", pointerEvents: "none", animation: !isOpen ? "pulse 2s ease-out infinite" : "none", opacity: 0 },
+            "&:hover::after": { animation: "none" },
             "@keyframes pulse": {
-              "0%": { boxShadow: "0 0 0 0 rgba(0,0,0, 0.4)" },
-              "70%": { boxShadow: "0 0 0 10px rgba(0,0,0, 0)" },
-              "100%": { boxShadow: "0 0 0 0 rgba(0,0,0, 0)" }
-            }
+              "0%": { transform: "scale(1)", opacity: 1 },
+              "70%, 100%": { transform: "scale(1.36)", opacity: 0 }
+            },
+            "@media (prefers-reduced-motion: reduce)": { "&::after": { animation: "none" } }
           }}
         >
           {isOpen ? <CloseIcon /> : <SmartToyIcon />}

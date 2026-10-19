@@ -7,6 +7,34 @@ import { FTP_POLL_SECONDS, useNewsroom } from "@/providers/NewsroomProvider";
 
 const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
+/** Checks the FTP for new stories on demand; the automatic checks keep running in the background. */
+export function FtpRefresh({ onDone, size = "medium" }: { onDone?: (added: number) => void; size?: "small" | "medium" }) {
+  const { fetchFtpNews } = useNewsroom();
+  const [checking, setChecking] = useState(false);
+
+  const refresh = () => {
+    setChecking(true);
+    // Brief delay stands in for the FTP round-trip
+    setTimeout(() => {
+      const added = fetchFtpNews();
+      setChecking(false);
+      onDone?.(added);
+    }, 600);
+  };
+
+  return (
+    <Button
+      variant="outlined"
+      onClick={refresh}
+      disabled={checking}
+      startIcon={checking ? <CircularProgress size={14} color="inherit" /> : <RefreshCw size={14} />}
+      sx={{ height: size === "small" ? 32 : 36, flexShrink: 0, fontWeight: 600, fontSize: size === "small" ? "0.75rem" : undefined, borderColor: "divider", color: "text.primary", whiteSpace: "nowrap" }}
+    >
+      {checking ? "Refreshing" : "Refresh"}
+    </Button>
+  );
+}
+
 /** Shows that the FTP is being checked automatically, when it last ran, and what recent checks brought in. */
 export default function FtpStatus({ onManualFetch, compact }: { onManualFetch?: (added: number) => void; compact?: boolean }) {
   const { ftpSyncedAt, ftpFetchLog, fetchFtpNews, nextFetchAt } = useNewsroom();
@@ -48,9 +76,12 @@ export default function FtpStatus({ onManualFetch, compact }: { onManualFetch?: 
               height: 8,
               borderRadius: "50%",
               backgroundColor: "success.main",
-              boxShadow: "0 0 0 0 rgba(46,125,50,0.5)",
-              animation: "ftpPulse 2s infinite",
-              "@keyframes ftpPulse": { "0%": { boxShadow: "0 0 0 0 rgba(46,125,50,0.5)" }, "70%": { boxShadow: "0 0 0 6px rgba(46,125,50,0)" }, "100%": { boxShadow: "0 0 0 0 rgba(46,125,50,0)" } },
+              position: "relative",
+              flexShrink: 0,
+              // The ring grows with transform and opacity, which the GPU animates without repainting the page
+              "&::after": { content: '""', position: "absolute", inset: 0, borderRadius: "50%", backgroundColor: "success.main", animation: "ftpPulse 2s ease-out infinite" },
+              "@keyframes ftpPulse": { "0%": { transform: "scale(1)", opacity: 0.5 }, "70%, 100%": { transform: "scale(2.5)", opacity: 0 } },
+              "@media (prefers-reduced-motion: reduce)": { "&::after": { animation: "none", opacity: 0 } },
             }}
           />
           <Box sx={{ textAlign: "left", lineHeight: 1.2 }}>
@@ -91,7 +122,7 @@ export default function FtpStatus({ onManualFetch, compact }: { onManualFetch?: 
           {ftpFetchLog.length === 0 && <Typography sx={{ p: 2, fontSize: "0.8125rem", color: "text.secondary" }}>No checks yet. The first one runs within {FTP_POLL_SECONDS} seconds.</Typography>}
           {ftpFetchLog.map((run, i) => (
             <Box key={run.id} sx={{ display: "flex", gap: 1.25, px: 2, py: 1, borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>
-              <Typography sx={{ fontSize: "0.75rem", fontFamily: "var(--font-mono), ui-monospace, monospace", color: "text.secondary", pt: "1px", flexShrink: 0 }}>{clock(run.at)}</Typography>
+              <Typography sx={{ fontSize: "0.75rem", fontFamily: "var(--font-mono), monospace", color: "text.secondary", pt: "1px", flexShrink: 0 }}>{clock(run.at)}</Typography>
               <Box sx={{ minWidth: 0 }}>
                 <Typography sx={{ fontSize: "0.8125rem", fontWeight: run.added ? 600 : 400, color: run.added ? "success.main" : "text.secondary" }}>
                   {run.added ? `${run.added} new ${run.added === 1 ? "story" : "stories"}` : "No new stories"}

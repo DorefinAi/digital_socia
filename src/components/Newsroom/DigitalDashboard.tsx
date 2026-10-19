@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useMemo, useRef, useState } from "react";
-import { Box, Typography, Button, Tabs, Tab, ToggleButtonGroup, ToggleButton, CircularProgress, Snackbar, Chip, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, Link as MuiLink } from "@mui/material";
+import ResponsiveTabs from "@/components/Layout/ResponsiveTabs";
+import { Box, Typography, Button, ToggleButtonGroup, ToggleButton, CircularProgress, Snackbar, Chip, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, Link as MuiLink } from "@mui/material";
 import { Download, ExternalLink, LayoutGrid } from "lucide-react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useNewsroom } from "@/providers/NewsroomProvider";
@@ -180,7 +181,7 @@ export default function DigitalDashboard() {
     setExporting(false);
   };
 
-  const sortHeader = (by: typeof sort.by, label: string) => (
+  const sortHeader = (by: typeof sort.by, label: React.ReactNode) => (
     <TableSortLabel active={sort.by === by} direction={sort.by === by ? sort.dir : "desc"} onClick={() => setSort((s) => ({ by, dir: s.by === by && s.dir === "desc" ? "asc" : "desc" }))}>
       {label}
     </TableSortLabel>
@@ -217,22 +218,20 @@ export default function DigitalDashboard() {
         </Box>
       </Box>
 
-      <Tabs
+      <ResponsiveTabs<View>
         value={view}
-        onChange={(_, v) => {
+        onChange={(v) => {
           setView(v);
           setHidden([]);
           if (v !== "all") setHeatPlatform(v);
         }}
-        variant="scrollable"
-        scrollButtons={false}
-        sx={{ minHeight: 40, borderBottom: "1px solid", borderColor: "divider", "& .MuiTab-root": { minHeight: 40, textTransform: "none", fontWeight: 600, fontSize: "0.875rem", gap: 0.75 } }}
-      >
-        <Tab value="all" icon={<LayoutGrid size={15} />} iconPosition="start" label="All platforms" />
-        {ANALYTICS_PLATFORMS.map((p) => (
-          <Tab key={p} value={p} icon={<Box sx={{ display: "flex" }}>{PLATFORM_ICON[p]}</Box>} iconPosition="start" label={p} />
-        ))}
-      </Tabs>
+        ariaLabel="Platform"
+        items={[
+          { value: "all", label: "All platforms", icon: <LayoutGrid size={15} /> },
+          ...ANALYTICS_PLATFORMS.map((p) => ({ value: p as View, label: p, icon: PLATFORM_ICON[p] })),
+        ]}
+        tabsSx={{ minHeight: 40, borderBottom: "1px solid", borderColor: "divider", "& .MuiTab-root": { minHeight: 40, textTransform: "none", fontWeight: 600, fontSize: "0.875rem", gap: 0.75 } }}
+      />
 
       {/* Everything inside this box goes into the PDF */}
       <Box ref={reportRef} sx={{ display: "flex", flexDirection: "column", gap: 2.5, backgroundColor: "background.default", p: 0.5, m: -0.5 }}>
@@ -365,7 +364,7 @@ export default function DigitalDashboard() {
               <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>Average engagement rate by day and hour. Hover a cell for the figure.</Typography>
             </Box>
             {view === "all" && (
-              <Box data-pdf-hide="true" sx={{ display: "flex", gap: 0.5 }}>
+              <Box data-pdf-hide="true" sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
                 {ANALYTICS_PLATFORMS.map((p) => (
                   <Chip key={p} label={p} size="small" onClick={() => setHeatPlatform(p)} variant={heatPlatform === p ? "filled" : "outlined"} sx={{ height: 24, fontSize: "0.6875rem", fontWeight: 600, borderRadius: "6px" }} />
                 ))}
@@ -381,16 +380,25 @@ export default function DigitalDashboard() {
             <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>Top posts · {viewLabel}</Typography>
             <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>{RANGES[range].label}. Click a column to sort.</Typography>
           </Box>
+          {/* Fixed layout so long titles wrap instead of widening the table;
+              date, engagements and rate fold under the title on small screens */}
           <TableContainer>
-            <Table size="small" sx={{ minWidth: 720 }}>
+            <Table size="small" sx={{ tableLayout: "fixed", width: "100%" }}>
               <TableHead>
                 <TableRow sx={{ backgroundColor: mode === "light" ? "#f9fafb" : "#1a1a1a" }}>
                   <TableCell sx={{ fontWeight: 700, fontSize: "0.75rem" }}>Post</TableCell>
-                  <TableCell sx={{ fontWeight: 700, fontSize: "0.75rem" }}>{sortHeader("postedAt", "Published")}</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700, fontSize: "0.75rem" }}>{sortHeader("reach", "Reach / views")}</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700, fontSize: "0.75rem" }}>{sortHeader("engagements", "Engagements")}</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700, fontSize: "0.75rem" }}>{sortHeader("rate", "Rate")}</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700, fontSize: "0.75rem" }}>Link</TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: "0.75rem", width: 132, display: { xs: "none", md: "table-cell" } }}>{sortHeader("postedAt", "Published")}</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700, fontSize: "0.75rem", width: { xs: 84, sm: 120 } }}>{sortHeader(
+                    "reach",
+                    <>
+                      Reach<Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}> / views</Box>
+                    </>
+                  )}</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700, fontSize: "0.75rem", width: 128, display: { xs: "none", md: "table-cell" } }}>{sortHeader("engagements", "Engagements")}</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700, fontSize: "0.75rem", width: 84, display: { xs: "none", sm: "table-cell" } }}>{sortHeader("rate", "Rate")}</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700, fontSize: "0.75rem", width: 52 }}>
+                    <Box component="span" sx={{ position: "absolute", width: "1px", height: "1px", overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}>Link</Box>
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -403,26 +411,30 @@ export default function DigitalDashboard() {
                 )}
                 {posts.map((p) => (
                   <TableRow key={p.id} hover>
-                    <TableCell sx={{ maxWidth: 380 }}>
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 1.25 }}>
-                        <Box sx={{ width: 56, height: 36, flexShrink: 0, borderRadius: "4px", overflow: "hidden", backgroundColor: "#111" }}>
+                    <TableCell>
+                      <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1.25 }}>
+                        <Box sx={{ width: 56, height: 36, flexShrink: 0, borderRadius: "4px", overflow: "hidden", backgroundColor: "#111", display: { xs: "none", sm: "block" } }}>
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           {p.thumbUrl && <img src={p.thumbUrl} alt="" crossOrigin="anonymous" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
                         </Box>
                         <Box sx={{ minWidth: 0 }}>
-                          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                            {PLATFORM_ICON[p.platform]}
-                            <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</Typography>
+                          <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5 }}>
+                            <Box sx={{ display: "flex", pt: "2px", flexShrink: 0 }}>{PLATFORM_ICON[p.platform]}</Box>
+                            <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", overflowWrap: "anywhere" }}>{p.title}</Typography>
                           </Box>
+                          <Typography sx={{ display: { xs: "block", md: "none" }, fontSize: "0.6875rem", color: "text.secondary", mt: 0.25, fontVariantNumeric: "tabular-nums" }}>
+                            {new Date(p.postedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false })} · {formatIndian(p.engagements)} engagements
+                            <Box component="span" sx={{ display: { sm: "none" } }}> · {p.rate.toFixed(2)}%</Box>
+                          </Typography>
                         </Box>
                       </Box>
                     </TableCell>
-                    <TableCell sx={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>{new Date(p.postedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false })}</TableCell>
+                    <TableCell sx={{ fontSize: "0.75rem", whiteSpace: "nowrap", display: { xs: "none", md: "table-cell" } }}>{new Date(p.postedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false })}</TableCell>
                     <TableCell align="right" sx={{ fontSize: "0.8125rem", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{formatIndian(p.reach)}</TableCell>
-                    <TableCell align="right" sx={{ fontSize: "0.8125rem", fontVariantNumeric: "tabular-nums" }}>{formatIndian(p.engagements)}</TableCell>
-                    <TableCell align="right" sx={{ fontSize: "0.8125rem", fontVariantNumeric: "tabular-nums" }}>{p.rate.toFixed(2)}%</TableCell>
+                    <TableCell align="right" sx={{ fontSize: "0.8125rem", fontVariantNumeric: "tabular-nums", display: { xs: "none", md: "table-cell" } }}>{formatIndian(p.engagements)}</TableCell>
+                    <TableCell align="right" sx={{ fontSize: "0.8125rem", fontVariantNumeric: "tabular-nums", display: { xs: "none", sm: "table-cell" } }}>{p.rate.toFixed(2)}%</TableCell>
                     <TableCell align="right">
-                      <MuiLink href={p.url} target="_blank" rel="noopener noreferrer" aria-label="Open post" sx={{ display: "inline-flex", color: "text.secondary" }}>
+                      <MuiLink href={p.url} target="_blank" rel="noopener noreferrer" aria-label={`Open post: ${p.title}`} sx={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, color: "text.secondary" }}>
                         <ExternalLink size={15} />
                       </MuiLink>
                     </TableCell>

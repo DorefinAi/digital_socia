@@ -3,10 +3,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Typography } from "@mui/material";
 import { useNewsroom } from "@/providers/NewsroomProvider";
-import { FtpNewsItem, SocialPlatform } from "@/types/newsroom";
+import { BreakingTag, FtpNewsItem, SocialPlatform } from "@/types/newsroom";
 import { isLiveOn } from "@/data/socialDesk";
-import FtpStatus from "./FtpStatus";
-import { TagChip, timeAgo } from "./shared";
+import { FtpRefresh } from "./FtpStatus";
+import { srOnly, TAG_TINT, tagTint, timeAgo } from "./shared";
 
 const STATUS_STYLE: Record<string, { label: string; color: string }> = {
   posted: { label: "Posted", color: "success.main" },
@@ -36,11 +36,21 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.25, height: { lg: "100%" }, minHeight: 0 }}>
-      <Box>
-        <Typography sx={{ fontSize: "0.9375rem", fontWeight: 700 }}>FTP feed</Typography>
-        <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.25 }}>Newest first. Pick a story to switch; your edits are kept as a draft.</Typography>
+      <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1 }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography sx={{ fontSize: "0.9375rem", fontWeight: 700 }}>FTP feed</Typography>
+          <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.25 }}>Newest first. Pick a story to switch; your edits are kept as a draft.</Typography>
+        </Box>
+        <FtpRefresh size="small" />
       </Box>
-      <FtpStatus compact />
+      <Box aria-hidden sx={{ display: "flex", flexWrap: "wrap", columnGap: 1.5, rowGap: 0.5 }}>
+        {(Object.keys(TAG_TINT) as BreakingTag[]).map((tag) => (
+          <Box key={tag} sx={{ display: "flex", alignItems: "center", gap: 0.6, fontSize: "0.6875rem", color: "text.secondary", whiteSpace: "nowrap" }}>
+            <Box sx={{ width: 18, height: 10, borderRadius: "3px", background: (t) => tagTint(tag, t.palette.mode, 1.6) }} />
+            {TAG_TINT[tag].label}
+          </Box>
+        ))}
+      </Box>
       <Box ref={listRef} sx={{ flex: 1, minHeight: 0, overflowY: "auto", mx: -1, maxHeight: { xs: 360, lg: "none" } }}>
         {sorted.map((n) => {
           const current = n.id === currentId;
@@ -61,13 +71,17 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
                 width: "100%",
                 textAlign: "left",
                 p: 1,
+                mb: 0.5,
                 border: 0,
                 borderRadius: "8px",
                 fontFamily: "inherit",
                 color: "text.primary",
                 cursor: current ? "default" : "pointer",
-                backgroundColor: current ? "action.selected" : "transparent",
-                "&:hover": { backgroundColor: current ? "action.selected" : "action.hover" },
+                background: (t) => tagTint(n.tag, t.palette.mode, current ? 1.6 : 1),
+                // The open story is outlined so it stays distinct from the tint
+                boxShadow: (t) => (current ? `inset 0 0 0 2px ${t.palette.text.primary}` : "none"),
+                "&:hover": { background: (t) => tagTint(n.tag, t.palette.mode, current ? 1.6 : 1.35) },
+                "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "2px" },
               }}
             >
               <Box sx={{ position: "relative", width: 52, height: 38, borderRadius: "4px", overflow: "hidden", backgroundColor: "#111" }}>
@@ -77,7 +91,7 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
               <Box sx={{ minWidth: 0 }}>
                 <Typography sx={{ fontSize: "0.75rem", fontWeight: 600, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{n.headline}</Typography>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.4, fontSize: "0.625rem", color: "text.secondary", whiteSpace: "nowrap" }}>
-                  <TagChip tag={n.tag} />
+                  <Box component="span" sx={srOnly}>{TAG_TINT[n.tag].label}</Box>
                   {fresh && <Box component="span" sx={{ px: 0.5, borderRadius: "3px", backgroundColor: "success.main", color: "#fff", fontWeight: 700 }}>NEW</Box>}
                   <span>{timeAgo(n.receivedAt)}</span>
                   {status && STATUS_STYLE[status] && (

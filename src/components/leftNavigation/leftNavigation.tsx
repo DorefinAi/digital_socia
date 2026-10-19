@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import NavigationLabel from "../Overview/NavigationLabel";
+import SociaMark from "@/components/Login/SociaMark";
 import { FacebookIcon } from "@/components/Newsroom/BreakingDesk/shared";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 
@@ -207,13 +208,19 @@ const LeftNavigation: React.FC = () => {
       {/* Brand */}
       <Box sx={{ px: isCollapsed ? 0 : 0.5, py: 1, mb: 1, display: "flex", justifyContent: isCollapsed ? "center" : "flex-start", alignItems: "center", minHeight: 40 }}>
         {isCollapsed ? (
-          <Tooltip title="Socia" placement="right" arrow>
-            <Typography sx={{ fontSize: "1rem", fontWeight: 900, color: "text.primary", letterSpacing: "-0.03em" }}>S</Typography>
+          <Tooltip title="Socia · Digital desk" placement="right" arrow>
+            <Box sx={{ display: "flex", color: "text.primary" }} role="img" aria-label="Socia digital desk">
+              <SociaMark size={20} />
+            </Box>
           </Tooltip>
         ) : (
-          <Typography sx={{ fontSize: "1.05rem", fontWeight: 800, letterSpacing: "-0.02em", color: "text.primary", whiteSpace: "nowrap" }}>
-            Socia
-          </Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, color: "text.primary" }}>
+            <SociaMark size={22} />
+            <Box sx={{ minWidth: 0 }}>
+              <Typography sx={{ fontSize: "1.05rem", fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.15, whiteSpace: "nowrap" }}>Socia</Typography>
+              <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", lineHeight: 1.2, whiteSpace: "nowrap" }}>Digital desk</Typography>
+            </Box>
+          </Box>
         )}
       </Box>
 

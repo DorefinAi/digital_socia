@@ -2,7 +2,8 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Box, Typography, TextField, InputAdornment, Tabs, Tab, Snackbar, LinearProgress, ToggleButtonGroup, ToggleButton } from "@mui/material";
+import { Box, Typography, TextField, InputAdornment, Snackbar, LinearProgress, ToggleButtonGroup, ToggleButton } from "@mui/material";
+import ResponsiveTabs from "@/components/Layout/ResponsiveTabs";
 import { Search, LayoutGrid, List, ArrowUp } from "lucide-react";
 import { useThemeMode } from "@/providers/MuiProvider";
 import { useNewsroom } from "@/providers/NewsroomProvider";
@@ -14,7 +15,7 @@ import { RejectDialog } from "./actionDialogs";
 import { RejectedList, ScheduledList } from "./DraftLists";
 import TemplatesPanel from "./TemplatesPanel";
 import UndoToast from "./UndoToast";
-import FtpStatus from "./FtpStatus";
+import { FtpRefresh } from "./FtpStatus";
 import { QueueCards, QueueTable } from "./QueueViews";
 import { PLATFORM_META, PlatformIcon } from "./shared";
 
@@ -192,11 +193,11 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
               <List size={15} /> List
             </ToggleButton>
           </ToggleButtonGroup>
-          <FtpStatus
-            onManualFetch={(added) => {
+          <FtpRefresh
+            onDone={(added) => {
               // A check the operator asked for shows its results straight away
               revealNew();
-              setNotice(added ? `${added} new breaking ${added === 1 ? "story" : "stories"} pulled from FTP` : "FTP checked. No new breaking stories.");
+              setNotice(added ? `${added} new breaking ${added === 1 ? "story" : "stories"} pulled from FTP` : "Up to date. No new breaking stories.");
             }}
           />
         </Box>
@@ -231,19 +232,19 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
 
       {/* Tabs + filters */}
       <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap", borderBottom: "1px solid", borderColor: "divider" }}>
-        <Tabs
+        <ResponsiveTabs<ConsoleTab>
           value={tab}
-          onChange={(_, value) => setTab(value)}
-          variant="scrollable"
-          scrollButtons={false}
-          sx={{ minHeight: 40, maxWidth: "100%", "& .MuiTab-root": { minHeight: 40, textTransform: "none", fontWeight: 600, fontSize: "0.875rem", px: 1.5, minWidth: 0 } }}
-        >
-          <Tab value="queue" label={`Queue (${queue.length})`} />
-          <Tab value="scheduled" label={`Scheduled (${scheduledCount})`} />
-          <Tab value="published" label={`Published (${postsHere.length})`} />
-          <Tab value="rejected" label={`Rejected (${rejectedCount})`} />
-          <Tab value="templates" label="Templates" />
-        </Tabs>
+          onChange={setTab}
+          ariaLabel="Draft console sections"
+          items={[
+            { value: "queue", label: `Queue (${queue.length})` },
+            { value: "scheduled", label: `Scheduled (${scheduledCount})` },
+            { value: "published", label: `Published (${postsHere.length})` },
+            { value: "rejected", label: `Rejected (${rejectedCount})` },
+            { value: "templates", label: "Templates" },
+          ]}
+          tabsSx={{ minHeight: 40, maxWidth: "100%", "& .MuiTab-root": { minHeight: 40, textTransform: "none", fontWeight: 600, fontSize: "0.875rem", px: 1.5, minWidth: 0 } }}
+        />
         {tab === "queue" && (
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, ml: { xs: 0, sm: "auto" }, width: { xs: "100%", sm: "auto" }, pb: 0.75, flexWrap: "wrap" }}>
             <Box role="group" aria-label="Filter by tag" sx={{ display: "flex", border: "1px solid", borderColor: "divider", borderRadius: "8px", overflow: "hidden" }}>
@@ -336,7 +337,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       {tab === "rejected" && <RejectedList platform={platform} />}
       {tab === "templates" && <TemplatesPanel />}
 
-      {composing && <PostEditor key={composing.id} item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />}
+      {composing && <PostEditor item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />}
       {rejecting && (
         <RejectDialog
           open

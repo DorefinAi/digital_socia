@@ -82,12 +82,14 @@ export function PostingHeatmap({ grid, color }: { grid: number[][]; color: strin
 
   return (
     <Box>
-      <Box sx={{ overflowX: "auto" }}>
-        <Box sx={{ display: "grid", gridTemplateColumns: "36px repeat(24, minmax(16px, 1fr))", gap: "3px", minWidth: 520 }}>
+      {/* Cells shrink with the card (thinner gaps and every 6th hour label on
+          phones) so the whole week fits without a sideways scroll */}
+      <Box>
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "28px repeat(24, minmax(0, 1fr))", sm: "36px repeat(24, minmax(0, 1fr))" }, gap: { xs: "2px", sm: "3px" } }}>
           <span />
           {Array.from({ length: 24 }, (_, h) => (
-            <Typography key={h} sx={{ fontSize: "0.5625rem", color: "text.secondary", textAlign: "center" }}>
-              {h % 3 === 0 ? h : ""}
+            <Typography key={h} sx={{ fontSize: "0.5625rem", color: "text.secondary", textAlign: "center", overflow: "visible", whiteSpace: "nowrap" }}>
+              <Box component="span" sx={{ display: { xs: h % 6 === 0 ? "inline" : "none", sm: h % 3 === 0 ? "inline" : "none" } }}>{h}</Box>
             </Typography>
           ))}
           {grid.map((row, d) => (
@@ -101,7 +103,7 @@ export function PostingHeatmap({ grid, color }: { grid: number[][]; color: strin
                       onMouseEnter={() => setHover({ d, h })}
                       onMouseLeave={() => setHover(null)}
                       sx={{
-                        height: 18,
+                        height: { xs: 14, sm: 18 },
                         borderRadius: "3px",
                         backgroundColor: color,
                         opacity: 0.08 + t * 0.92,

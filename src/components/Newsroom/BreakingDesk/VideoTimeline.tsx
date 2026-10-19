@@ -1,10 +1,12 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Typography, IconButton, Tooltip, Button } from "@mui/material";
-import { Play, Pause, SkipBack, SkipForward, Scissors, Trash2, ZoomIn, ZoomOut, Maximize2, Type, Film, RotateCcw } from "lucide-react";
-import { FtpMedia } from "@/types/newsroom";
-import { BREAKING_RED, TrimRange } from "./TemplateCanvas";
+import { Box, Typography, IconButton, Tooltip, Button, Menu, MenuItem } from "@mui/material";
+import { Play, Pause, SkipBack, SkipForward, Scissors, Trash2, ZoomIn, ZoomOut, Maximize2, Type, Film, RotateCcw, Gauge, Volume2, VolumeX, Sparkles } from "lucide-react";
+import { FtpMedia, TextMotion } from "@/types/newsroom";
+import { Playhead, usePlayheadTime } from "@/hooks/usePlayhead";
+import { TrimRange } from "./TemplateCanvas";
+import { textSpan } from "./cardRender";
 
 export const MIN_CLIP = 0.3;
 const LABEL_WIDTH = 40;
@@ -65,10 +67,18 @@ function useFilmstrip(media: FtpMedia, duration: number, count = 14): string[] {
   return result.url === media.url ? result.frames : [];
 }
 
+export interface TimelineText {
+  /** Canvas selection key: "headline" or "layer:<id>" */
+  key: string;
+  label: string;
+  motion?: TextMotion;
+}
+
 interface VideoTimelineProps {
   media: FtpMedia;
   duration: number;
-  time: number;
+  /** Read inside the timeline, so the playhead moving re-renders only the timeline */
+  playhead: Playhead;
   segments: TrimRange[];
   selected: number | null;
   onSelect: (index: number | null) => void;
@@ -76,36 +86,53 @@ interface VideoTimelineProps {
   onSeek: (time: number) => void;
   paused: boolean;
   onTogglePlay: () => void;
-  headline: string;
-  headlineSelected: boolean;
-  onSelectHeadline: () => void;
+  /** The headline and the text boxes, each on its own track */
+  texts: TimelineText[];
+  selectedText: string | null;
+  onSelectText: (key: string) => void;
+  /** New on-screen span for a text, in seconds of the source */
+  onTextTiming: (key: string, span: { start: number; end: number }) => void;
+  sound: boolean;
+  onToggleSound: () => void;
 }
 
-type Drag = { kind: "playhead" } | { kind: "start" | "end"; index: number };
+type Drag =
+  | { kind: "playhead" }
+  | { kind: "start" | "end"; index: number }
+  | { kind: "text-start" | "text-end" | "text-move"; key: string; grab: number; span: { start: number; end: number } };
 
 const toolSx = { borderRadius: "6px", width: 30, height: 30, color: "text.primary" };
+const TEXT_TRACK = 24;
+const MIN_TEXT = 0.3;
+export const CLIP_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
-export default function VideoTimeline({ media, duration, time, segments, selected, onSelect, onSegmentsChange, onSeek, paused, onTogglePlay, headline, headlineSelected, onSelectHeadline }: VideoTimelineProps) {
+/** Length of the saved video once cuts and speeds apply */
+export const outputLength = (segments: TrimRange[]) => segments.reduce((sum, s) => sum + (s.end - s.start) / (s.speed ?? 1), 0);
+
+export default function VideoTimeline({ media, duration, playhead, segments, selected, onSelect, onSegmentsChange, onSeek, paused, onTogglePlay, texts, selectedText, onSelectText, onTextTiming, sound, onToggleSound }: VideoTimelineProps) {
   const laneRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<Drag | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [speedMenu, setSpeedMenu] = useState<HTMLElement | null>(null);
   const frames = useFilmstrip(media, duration);
+  const time = usePlayheadTime(playhead);
 
   const pct = (t: number) => `${(t / duration) * 100}%`;
-  const kept = segments.reduce((sum, s) => sum + (s.end - s.start), 0);
-  // Position in the edited video: time spent inside kept clips up to the playhead
-  const editedTime = segments.reduce((sum, s) => sum + Math.max(0, Math.min(time, s.end) - s.start), 0);
+  const kept = outputLength(segments);
+  // Position in the edited video: output time spent inside kept clips up to the playhead
+  const editedTime = segments.reduce((sum, s) => sum + Math.max(0, Math.min(time, s.end) - s.start) / (s.speed ?? 1), 0);
   const firstStart = segments[0]?.start ?? 0;
   const lastEnd = segments[segments.length - 1]?.end ?? duration;
 
   const splitIndex = segments.findIndex((s) => time > s.start + MIN_CLIP && time < s.end - MIN_CLIP);
   const canDelete = selected !== null && segments.length > 1;
-  const isEdited = segments.length !== 1 || segments[0].start > 0.01 || segments[0].end < duration - 0.01;
+  const isEdited = segments.length !== 1 || segments[0].start > 0.01 || segments[0].end < duration - 0.01 || segments.some((s) => (s.speed ?? 1) !== 1);
+  const selectedSpeed = selected !== null ? (segments[selected]?.speed ?? 1) : 1;
 
   const split = () => {
     if (splitIndex < 0) return;
     const target = segments[splitIndex];
-    onSegmentsChange([...segments.slice(0, splitIndex), { start: target.start, end: time }, { start: time, end: target.end }, ...segments.slice(splitIndex + 1)]);
+    onSegmentsChange([...segments.slice(0, splitIndex), { ...target, end: time }, { ...target, start: time }, ...segments.slice(splitIndex + 1)]);
     onSelect(splitIndex + 1);
   };
 
@@ -115,6 +142,11 @@ export default function VideoTimeline({ media, duration, time, segments, selecte
     onSelect(null);
   };
 
+  const setSpeed = (speed: number) => {
+    if (selected === null) return;
+    onSegmentsChange(segments.map((s, i) => (i === selected ? { ...s, speed: speed === 1 ? undefined : speed } : s)));
+  };
+
   const moveEdge = (index: number, edge: "start" | "end", t: number) => {
     const segment = segments[index];
     const lower = edge === "start" ? (segments[index - 1]?.end ?? 0) : segment.start + MIN_CLIP;
@@ -122,6 +154,23 @@ export default function VideoTimeline({ media, duration, time, segments, selecte
     const value = Math.max(lower, Math.min(upper, t));
     onSegmentsChange(segments.map((s, i) => (i === index ? { ...s, [edge]: value } : s)));
     onSeek(edge === "start" ? value : Math.max(segment.start, value - 0.05));
+  };
+
+  const spanOf = (text: TimelineText) => textSpan(text.motion, firstStart, lastEnd);
+
+  const moveText = (drag: Extract<Drag, { key: string }>, t: number) => {
+    const { start, end } = drag.span;
+    let next = { start, end };
+    if (drag.kind === "text-start") next = { start: Math.max(firstStart, Math.min(end - MIN_TEXT, t)), end };
+    else if (drag.kind === "text-end") next = { start, end: Math.min(lastEnd, Math.max(start + MIN_TEXT, t)) };
+    else {
+      const length = end - start;
+      const from = Math.max(firstStart, Math.min(lastEnd - length, start + (t - drag.grab)));
+      next = { start: from, end: from + length };
+    }
+    onTextTiming(drag.key, next);
+    // Show the frame being set: the start while moving in, the end while trimming out
+    onSeek(drag.kind === "text-end" ? Math.max(next.start, next.end - 0.05) : Math.min(next.end, next.start + 0.05));
   };
 
   const timeAt = (clientX: number) => {
@@ -139,8 +188,18 @@ export default function VideoTimeline({ media, duration, time, segments, selecte
       onSelect(index);
       return;
     }
-    if (target?.dataset.text) onSelectHeadline();
-    else onSelect(target?.dataset.clip ? Number(target.dataset.clip) : null);
+    if (target?.dataset.text) {
+      const key = target.dataset.text;
+      const text = texts.find((x) => x.key === key);
+      if (text) {
+        const part = (e.target as HTMLElement).closest<HTMLElement>("[data-text-edge]")?.dataset.textEdge;
+        onSelectText(key);
+        onSelect(null);
+        dragRef.current = { kind: part === "start" ? "text-start" : part === "end" ? "text-end" : "text-move", key, grab: timeAt(e.clientX), span: spanOf(text) };
+        return;
+      }
+    }
+    onSelect(target?.dataset.clip ? Number(target.dataset.clip) : null);
     dragRef.current = { kind: "playhead" };
     onSeek(timeAt(e.clientX));
   };
@@ -149,7 +208,8 @@ export default function VideoTimeline({ media, duration, time, segments, selecte
     const drag = dragRef.current;
     if (!drag) return;
     if (drag.kind === "playhead") onSeek(timeAt(e.clientX));
-    else moveEdge(drag.index, drag.kind, timeAt(e.clientX));
+    else if ("index" in drag) moveEdge(drag.index, drag.kind, timeAt(e.clientX));
+    else if (drag.kind !== "text-move" || Math.abs(timeAt(e.clientX) - drag.grab) > 0.02) moveText(drag, timeAt(e.clientX));
   };
 
   const endDrag = () => (dragRef.current = null);
@@ -158,6 +218,13 @@ export default function VideoTimeline({ media, duration, time, segments, selecte
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
     moveEdge(index, edge, segments[index][edge] + (e.key === "ArrowLeft" ? -0.1 : 0.1));
+  };
+
+  const nudgeText = (e: React.KeyboardEvent, text: TimelineText, edge: "start" | "end") => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const span = spanOf(text);
+    moveText({ kind: edge === "start" ? "text-start" : "text-end", key: text.key, grab: 0, span }, span[edge] + (e.key === "ArrowLeft" ? -0.1 : 0.1));
   };
 
   // Ruler marks at a step that keeps labels readable for any clip length
@@ -170,27 +237,51 @@ export default function VideoTimeline({ media, duration, time, segments, selecte
     </Tooltip>
   );
 
+  const speedLabel = (v: number) => `${v}×`;
+
   return (
     <Box sx={{ flexShrink: 0, backgroundColor: "background.paper", borderTop: "1px solid", borderColor: "divider", userSelect: "none" }}>
-      {/* Toolbar: edit tools, transport, timeline zoom */}
+      {/* Toolbar: edit tools, transport, sound and timeline zoom */}
       <Box sx={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 1, px: 1, height: 44, borderBottom: "1px solid", borderColor: "divider" }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.25, minWidth: 0 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.25, minWidth: 0, overflowX: "auto" }}>
           <Tooltip title={splitIndex < 0 ? "Move the playhead inside a clip to split it" : "Split at playhead (S)"}>
             <span>
               <Button size="small" onClick={split} disabled={splitIndex < 0} startIcon={<Scissors size={14} />} sx={{ minHeight: 30, minWidth: 0, px: 1, fontSize: "0.75rem", color: "text.primary" }}>
-                Split
+                <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>Split</Box>
               </Button>
             </span>
           </Tooltip>
           <Tooltip title={canDelete ? "Delete selected clip (Del)" : segments.length > 1 ? "Select a clip to delete it" : "Split the video first, then delete the part you do not want"}>
             <span>
               <Button size="small" onClick={remove} disabled={!canDelete} startIcon={<Trash2 size={14} />} sx={{ minHeight: 30, minWidth: 0, px: 1, fontSize: "0.75rem", color: "text.primary" }}>
-                Delete
+                <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>Delete</Box>
               </Button>
             </span>
           </Tooltip>
+          <Tooltip title={selected === null ? "Select a clip to change its speed" : "Speed of the selected clip"}>
+            <span>
+              <Button size="small" onClick={(e) => setSpeedMenu(e.currentTarget)} disabled={selected === null} startIcon={<Gauge size={14} />} aria-haspopup="menu" sx={{ minHeight: 30, minWidth: 0, px: 1, fontSize: "0.75rem", color: "text.primary", fontVariantNumeric: "tabular-nums" }}>
+                {speedLabel(selectedSpeed)}
+              </Button>
+            </span>
+          </Tooltip>
+          <Menu anchorEl={speedMenu} open={!!speedMenu} onClose={() => setSpeedMenu(null)}>
+            {CLIP_SPEEDS.map((v) => (
+              <MenuItem
+                key={v}
+                selected={v === selectedSpeed}
+                onClick={() => {
+                  setSpeed(v);
+                  setSpeedMenu(null);
+                }}
+                sx={{ fontSize: "0.8125rem", fontVariantNumeric: "tabular-nums", minWidth: 120 }}
+              >
+                {speedLabel(v)} {v === 1 ? "Normal" : v < 1 ? "Slow" : "Fast"}
+              </MenuItem>
+            ))}
+          </Menu>
           {isEdited && (
-            <Tooltip title="Restore the full video">
+            <Tooltip title="Restore the full video at normal speed">
               <IconButton sx={toolSx} aria-label="Restore the full video" onClick={() => { onSegmentsChange([{ start: 0, end: duration }]); onSelect(null); }}>
                 <RotateCcw size={14} />
               </IconButton>
@@ -208,20 +299,25 @@ export default function VideoTimeline({ media, duration, time, segments, selecte
           <IconButton sx={toolSx} aria-label="Go to end" onClick={() => onSeek(Math.max(firstStart, lastEnd - 0.05))}>
             <SkipForward size={15} />
           </IconButton>
-          <Typography sx={{ ml: 0.5, fontSize: "0.75rem", fontFamily: "var(--font-mono), monospace", whiteSpace: "nowrap" }}>
+          <Typography sx={{ ml: 0.5, fontSize: "0.75rem", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", display: { xs: "none", sm: "block" } }}>
             {clock(editedTime)} <Box component="span" sx={{ color: "text.secondary" }}>/ {clock(kept)}</Box>
           </Typography>
         </Box>
 
         <Box sx={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 0.25 }}>
-          <IconButton sx={toolSx} aria-label="Zoom timeline out" disabled={zoom <= 1} onClick={() => setZoom((z) => Math.max(1, z / 1.5))}>
+          <Tooltip title={sound ? "Mute in the editor" : "Play sound in the editor"}>
+            <IconButton sx={toolSx} aria-label={sound ? "Mute in the editor" : "Play sound in the editor"} aria-pressed={sound} onClick={onToggleSound}>
+              {sound ? <Volume2 size={15} /> : <VolumeX size={15} />}
+            </IconButton>
+          </Tooltip>
+          <IconButton sx={{ ...toolSx, display: { xs: "none", sm: "inline-flex" } }} aria-label="Zoom timeline out" disabled={zoom <= 1} onClick={() => setZoom((z) => Math.max(1, z / 1.5))}>
             <ZoomOut size={15} />
           </IconButton>
-          <IconButton sx={toolSx} aria-label="Zoom timeline in" disabled={zoom >= 5} onClick={() => setZoom((z) => Math.min(5, z * 1.5))}>
+          <IconButton sx={{ ...toolSx, display: { xs: "none", sm: "inline-flex" } }} aria-label="Zoom timeline in" disabled={zoom >= 5} onClick={() => setZoom((z) => Math.min(5, z * 1.5))}>
             <ZoomIn size={15} />
           </IconButton>
           <Tooltip title="Fit timeline">
-            <IconButton sx={toolSx} aria-label="Fit timeline" onClick={() => setZoom(1)}>
+            <IconButton sx={{ ...toolSx, display: { xs: "none", sm: "inline-flex" } }} aria-label="Fit timeline" onClick={() => setZoom(1)}>
               <Maximize2 size={14} />
             </IconButton>
           </Tooltip>
@@ -241,11 +337,15 @@ export default function VideoTimeline({ media, duration, time, segments, selecte
             onTogglePlay();
           }
         }}
-        sx={{ display: "flex", overflowX: "auto", py: 0.75, pr: 1.5, "&:focus-visible": { outline: `2px solid ${CLIP_BLUE}`, outlineOffset: -2 } }}
+        sx={{ display: "flex", overflowX: "auto", overflowY: "auto", maxHeight: { xs: 190, lg: 230 }, py: 0.75, pr: 1.5, "&:focus-visible": { outline: `2px solid ${CLIP_BLUE}`, outlineOffset: -2 } }}
       >
         <Box sx={{ display: "flex", flexDirection: "column", gap: "6px", pt: "22px" }}>
-          <Box sx={{ height: 28, display: "flex" }}>{trackLabel(<Type size={15} />, "Headline")}</Box>
-          <Box sx={{ height: 54, display: "flex" }}>{trackLabel(<Film size={15} />, "Video")}</Box>
+          {texts.map((t) => (
+            <Box key={t.key} sx={{ height: TEXT_TRACK, display: "flex", flexShrink: 0 }}>
+              {trackLabel(<Type size={14} />, t.key === "headline" ? "Card text" : `Text: ${t.label}`)}
+            </Box>
+          ))}
+          <Box sx={{ height: 54, display: "flex", flexShrink: 0 }}>{trackLabel(<Film size={15} />, "Video")}</Box>
         </Box>
 
         <Box
@@ -257,29 +357,48 @@ export default function VideoTimeline({ media, duration, time, segments, selecte
           sx={{ position: "relative", flex: "none", width: `calc((100% - ${LABEL_WIDTH}px) * ${zoom})`, minWidth: 240, display: "flex", flexDirection: "column", gap: "6px", cursor: "pointer", touchAction: "none" }}
         >
           {/* Ruler */}
-          <Box sx={{ position: "relative", height: 16 }}>
+          <Box sx={{ position: "relative", height: 16, flexShrink: 0 }}>
             {marks.map((mark) => (
-              <Box key={mark} sx={{ position: "absolute", left: pct(mark), top: 0, bottom: 0, pl: "4px", borderLeft: "1px solid", borderColor: "divider", fontSize: "0.625rem", lineHeight: "14px", color: "text.secondary", fontFamily: "var(--font-mono), monospace", pointerEvents: "none" }}>
+              <Box key={mark} sx={{ position: "absolute", left: pct(mark), top: 0, bottom: 0, pl: "4px", borderLeft: "1px solid", borderColor: "divider", fontSize: "0.625rem", lineHeight: "14px", color: "text.secondary", fontVariantNumeric: "tabular-nums", pointerEvents: "none" }}>
                 {mark}s
               </Box>
             ))}
           </Box>
 
-          {/* Headline track: on screen for the whole clip */}
-          <Box sx={{ position: "relative", height: 28 }}>
-            <Box
-              data-text="1"
-              sx={{ position: "absolute", left: pct(firstStart), width: pct(lastEnd - firstStart), top: 0, bottom: 0, display: "flex", alignItems: "center", gap: 0.75, px: 1, borderRadius: "5px", backgroundColor: "rgba(215,20,26,0.12)", border: "1.5px solid", borderColor: headlineSelected ? CLIP_BLUE : "rgba(215,20,26,0.5)", overflow: "hidden" }}
-            >
-              <Type size={12} color={BREAKING_RED} style={{ flexShrink: 0 }} />
-              <Typography sx={{ fontSize: "0.6875rem", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{headline}</Typography>
-            </Box>
-          </Box>
+          {/* Text tracks: drag the bar to move when a text shows, drag its ends to trim */}
+          {texts.map((t) => {
+            const span = spanOf(t);
+            const on = selectedText === t.key;
+            const animated = t.motion?.animation && t.motion.animation !== "none";
+            return (
+              <Box key={t.key} sx={{ position: "relative", height: TEXT_TRACK, flexShrink: 0 }}>
+                <Box
+                  data-text={t.key}
+                  aria-label={`${t.label}: on screen ${clock(span.start)} to ${clock(span.end)}`}
+                  sx={{ position: "absolute", left: pct(span.start), width: pct(Math.max(0, span.end - span.start)), top: 0, bottom: 0, display: "flex", alignItems: "center", gap: 0.6, px: "14px", borderRadius: "5px", backgroundColor: "rgba(124, 77, 255, 0.16)", border: "1.5px solid", borderColor: on ? CLIP_BLUE : "rgba(124, 77, 255, 0.55)", overflow: "hidden", cursor: "grab" }}
+                >
+                  {animated && <Sparkles size={11} style={{ flexShrink: 0 }} aria-hidden />}
+                  <Typography sx={{ fontSize: "0.6875rem", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", pointerEvents: "none" }}>{t.label}</Typography>
+                  {(["start", "end"] as const).map((edge) => (
+                    <Box
+                      key={edge}
+                      component="button"
+                      data-text-edge={edge}
+                      aria-label={`${t.label} ${edge === "start" ? "appears" : "disappears"} at ${clock(span[edge])}`}
+                      onKeyDown={(e: React.KeyboardEvent) => nudgeText(e, t, edge)}
+                      sx={{ position: "absolute", top: 0, bottom: 0, [edge === "start" ? "left" : "right"]: 0, width: 10, p: 0, border: 0, cursor: "ew-resize", backgroundColor: on ? CLIP_BLUE : "rgba(124, 77, 255, 0.55)", "&:focus-visible": { outline: `2px solid ${CLIP_BLUE}`, outlineOffset: 1 } }}
+                    />
+                  ))}
+                </Box>
+              </Box>
+            );
+          })}
 
           {/* Video track */}
-          <Box sx={{ position: "relative", height: 54, borderRadius: "6px", backgroundColor: "action.hover" }}>
+          <Box sx={{ position: "relative", height: 54, flexShrink: 0, borderRadius: "6px", backgroundColor: "action.hover" }}>
             {segments.map((segment, i) => {
               const isSelected = selected === i;
+              const speed = segment.speed ?? 1;
               return (
                 <Box
                   key={`${segment.start}-${i}`}
@@ -293,6 +412,11 @@ export default function VideoTimeline({ media, duration, time, segments, selecte
                       <img key={f} src={src} alt="" draggable={false} style={{ flex: 1, minWidth: 0, height: "100%", objectFit: "cover" }} />
                     ))}
                   </Box>
+                  {speed !== 1 && (
+                    <Box sx={{ position: "absolute", left: 16, top: 4, px: 0.5, borderRadius: "3px", backgroundColor: "rgba(0,0,0,0.72)", color: "#fff", fontSize: "0.625rem", fontWeight: 700, lineHeight: "16px", fontVariantNumeric: "tabular-nums", pointerEvents: "none" }}>
+                      {speedLabel(speed)}
+                    </Box>
+                  )}
                   {(["start", "end"] as const).map((edge) => (
                     <Box
                       key={edge}

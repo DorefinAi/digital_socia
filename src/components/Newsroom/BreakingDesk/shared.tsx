@@ -59,6 +59,20 @@ export const TagChip: React.FC<{ tag: BreakingTag }> = ({ tag }) => {
   );
 };
 
+// In the editor the tag is carried by a tint instead of a chip: yellow for Big Breaking, red for Breaking
+export const TAG_TINT: Record<BreakingTag, { label: string; rgb: string; light: [number, number]; dark: [number, number] }> = {
+  big_breaking: { label: "Big breaking", rgb: "255, 212, 0", light: [0.42, 0.08], dark: [0.26, 0.05] },
+  breaking: { label: "Breaking", rgb: "215, 20, 26", light: [0.2, 0.04], dark: [0.32, 0.06] },
+};
+
+/** Left-to-right fade in the tag's colour; boost strengthens it for the open or hovered story. */
+export const tagTint = (tag: BreakingTag, mode: "light" | "dark", boost = 1) => {
+  const { rgb, [mode]: [from, to] } = TAG_TINT[tag];
+  return `linear-gradient(90deg, rgba(${rgb}, ${Math.min(1, from * boost)}) 0%, rgba(${rgb}, ${Math.min(1, to * boost)}) 100%)`;
+};
+
+export const srOnly = { position: "absolute", width: "1px", height: "1px", overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" } as const;
+
 export function timeAgo(iso: string): string {
   const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
   if (mins < 1) return "just now";

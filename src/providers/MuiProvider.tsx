@@ -52,7 +52,7 @@ export default function MuiProvider({ children }: { children: ReactNode }) {
           },
         },
         typography: {
-          fontFamily: "Inter, sans-serif",
+          fontFamily: "var(--font-roboto), var(--font-devanagari), 'Nirmala UI', system-ui, sans-serif",
           fontSize: 13,
           body1: {
             fontSize: "0.875rem",

@@ -275,7 +275,8 @@ export interface CardLayout {
   fontScale: number;
   /** Vertical centre of the headline block, 0 (top) – 1 (bottom) */
   textY: number;
-  align: "left" | "center";
+  align: TextAlign;
+  /** Headline colour; "auto" follows the template */
   color: string;
   /** "cover" crops the media to fill the frame, "contain" shows all of it over a backdrop */
   fit: "cover" | "contain";
@@ -286,12 +287,107 @@ export interface CardLayout {
   /** Media pan, -1 – 1 across the slack left by the fit and zoom */
   bgX: number;
   bgY: number;
+  // Added with the template picker and text tools; optional so older drafts still open
+  /** Template design id; "classic" when absent */
+  template?: string;
+  /** Colour of the template's bands and bars; follows the tag when absent */
+  accent?: string;
+  /** Horizontal centre of the headline block, 0 – 1; the template's column when absent */
+  textX?: number;
+  /** Headline block width as a share of the template's column, 0.3 – 1 */
+  textWidth?: number;
+  /** Headline styling on top of the template's defaults */
+  headlineStyle?: CardTextStyle;
+  /** Extra text boxes, drawn above the headline in order */
+  layers?: CardTextLayer[];
+  // Added with the video tools
+  /** When the headline shows in a video, and how it comes in */
+  headlineMotion?: TextMotion;
+  /** Colour and light adjustments on the picture or video */
+  adjust?: MediaAdjust;
+  /** Mirrors the picture or video left to right */
+  flipX?: boolean;
+  /** Video sound level in the saved clip, 0 – 1; full when absent */
+  volume?: number;
+  /** Video fades in from black at the start and out to black at the end */
+  fadeIn?: boolean;
+  fadeOut?: boolean;
+}
+
+export type TextAnimation = "none" | "fade" | "rise" | "pop" | "wipe" | "typewriter";
+
+/** Timing on a video, in seconds of the source file. Unset start or end means the edge of the kept video. */
+export interface TextMotion {
+  start?: number;
+  end?: number;
+  animation?: TextAnimation;
+}
+
+/** Each value is 0 when untouched. Sliders run -1 – 1, except blur and vignette, which run 0 – 1. */
+export interface MediaAdjust {
+  /** Look preset id; "none" or absent for the original */
+  filter?: string;
+  brightness?: number;
+  contrast?: number;
+  saturation?: number;
+  warmth?: number;
+  blur?: number;
+  vignette?: number;
+}
+
+export type TextAlign = "left" | "center" | "right";
+
+/** Text styling an operator can set on the headline or a text box. Unset fields use the template's default. */
+export interface CardTextStyle {
+  font?: string;
+  weight?: number;
+  italic?: boolean;
+  underline?: boolean;
+  uppercase?: boolean;
+  color?: string;
+  /** Colour for words wrapped in **double asterisks** */
+  highlight?: string;
+  align?: TextAlign;
+  /** Extra space between letters, in em */
+  letterSpacing?: number;
+  lineHeight?: number;
+  opacity?: number;
+  /** Outline width in px on a 1080 frame */
+  strokeWidth?: number;
+  strokeColor?: string;
+  /** Drop shadow strength, 0 – 1 */
+  shadow?: number;
+  shadowColor?: string;
+  /** Solid box behind the text */
+  box?: boolean;
+  boxColor?: string;
+  boxOpacity?: number;
+  /** Corner radius in px on a 1080 frame */
+  boxRadius?: number;
+  /** Degrees, clockwise */
+  rotation?: number;
+}
+
+export interface CardTextLayer {
+  id: string;
+  text: string;
+  /** Centre of the box as shares of the frame */
+  x: number;
+  y: number;
+  /** Wrapping width as a share of the frame width */
+  width: number;
+  /** Font size in px on a 1080 frame */
+  size: number;
+  style: CardTextStyle;
+  motion?: TextMotion;
 }
 
 export interface ClipSegment {
   /** Seconds into the source video */
   start: number;
   end: number;
+  /** Playback speed of this part, 1 when absent */
+  speed?: number;
 }
 
 /** What an operator hands to the publisher: the post text plus everything needed to render its media. */

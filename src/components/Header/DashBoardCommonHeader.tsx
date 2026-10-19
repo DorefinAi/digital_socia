@@ -39,6 +39,7 @@ import SearchModal from "./SearchModal";
 import { useThemeMode } from "@/providers/MuiProvider";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { UserRole, ROLE_LABELS } from "@/types/newsroom";
+import { CONTENT_MAX_WIDTH } from "@/constants";
 
 const NOTIFICATION_ICONS: Record<string, React.ReactNode> = {
   story_approved: <CheckCircle size={16} color="#28a745" />,
@@ -109,7 +110,7 @@ const DashBoardCommonHeader: React.FC = () => {
         borderBottom: "1px solid",
         borderColor: mode === "light" ? "#E5E7EB" : "#333",
         width: "100%",
-        maxWidth: "1100px",
+        maxWidth: CONTENT_MAX_WIDTH,
         flexDirection: { xs: "column", sm: "row" },
         gap: { xs: 1.5, sm: 0 },
       }}
@@ -404,7 +405,7 @@ const DashBoardCommonHeader: React.FC = () => {
               py: 0.2,
               fontSize: "0.7rem",
               fontWeight: 600,
-              fontFamily: "monospace, sans-serif",
+              fontFamily: "var(--font-mono), monospace",
               letterSpacing: "0.5px",
               color: mode === "light" ? "#6b7280" : "#9ca3af",
               backgroundColor: mode === "light" ? "#ffffff" : "#2a2a2a",
