@@ -71,6 +71,10 @@ const PALETTES = {
 
 const EASE = "cubic-bezier(0.23, 1, 0.32, 1)";
 
+// Laptops under ~840px tall (most 1366x768 and 150%-scaled screens): the rundown
+// folds into one row of four instead of a list, so the left column stays complete
+const SHORT_DESKTOP = "@media (min-width: 900px) and (max-height: 839.95px)";
+
 const CHANNELS = [
   { name: "X", handle: `@${CHANNEL.xHandle}`, Icon: XIcon },
   { name: "Instagram", handle: `@${CHANNEL.instagramHandle}`, Icon: InstagramIcon },
@@ -368,8 +372,9 @@ const LoginForm: React.FC = () => {
                 lineHeight: 1.6,
                 color: C.ink2,
                 ...rise(2),
-                // The headline says enough when the screen is short
-                "@media (max-height: 699.95px), (max-width: 699.95px) and (max-height: 799.95px)": { display: "none" },
+                // The headline says enough when the screen is very short
+                "@media (max-height: 599.95px), (max-width: 899.95px) and (max-height: 699.95px), (max-width: 699.95px) and (max-height: 799.95px)":
+                  { display: "none" },
               }}
             >
               {APP_NAME} turns the First India News feed into posts for X, Instagram, YouTube and
@@ -490,10 +495,8 @@ const LoginForm: React.FC = () => {
               minWidth: 0,
               alignSelf: { md: "start" },
               ...rise(4),
-              // On phones it sits under the form, and on short laptop screens under the headline;
-              // either way it would push the page past one screen, so it drops out there
+              // On phones it sits under the form and would push the page past one screen
               "@media (max-width: 699.95px)": { display: "none" },
-              "@media (min-width: 900px) and (max-height: 839.95px)": { display: "none" },
             }}
           >
             <Box
@@ -505,6 +508,7 @@ const LoginForm: React.FC = () => {
                 borderRadius: "16px",
                 border: `1px solid ${C.hair}`,
                 overflow: "hidden",
+                [SHORT_DESKTOP]: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))" },
               }}
             >
               <Typography
@@ -515,6 +519,7 @@ const LoginForm: React.FC = () => {
                   fontSize: "0.8125rem",
                   fontWeight: 600,
                   color: C.ink2,
+                  [SHORT_DESKTOP]: { gridColumn: "1 / -1" },
                 }}
               >
                 One story, four channels
@@ -533,6 +538,14 @@ const LoginForm: React.FC = () => {
                       px: 2,
                       py: 1.25,
                       "& + &": { borderTop: `1px solid ${C.hair}` },
+                      [SHORT_DESKTOP]: {
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "flex-start",
+                        gap: 1,
+                        px: 1.5,
+                        "& + &": { borderTop: 0, borderLeft: `1px solid ${C.hair}` },
+                      },
                     }}
                   >
                     <Box
@@ -548,9 +561,9 @@ const LoginForm: React.FC = () => {
                     >
                       <Icon />
                     </Box>
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography sx={{ fontSize: "0.875rem", fontWeight: 600 }}>{name}</Typography>
-                      <Typography noWrap sx={{ fontSize: "0.75rem", color: C.ink3 }}>
+                    <Box sx={{ minWidth: 0, maxWidth: "100%" }}>
+                      <Typography noWrap sx={{ fontSize: "0.875rem", fontWeight: 600 }}>{name}</Typography>
+                      <Typography noWrap sx={{ fontSize: "0.75rem", color: C.ink3, [SHORT_DESKTOP]: { display: "none" } }}>
                         {handle}
                       </Typography>
                     </Box>
