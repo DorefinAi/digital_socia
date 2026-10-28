@@ -17,7 +17,11 @@ import TemplatesPanel from "./TemplatesPanel";
 import UndoToast from "./UndoToast";
 import { FtpRefresh } from "./FtpStatus";
 import { QueueCards, QueueTable } from "./QueueViews";
-import { PLATFORM_META, PlatformIcon } from "./shared";
+import { EmptyState, PLATFORM_META, PlatformIcon } from "./shared";
+import { LiveSendingList } from "./DraftLists";
+import LiveEditor from "./live/LiveEditor";
+import { isLiveItem, useLiveDesk } from "./live/LiveDesk";
+import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
 
 type TagFilter = "all" | BreakingTag;
 type ConsoleTab = "queue" | "scheduled" | "published" | "rejected" | "templates";
@@ -44,6 +48,9 @@ const tileSx = { backgroundColor: "background.paper", borderRadius: "12px", px: 
 
 export default function BreakingDesk({ platform }: { platform: SocialPlatform }) {
   const { ftpNews, socialPosts, socialDrafts, pendingPosts, rejectDraft, permissions, currentRole } = useNewsroom();
+  // Live desk (NEXT_PUBLIC_USE_MOCKS off): the same screen on the server's drafts; null on the demo data
+  const desk = useLiveDesk();
+  const canAct = desk ? desk.canAct : permissions.canApproveSocialContent;
   const meta = PLATFORM_META[platform];
   const otherPlatforms = (["X (Twitter)", "Instagram", "Facebook"] as SocialPlatform[]).filter((p) => p !== platform);
 
@@ -60,16 +67,19 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const [query, setQuery] = useState("");
   // The dashboard links straight into the editor with ?compose=<news id>
   const composeId = useSearchParams().get("compose");
-  const [composing, setComposing] = useState<FtpNewsItem | null>(
-    () => (permissions.canApproveSocialContent && ftpNews.find((n) => n.id === composeId)) || null
-  );
+  const [composing, setComposing] = useState<FtpNewsItem | null>(() => {
+    // Live: the editor loads the draft by id, so the link can open it before the queue has loaded
+    if (desk) return canAct && composeId ? ({ id: composeId } as FtpNewsItem) : null;
+    return (permissions.canApproveSocialContent && ftpNews.find((n) => n.id === composeId)) || null;
+  });
   const [rejecting, setRejecting] = useState<FtpNewsItem | null>(null);
   const [focusIndex, setFocusIndex] = useState(0);
   // Stories the operator has already seen; new arrivals wait behind a banner so the list never moves under the cursor
   const [seenUntil, setSeenUntil] = useState(() => Date.now());
   // A second of slack covers stories stamped by a fetch that is finishing as the operator clicks
   const revealNew = () => setSeenUntil(Date.now() + 1000);
-  const isSeen = (n: FtpNewsItem) => new Date(n.receivedAt).getTime() <= seenUntil;
+  // Live drafts count as new from when the server made them (a story can be filed long before it is approved)
+  const isSeen = (n: FtpNewsItem) => new Date(isLiveItem(n) ? (n.live.createdAt ?? n.receivedAt) : n.receivedAt).getTime() <= seenUntil;
   const [notice, setNotice] = useState("");
 
   const drafts = useMemo(() => socialDrafts.filter((d) => d.platform === platform), [socialDrafts, platform]);
@@ -77,10 +87,12 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const pendingHere = new Set(pendingPosts.filter((p) => p.payload.platform === platform && !p.post).map((p) => p.payload.newsId));
 
   // The queue holds every story not yet live here, not waiting to post, and not scheduled, rejected or dismissed
-  const queue = ftpNews.filter((n) => {
-    const status = draftFor(n.id)?.status;
-    return !isLiveOn(socialPosts, n.id, platform) && !pendingHere.has(n.id) && (!status || status === "saved");
-  });
+  const queue: FtpNewsItem[] = desk
+    ? desk.queue.filter((n) => !desk.pending.some((p) => p.draftId === n.id && !p.outcome))
+    : ftpNews.filter((n) => {
+        const status = draftFor(n.id)?.status;
+        return !isLiveOn(socialPosts, n.id, platform) && !pendingHere.has(n.id) && (!status || status === "saved");
+      });
   const arrived = queue.filter((n) => !isSeen(n));
   const visible = queue.filter((n) => {
     if (!isSeen(n)) return false;
@@ -90,12 +102,17 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   });
 
   const postsHere = socialPosts.filter((p) => p.platform === platform);
-  const publishedToday = postsHere.filter((p) => p.status !== "recalled" && isToday(p.postedAt)).length;
-  const scheduledCount = drafts.filter((d) => d.status === "scheduled").length;
-  const rejectedCount = drafts.filter((d) => d.status === "rejected").length;
+  const counts = desk?.counts.data;
+  const liveCap = counts?.cap ?? desk?.inbox.data?.cap;
+  const publishedToday = desk ? (counts?.publishedToday ?? 0) : postsHere.filter((p) => p.status !== "recalled" && isToday(p.postedAt)).length;
+  // Live: the server sends posts on approval, so "Scheduled" becomes what is on its way (and what failed)
+  const scheduledCount = desk ? (counts?.byView.sending ?? 0) + (counts?.byView.failed ?? 0) : drafts.filter((d) => d.status === "scheduled").length;
+  const rejectedCount = desk ? (counts?.byView.rejected ?? desk.rejected.data?.items.length ?? 0) : drafts.filter((d) => d.status === "rejected").length;
   const rejectedToday = drafts.filter((d) => d.status === "rejected" && isToday(d.updatedAt)).length;
-  const cap = DAILY_CAP[platform];
-  const capShare = publishedToday / cap;
+  const publishedCount = desk ? (desk.posts.data?.items.length ?? 0) : postsHere.length;
+  const cap = desk && liveCap ? liveCap.cap : DAILY_CAP[platform];
+  const capUsed = desk && liveCap ? liveCap.used : publishedToday;
+  const capShare = capUsed / cap;
 
   const focused = visible[Math.min(focusIndex, visible.length - 1)];
 
@@ -125,17 +142,17 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       if (key === "j" || key === "k") {
         e.preventDefault();
         setFocusIndex((i) => Math.max(0, Math.min(visible.length - 1, i + (key === "j" ? 1 : -1))));
-      } else if ((key === "enter" || key === "e") && focused && permissions.canApproveSocialContent) {
+      } else if ((key === "enter" || key === "e") && focused && canAct) {
         e.preventDefault();
         setComposing(focused);
-      } else if (key === "r" && focused && permissions.canApproveSocialContent) {
+      } else if (key === "r" && focused && canAct && !(isLiveItem(focused) && focused.live.claim && !focused.live.claim.mine)) {
         e.preventDefault();
         setRejecting(focused);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tab, composing, rejecting, visible.length, focused, permissions.canApproveSocialContent]);
+  }, [tab, composing, rejecting, visible.length, focused, canAct]);
 
 
   const openStory = (newsId: string) => {
@@ -145,9 +162,10 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
 
   const stats = [
     { label: "To post", value: queue.length, tone: "text.primary" },
-    { label: "Scheduled", value: scheduledCount, tone: "text.primary" },
+    { label: desk ? "Sending" : "Scheduled", value: scheduledCount, tone: "text.primary" },
     { label: "Published today", value: publishedToday, tone: "success.main" },
-    { label: "Rejected today", value: rejectedToday, tone: "error.main" },
+    // The server keeps no reject time on the queue, so the live desk shows every rejected story
+    desk ? { label: "Rejected", value: rejectedCount, tone: "error.main" } : { label: "Rejected today", value: rejectedToday, tone: "error.main" },
   ];
 
   return (
@@ -215,7 +233,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
           <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
             <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>{meta.short} volume today</Typography>
             <Typography sx={{ fontSize: "0.8125rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-              {publishedToday} / {cap}
+              {capUsed} / {cap}
             </Typography>
           </Box>
           <LinearProgress
@@ -238,8 +256,8 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
           ariaLabel="Draft console sections"
           items={[
             { value: "queue", label: `Queue (${queue.length})` },
-            { value: "scheduled", label: `Scheduled (${scheduledCount})` },
-            { value: "published", label: `Published (${postsHere.length})` },
+            { value: "scheduled", label: `${desk ? "Sending" : "Scheduled"} (${scheduledCount})` },
+            { value: "published", label: `Published (${publishedCount})` },
             { value: "rejected", label: `Rejected (${rejectedCount})` },
             { value: "templates", label: "Templates" },
           ]}
@@ -304,7 +322,9 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
               {arrived.length} new breaking {arrived.length === 1 ? "story" : "stories"} from FTP · Show
             </Box>
           )}
-          {visible.length === 0 ? (
+          {desk && !desk.inbox.data ? (
+            desk.inbox.error ? <LoadError error={desk.inbox.error} onRetry={() => void desk.inbox.refresh()} /> : <LoadingRows rows={3} height={120} />
+          ) : visible.length === 0 ? (
             <Box sx={{ py: 6, textAlign: "center", border: "1px dashed", borderColor: "divider", borderRadius: "12px" }}>
               <Typography sx={{ fontSize: "0.9375rem", fontWeight: 600 }}>{queue.length === 0 ? "All drafts cleared" : "No stories match these filters"}</Typography>
               <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", mt: 0.5 }}>
@@ -319,9 +339,18 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
                 onFocus: setFocusIndex,
                 onOpen: setComposing,
                 onReject: setRejecting,
-                isSaved: (newsId: string) => draftFor(newsId)?.status === "saved",
-                liveElsewhere: (newsId: string) => otherPlatforms.filter((p) => isLiveOn(socialPosts, newsId, p)).map((p) => PLATFORM_META[p].short).join(", ") || null,
-                canAct: permissions.canApproveSocialContent,
+                isSaved: (newsId: string) => (desk ? !!desk.queue.find((n) => n.id === newsId)?.live.claim?.mine : draftFor(newsId)?.status === "saved"),
+                liveElsewhere: (newsId: string) => (desk ? null : otherPlatforms.filter((p) => isLiveOn(socialPosts, newsId, p)).map((p) => PLATFORM_META[p].short).join(", ") || null),
+                canAct,
+                ...(desk
+                  ? {
+                      savedLabel: "With you",
+                      heldBy: (newsId: string) => {
+                        const claim = desk.queue.find((n) => n.id === newsId)?.live.claim;
+                        return claim && !claim.mine ? claim.name : null;
+                      },
+                    }
+                  : {}),
               };
               return viewMode === "list" ? <QueueTable {...props} /> : <QueueCards {...props} />;
             })()
@@ -332,18 +361,34 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
         </>
       )}
 
-      {tab === "scheduled" && <ScheduledList platform={platform} onEdit={openStory} />}
+      {tab === "scheduled" && (desk ? <LiveSendingList /> : <ScheduledList platform={platform} onEdit={openStory} />)}
       {tab === "published" && <PostedPostsList platform={platform} allowRecall emptyHint={`No posts on ${meta.short} yet. Approved stories land here with their link.`} />}
       {tab === "rejected" && <RejectedList platform={platform} />}
-      {tab === "templates" && <TemplatesPanel />}
+      {tab === "templates" &&
+        (desk ? (
+          <EmptyState title="Hashtag rules and handles live on the server" hint="The live desk suggests hashtags and @handles from the Socia library. Editing that library from this screen is not wired up yet." />
+        ) : (
+          <TemplatesPanel />
+        ))}
 
-      {composing && <PostEditor item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />}
+      {composing &&
+        (desk ? (
+          <LiveEditor item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />
+        ) : (
+          <PostEditor item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />
+        ))}
       {rejecting && (
         <RejectDialog
           open
           headline={rejecting.headline}
           onClose={() => setRejecting(null)}
           onConfirm={(reason, note) => {
+            if (desk) {
+              const { id, headline } = rejecting;
+              setRejecting(null);
+              void desk.rejectFromQueue(id, reason, note).then((error) => setNotice(error ?? `Rejected. "${headline}" moved to Rejected.`));
+              return;
+            }
             const saved = draftFor(rejecting.id);
             rejectDraft(saved?.status === "saved" ? draftToPayload(saved) : quickPayload(rejecting), reason, note);
             setRejecting(null);

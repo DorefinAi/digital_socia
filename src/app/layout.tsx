@@ -4,6 +4,7 @@ import { notoDevanagari, roboto, robotoMono } from "@/constants/fonts";
 import ReduxProvider from "@/providers/ReduxProvider";
 import MuiProvider from "@/providers/MuiProvider";
 import { NewsroomProvider } from "@/providers/NewsroomProvider";
+import { SociaSessionProvider } from "@/providers/SociaSessionProvider";
 
 export const metadata: Metadata = {
   title: "Socia - Digital Automation Platform",
@@ -21,9 +22,11 @@ export default function RootLayout({
       <body>
         <ReduxProvider>
           <MuiProvider>
-            <NewsroomProvider>
-              {children}
-            </NewsroomProvider>
+            <SociaSessionProvider>
+              <NewsroomProvider>
+                {children}
+              </NewsroomProvider>
+            </SociaSessionProvider>
           </MuiProvider>
         </ReduxProvider>
       </body>

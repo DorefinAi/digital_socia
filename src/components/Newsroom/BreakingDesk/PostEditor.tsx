@@ -43,7 +43,7 @@ import {
 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { Playhead, usePlayhead, usePlayheadTime } from "@/hooks/usePlayhead";
-import { CardTextLayer, CardTextStyle, FtpMedia, FtpNewsItem, MediaAdjust, PostPayload, ROLE_LABELS, SocialPlatform, TextMotion } from "@/types/newsroom";
+import { CardTextLayer, CardTextStyle, FtpMedia, FtpNewsItem, MediaAdjust, PostPayload, ROLE_LABELS, RejectReason, SocialPlatform, TextMotion } from "@/types/newsroom";
 import TemplateCanvas, {
   BREAKING_RED,
   CanvasSelection,
@@ -66,6 +66,11 @@ import { ENTER_SECONDS, MEDIA_LOOKS, TEXT_ANIMATIONS, accentFor, inkOn, mediaFil
 import { fontById, nearestWeight } from "./templateFonts";
 import FtpFeedPanel from "./FtpFeedPanel";
 import { DAILY_CAP, isLiveOn } from "@/data/socialDesk";
+import * as socia from "@/lib/socia/api";
+import type { DraftView } from "@/lib/socia/types";
+import type { LiveEditing } from "./live/LiveEditor";
+import { errorCode, errorText, useLiveDesk } from "./live/LiveDesk";
+import { PostedLinkDialog } from "./actionDialogs";
 
 type Tool = "ftp" | "template" | "background" | "text" | "video" | "story";
 
@@ -146,14 +151,72 @@ interface PostEditorProps {
   onSwitch?: (item: FtpNewsItem) => void;
   /** Lets the desk confirm what happened after the editor closes */
   onSaved?: (message: string) => void;
+  /** Set on the live desk: the real draft, the claim on it, and how to report back */
+  live?: LiveEditing;
 }
 
-export default function PostEditor({ item, platform, onClose, onSwitch, onSaved }: PostEditorProps) {
+/** X takes card images up to 5 MB */
+const CARD_MAX_BYTES = 5 * 1024 * 1024;
+const plainCardText = (text: string) => text.replace(/\*\*/g, "").trim();
+
+/** The card design last sent to the server for a draft, so reopening shows the card that will be posted. */
+const designStore = {
+  key: (id: string) => `socia_card_design_${id}`,
+  read(id: string): { layout: TemplateLayout; mediaFile: string } | null {
+    try {
+      const raw = localStorage.getItem(designStore.key(id));
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  },
+  write(id: string, value: { layout: TemplateLayout; mediaFile: string } | null) {
+    try {
+      if (value) localStorage.setItem(designStore.key(id), JSON.stringify(value));
+      else localStorage.removeItem(designStore.key(id));
+    } catch {
+      // Storage blocked: the design just won't be restored on reopen
+    }
+  },
+};
+
+/** Hashtag and mention choices from the server's draft: its own tags ticked, handle matches offered. */
+function liveTags(d: DraftView) {
+  const at = (h: string) => (h.startsWith("@") ? h : `@${h}`);
+  const hashtags: TagOption[] = d.hashtags.map((value) => ({ value, reason: "From the story", checked: true }));
+  const mentions: TagOption[] = [
+    ...d.mentions.map((value) => ({ value, reason: "In the draft", checked: true })),
+    ...d.mentionSuggestions.filter((s) => !d.mentions.includes(at(s.handle))).map((s) => ({ value: at(s.handle), reason: `Handle for ${s.entity}`, checked: false })),
+  ];
+  return { hashtags, mentions };
+}
+
+export default function PostEditor({ item, platform, onClose, onSwitch, onSaved, live }: PostEditorProps) {
   const { publishSocialPost, saveDraft, scheduleDraft, rejectDraft, socialDrafts, socialPosts, hashtagRules, handleDirectory, permissions, currentRole } = useNewsroom();
+  const desk = useLiveDesk();
   const isX = platform === "X (Twitter)";
+  // Live: changes need the claim; held, lost or read-only stories open to look at
+  const canEdit = live ? live.lease.kind === "mine" && !!desk?.canAct : permissions.canApproveSocialContent;
 
   // Everything that belongs to one story. Reopening a saved or scheduled story picks up where the operator left off.
   const storyStart = (story: FtpNewsItem) => {
+    if (live) {
+      const d = live.draft;
+      // Reopening shows the design that was last sent for this draft, if this browser sent it
+      const saved = d.card.custom ? designStore.read(d.id) : null;
+      const layout = saved?.layout ?? defaultLayout(d.cardHeadline, "x");
+      return {
+        id: story.id,
+        draft: undefined,
+        igFormat: "ig_post" as TemplateFormat,
+        mediaIndex: Math.max(0, story.media.findIndex((m) => m.fileName === saved?.mediaFile)),
+        layout,
+        text: d.bodyText,
+        ...liveTags(d),
+        // Until the design changes, the server's card is the one that posts
+        custom: !!d.card.custom,
+      };
+    }
     const draft = socialDrafts.find((d) => d.newsId === story.id && d.platform === platform && (d.status === "saved" || d.status === "scheduled"));
     const igFormat: TemplateFormat = draft?.format === "ig_post" || draft?.format === "ig_reel" ? draft.format : story.media[0].kind === "video" ? "ig_reel" : "ig_post";
     return {
@@ -165,6 +228,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
       text: draft?.caption ?? story.shortText,
       hashtags: withDraftChoices(suggestHashtags(story, hashtagRules), draft?.hashtags),
       mentions: withDraftChoices(suggestMentions(story, platform, handleDirectory), draft?.mentions),
+      custom: false,
     };
   };
   const [start, setStart] = useState(() => storyStart(item));
@@ -214,6 +278,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
   const [dialog, setDialog] = useState<"reject" | "schedule" | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // ── Live desk state ──
+  const [busy, setBusy] = useState<null | "save" | "post" | "posted" | "reject" | "claim" | "card">(null);
+  // Someone saved the draft after it was opened: the server's version, until the operator picks a side
+  const [stale, setStale] = useState<number | null>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
+  // The design that was last uploaded as this draft's card
+  const [uploaded, setUploaded] = useState<{ layout: TemplateLayout; url: string } | null>(null);
 
   // Switching stories swaps the story's state in place. The editor stays mounted, so the
   // screen does not flash and the feed, tool panel and zoom stay where the operator left them.
@@ -241,6 +312,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
     setDialog(null);
     setSavedAt(null);
     setCopied(false);
+    setStale(null);
+    setLinkOpen(false);
+    setUploaded(null);
+    setBusy(null);
   }
 
   // Any change from how the story opened, so switching stories only saves real work
@@ -275,18 +350,22 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
   const overLimit = used > limits.text;
   const tooManyTags = selectedHashtags.length > limits.hashtags || selectedMentions.length > limits.mentions;
   // Saving a post counts against the platform's daily cap
-  const cap = DAILY_CAP[platform];
+  const liveCap = desk?.counts.data?.cap ?? desk?.inbox.data?.cap;
+  const cap = live && liveCap ? liveCap.cap : DAILY_CAP[platform];
   const today = new Date().toDateString();
-  const postedToday = socialPosts.filter((p) => p.platform === platform && p.status !== "recalled" && new Date(p.postedAt).toDateString() === today).length;
+  const postedToday = live ? (liveCap?.used ?? 0) : socialPosts.filter((p) => p.platform === platform && p.status !== "recalled" && new Date(p.postedAt).toDateString() === today).length;
   const capReached = postedToday >= cap;
-  const alreadyPosted = isLiveOn(socialPosts, item.id, platform);
+  const alreadyPosted = !live && isLiveOn(socialPosts, item.id, platform);
 
   // Links multiply the cost of an X post, so the X formatter refuses them outright
   const url = isX ? findUrl(finalText) : null;
-  const canPost = permissions.canApproveSocialContent && !overLimit && !tooManyTags && !url && !capReached && text.trim().length > 0 && layout.headline.trim().length > 0;
+  const canPost = canEdit && !busy && stale === null && !overLimit && !tooManyTags && !url && !capReached && text.trim().length > 0 && layout.headline.trim().length > 0;
 
   let blockedReason = "";
-  if (!permissions.canApproveSocialContent) blockedReason = "Your role can view posts but not publish them";
+  if (live?.lease.kind === "held") blockedReason = `${live.lease.name} is working on this story`;
+  else if (live?.lease.kind === "lost") blockedReason = "Claim the story again to post it";
+  else if (live && stale !== null) blockedReason = "Someone else saved this story. Choose whose version to keep first";
+  else if (!canEdit) blockedReason = "Your role can view posts but not publish them";
   else if (!text.trim()) blockedReason = `Write the ${meta.postNoun} first`;
   else if (!layout.headline.trim()) blockedReason = "The template needs a headline";
   else if (overLimit) blockedReason = `${used - limits.text} characters over the ${meta.short} limit`;
@@ -587,6 +666,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
 
   const saveAsPosted = async () => {
     if (!canPost) return;
+    // Live: the operator posts the downloaded card by hand, then gives the desk the post's link
+    if (live) {
+      const ok = isVideo ? await exportVideo() : canvasRef.current?.download(`${item.id}-${format}.png`) ?? false;
+      if (!ok && !isVideo) setNotice("This media file does not allow image export from the browser. Download the card from Preview, or post with Post to X.");
+      setLinkOpen(true);
+      return;
+    }
     const ok = isVideo ? await exportVideo() : canvasRef.current?.download(`${item.id}-${format}.png`) ?? false;
     if (!ok) {
       if (!isVideo) setNotice("This media file does not allow image export from the browser, so nothing was saved.");
@@ -598,9 +684,215 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
     onClose();
   };
 
+  const stamp = () => setSavedAt(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }));
+
   const save = () => {
+    if (live) {
+      void runLive("save", async () => {
+        await flush();
+        stamp();
+      });
+      return;
+    }
     saveDraft(buildPayload());
-    setSavedAt(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }));
+    stamp();
+  };
+
+  // ── Live desk: every change goes to the server with the version it was based on ──
+  const versionRef = useRef(live?.draft.version ?? 0);
+  const liveVersion = live?.draft.version;
+  useEffect(() => {
+    if (liveVersion !== undefined) versionRef.current = liveVersion;
+  }, [liveVersion]);
+  const adopt = (d: DraftView) => {
+    versionRef.current = d.version;
+    live?.onDraft(d);
+  };
+
+  /** Turns a failed call into the right status: a claim problem, a version clash, or a message. */
+  const liveFail = (err: unknown) => {
+    const code = errorCode(err);
+    const data = (err as { data?: { current?: { version?: number }; heldBy?: string } }).data;
+    if (code === "stale_version") setStale(typeof data?.current?.version === "number" ? data.current.version : versionRef.current);
+    else if (code === "lease_lost") live?.onLeaseLost();
+    else if (code === "held_by_other") live?.onHeldBy(String(data?.heldBy ?? "Someone"));
+    else setNotice(code ? errorText(err) : err instanceof Error ? err.message : errorText(err));
+  };
+
+  // Text and headline as the server should have them
+  const cardHeadline = plainCardText(layout.headline).slice(0, 400);
+  const livePatch = live
+    ? { bodyText: text, cardHeadline: cardHeadline || live.draft.cardHeadline, hashtags: selectedHashtags, mentions: selectedMentions }
+    : null;
+  const serverPatch = live ? { bodyText: live.draft.bodyText, cardHeadline: live.draft.cardHeadline, hashtags: live.draft.hashtags, mentions: live.draft.mentions } : null;
+  const patchKey = JSON.stringify(livePatch);
+  const textDirty = !!live && patchKey !== JSON.stringify(serverPatch);
+
+  // The card: the server's automatic card posts until the design here is changed, then this canvas does
+  const designEdited = !!live && (layout !== start.layout || mediaIndex !== start.mediaIndex || uploads.length > 0);
+  const cardSynced = !!uploaded && uploaded.layout === layout && uploaded.url === media.url;
+  const ownCard = designEdited || !!live?.draft.card.custom;
+
+  // One server call at a time, in order, so versions never cross
+  const chain = useRef<Promise<unknown>>(Promise.resolve());
+  const serial = <T,>(fn: () => Promise<T>): Promise<T> => {
+    const next = chain.current.then(fn, fn);
+    chain.current = next.catch(() => undefined);
+    return next;
+  };
+
+  const saveText = async () => {
+    if (!live || !canEdit || !textDirty || !livePatch) return;
+    adopt(await socia.saveDraft(live.draft.id, { version: versionRef.current, ...livePatch }));
+  };
+
+  const uploadOwnCard = async () => {
+    if (!live || !canEdit || !designEdited || cardSynced) return;
+    const png = await canvasRef.current?.png(CARD_MAX_BYTES);
+    if (!png) throw new Error("The browser couldn't export your card, so the automatic card stays. Try another photo, or try again.");
+    const d = await socia.uploadCard(live.draft.id, versionRef.current, png);
+    adopt(d);
+    setUploaded({ layout, url: media.url });
+    designStore.write(d.id, { layout, mediaFile: media.fileName });
+  };
+
+  /** Sends whatever is not on the server yet: text first, then the card. */
+  const flush = () =>
+    serial(async () => {
+      await saveText();
+      await uploadOwnCard();
+    });
+
+  const runLive = async (kind: NonNullable<typeof busy>, fn: () => Promise<void>) => {
+    setBusy(kind);
+    try {
+      await fn();
+    } catch (err) {
+      liveFail(err);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Typing saves on its own after a pause
+  useEffect(() => {
+    if (!live || !canEdit || stale !== null || !textDirty) return;
+    const timer = setTimeout(() => void serial(saveText).catch(liveFail), 1500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patchKey, canEdit, stale, textDirty]);
+
+  /** Approve: the server holds the post for its 10-second undo window, then the worker posts it. */
+  const postLive = () =>
+    runLive("post", async () => {
+      if (!live || !canPost) return;
+      await flush();
+      let res: { jobId: string; sendAt: string } | null = null;
+      for (let attempt = 0; !res; attempt++) {
+        try {
+          res = await socia.approveDraft(live.draft.id, versionRef.current);
+        } catch (err) {
+          // A new headline redraws the automatic card for a second or two
+          if (errorCode(err) !== "card_not_ready" || attempt >= 6) throw err;
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      }
+      live.onFinished();
+      desk?.addPending({ draftId: live.draft.id, jobId: res.jobId, sendAt: res.sendAt, headline: item.headline });
+      setPreviewOpen(false);
+      onClose();
+    });
+
+  /** Save as posted, live: records the link of a post made by hand. Resolves to an error for the dialog. */
+  const markPostedLive = async (permalink: string): Promise<string | null> => {
+    if (!live) return null;
+    setBusy("posted");
+    try {
+      await flush();
+      await socia.markPosted(live.draft.id, versionRef.current, permalink);
+      live.onFinished();
+      void desk?.refreshAll();
+      setLinkOpen(false);
+      setPreviewOpen(false);
+      onSaved?.(`Saved. "${item.headline}" is marked as posted on ${meta.short}.`);
+      onClose();
+      return null;
+    } catch (err) {
+      const code = errorCode(err);
+      if (code === "invalid" || code === "duplicate_post") return errorText(err);
+      setLinkOpen(false);
+      liveFail(err);
+      return null;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const rejectLive = (reason: RejectReason, note: string) =>
+    runLive("reject", async () => {
+      if (!live) return;
+      await socia.rejectDraft(live.draft.id, reason, note || undefined);
+      live.onFinished();
+      void desk?.refreshAll();
+      onSaved?.(`Rejected. "${item.headline}" moved to Rejected.`);
+      onClose();
+    });
+
+  /** Back to the server's automatic card. */
+  const switchToAutoCard = () =>
+    runLive("card", async () => {
+      if (!live) return;
+      let d = live.draft;
+      if (d.card.custom) {
+        const id = d.id;
+        d = await serial(() => socia.resetCard(id, versionRef.current));
+        adopt(d);
+      }
+      designStore.write(d.id, null);
+      const fresh = defaultLayout(d.cardHeadline, "x");
+      setStart((s) => ({ ...s, layout: fresh, mediaIndex: 0, custom: false }));
+      setUploads([]);
+      setMediaIndex(0);
+      setLayout(fresh);
+      setHistory({ stack: [fresh], index: 0 });
+      setUploaded(null);
+    });
+
+  /** A version clash: take the server's draft as it is now, or keep this one and save over it. */
+  const loadTheirs = () =>
+    runLive("save", async () => {
+      if (!live) return;
+      const d = await socia.fetchDraft(live.draft.id);
+      adopt(d);
+      const tags = liveTags(d);
+      setText(d.bodyText);
+      setHashtags(tags.hashtags);
+      setMentions(tags.mentions);
+      patch({ headline: d.cardHeadline });
+      setStale(null);
+    });
+  const keepMine = () =>
+    runLive("save", async () => {
+      if (stale !== null) versionRef.current = stale;
+      setStale(null);
+      await flush();
+    });
+
+  const claimAgain = () => runLive("claim", async () => live?.claimAgain());
+
+  /** Leaving the editor sends what is not saved yet, so nothing typed is lost. */
+  const close = async () => {
+    if (live && canEdit && (textDirty || (designEdited && !cardSynced))) {
+      setBusy("save");
+      try {
+        await flush();
+      } catch (err) {
+        setBusy(null);
+        liveFail(err);
+        return;
+      }
+    }
+    onClose();
   };
 
   // Below md the top bar is crowded (Instagram adds the format switch), so Copy
@@ -613,6 +905,27 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
     </>
   );
 
+  const postButton = (onDark: boolean) =>
+    live ? (
+      <Tooltip title={blockedReason || `Posts the card to ${meta.short} after a 10-second undo window`}>
+        <span>
+          <Button
+            variant="contained"
+            onClick={() => void postLive()}
+            aria-label={busy === "post" ? "Posting" : `Post to ${meta.short}`}
+            disabled={!canPost}
+            startIcon={busy === "post" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <Send size={15} />}
+            sx={{ minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", "&:hover": { backgroundColor: "#B50F14" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.7)" } }}
+          >
+            {onDark ? phoneLabel(`Post to ${meta.short}`, "Post") : `Post to ${meta.short}`}
+          </Button>
+        </span>
+      </Tooltip>
+    ) : null;
+
+  // On the live desk Post to X is the main action, so Save as posted takes the quieter style of Copy
+  const savePostedSx = { minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", "&:hover": { backgroundColor: "#B50F14" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.7)" } };
+
   const actionButtons = (onDark: boolean) => (
     <>
       <Tooltip title={copied ? "Copied" : `Copy the ${meta.postNoun} with hashtags and mentions`}>
@@ -620,15 +933,15 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
           {onDark ? phoneLabel(copied ? "Copied" : "Copy") : copied ? "Copied" : "Copy"}
         </Button>
       </Tooltip>
-      <Tooltip title={blockedReason || `Downloads the ${isVideo ? "clip" : "card"} and marks this story posted on ${meta.short}`}>
+      <Tooltip title={blockedReason || (live ? `Downloads the ${isVideo ? "clip" : "card"} to post by hand, then asks for the post's link` : `Downloads the ${isVideo ? "clip" : "card"} and marks this story posted on ${meta.short}`)}>
         <span>
           <Button
-            variant="contained"
+            variant={live ? (onDark ? "text" : "outlined") : "contained"}
             onClick={saveAsPosted}
             aria-label={exporting !== null ? `Saving ${Math.round(exporting * 100)}%` : alreadyPosted ? "Save again" : "Save as posted"}
             disabled={!canPost || exporting !== null}
-            startIcon={exporting !== null ? <CircularProgress size={14} sx={{ color: "#fff" }} variant="determinate" value={Math.max(4, exporting * 100)} /> : <Save size={15} />}
-            sx={{ minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", "&:hover": { backgroundColor: "#B50F14" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.7)" } }}
+            startIcon={exporting !== null ? <CircularProgress size={14} sx={{ color: live ? "inherit" : "#fff" }} variant="determinate" value={Math.max(4, exporting * 100)} /> : <Save size={15} />}
+            sx={live ? (onDark ? { ...chromeButton, border: `1px solid ${BAR.border}`, whiteSpace: "nowrap", "&.Mui-disabled": { color: "rgba(255,255,255,0.4)" } } : { minHeight: 34, whiteSpace: "nowrap" }) : savePostedSx}
           >
             {exporting !== null
               ? `${onDark ? "" : "Saving "}${Math.round(exporting * 100)}%`
@@ -640,16 +953,17 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
           </Button>
         </span>
       </Tooltip>
+      {postButton(onDark)}
     </>
   );
 
   return (
-    <Dialog open fullScreen onClose={onClose} transitionDuration={150} slotProps={{ paper: { sx: { borderRadius: 0, backgroundImage: "none", backgroundColor: "background.default" } } }}>
+    <Dialog open fullScreen onClose={() => void close()} transitionDuration={150} slotProps={{ paper: { sx: { borderRadius: 0, backgroundImage: "none", backgroundColor: "background.default" } } }}>
       <Box sx={{ display: "flex", flexDirection: "column", height: "100dvh" }}>
         {/* Top bar */}
         <Box sx={{ display: "flex", alignItems: "center", gap: { xs: 0.5, sm: 1 }, px: { xs: 1, sm: 1.5 }, height: 54, flexShrink: 0, backgroundColor: BAR.bg, color: "#fff" }}>
-          <Button onClick={onClose} aria-label="Back to desk" sx={{ ...chromeButton, minWidth: 0, flexShrink: 0, gap: 0.75 }}>
-            <ArrowLeft size={16} />
+          <Button onClick={() => void close()} aria-label="Back to desk" disabled={busy === "save"} sx={{ ...chromeButton, minWidth: 0, flexShrink: 0, gap: 0.75 }}>
+            {busy === "save" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <ArrowLeft size={16} />}
             <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
               Desk
             </Box>
@@ -744,11 +1058,20 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
               <FtpFeedPanel
                 platform={platform}
                 currentId={item.id}
+                footage={live?.draft}
                 onPick={(next) => {
                   // Keep the operator's work before switching stories
                   // A clip export in progress belongs to the current story
                   if (exporting !== null) return;
-                  if (edited && permissions.canApproveSocialContent) saveDraft(buildPayload());
+                  if (live) {
+                    if (!canEdit) return onSwitch?.(next);
+                    void runLive("save", async () => {
+                      await flush();
+                      onSwitch?.(next);
+                    });
+                    return;
+                  }
+                  if (edited && canEdit) saveDraft(buildPayload());
                   onSwitch?.(next);
                 }}
               />
@@ -882,6 +1205,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
             {panel === "video" && (
               <>
                 <Typography sx={panelTitle}>Video</Typography>
+                {live && (
+                  <Alert severity="info" sx={{ mb: 2, py: 0, fontSize: "0.75rem", borderRadius: "8px" }}>
+                    Video posting is not enabled yet. Post to {meta.short} sends the card only; use Save as posted to download the clip and post it by hand.
+                  </Alert>
+                )}
                 <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mb: 2 }}>
                   Saved clip runs {clock(outputLength(segments))}. Cut and trim on the timeline below the frame.
                 </Typography>
@@ -1275,6 +1603,39 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
 
           {/* Post panel */}
           <Box sx={{ order: { xs: 3, lg: 0 }, flexShrink: 0, p: 2, overflowY: { lg: "auto" }, display: "flex", flexDirection: "column", gap: 2.5, backgroundColor: "background.paper", borderLeft: { lg: "1px solid" }, borderColor: "divider" }}>
+            {live && (live.lease.kind !== "mine" || stale !== null || (isVideo && isX)) && (
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                {live.lease.kind === "held" && (
+                  <Alert severity="info" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }} action={desk?.canAct ? <Button color="inherit" size="small" onClick={() => void claimAgain()} disabled={!!busy}>Try again</Button> : undefined}>
+                    {live.lease.name} is working on this story. You can look, but not change it.
+                  </Alert>
+                )}
+                {live.lease.kind === "lost" && (
+                  <Alert severity="warning" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }} action={<Button color="inherit" size="small" onClick={() => void claimAgain()} disabled={!!busy}>Claim again</Button>}>
+                    You no longer hold this story, so changes aren&apos;t being saved. Claim it again to carry on.
+                  </Alert>
+                )}
+                {live.lease.kind === "read" && (
+                  <Alert severity="info" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }}>
+                    {desk?.canAct ? "This story can't be edited right now." : "Your role can view posts but not publish them."}
+                  </Alert>
+                )}
+                {stale !== null && (
+                  <Alert severity="warning" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }}>
+                    Someone else saved this story after you opened it. Load their version, or keep yours and save over it.
+                    <Box sx={{ display: "flex", gap: 1, mt: 1 }}>
+                      <Button size="small" variant="outlined" color="inherit" onClick={() => void loadTheirs()} disabled={!!busy}>Load theirs</Button>
+                      <Button size="small" color="inherit" onClick={() => void keepMine()} disabled={!!busy}>Keep mine</Button>
+                    </Box>
+                  </Alert>
+                )}
+                {isVideo && isX && (
+                  <Alert severity="info" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }}>
+                    Video posting is not enabled yet. Post to {meta.short} sends the card only.
+                  </Alert>
+                )}
+              </Box>
+            )}
             <Box>
               <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 0.75 }}>
                 <Typography sx={{ fontSize: "0.9375rem", fontWeight: 700 }}>{isX ? "Tweet" : platform === "Facebook" ? "Post text" : "Caption"}</Typography>
@@ -1287,7 +1648,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
                   </Button>
                 </Box>
               </Box>
-              <TextField multiline minRows={isX ? 4 : 5} maxRows={10} fullWidth size="small" value={text} onChange={(e) => setText(e.target.value)} sx={fieldSx} />
+              <TextField multiline minRows={isX ? 4 : 5} maxRows={10} fullWidth size="small" value={text} onChange={(e) => setText(e.target.value)} slotProps={{ htmlInput: { "aria-label": `${isX ? "Tweet" : platform === "Facebook" ? "Post" : "Caption"} text`, readOnly: !!live && !canEdit } }} sx={fieldSx} />
               <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, mt: 0.75 }}>
                 <LinearProgress variant="determinate" value={Math.min(100, (used / limits.text) * 100)} color={overLimit ? "error" : "inherit"} sx={{ flex: 1, height: 4, borderRadius: 2 }} />
                 <Typography sx={{ fontSize: "0.75rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: overLimit ? "error.main" : "text.secondary" }}>
@@ -1303,19 +1664,38 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
             </Box>
             <TagPicker label="Hashtags" prefix="#" options={hashtags} max={limits.hashtags} onChange={setHashtags} />
             <TagPicker label="Mentions" prefix="@" options={mentions} max={limits.mentions} onChange={setMentions} />
+            {live && (
+              <Box>
+                <Typography sx={{ ...sectionLabel, mb: 0.5 }}>Card that will be posted</Typography>
+                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+                  <Typography sx={{ fontSize: "0.8125rem" }}>
+                    {ownCard ? "Your design from this editor" : "The automatic card"}
+                    {busy === "card" && <CircularProgress size={12} sx={{ ml: 1, verticalAlign: "middle" }} />}
+                  </Typography>
+                  {ownCard && canEdit && (
+                    <Button size="small" onClick={() => void switchToAutoCard()} disabled={!!busy} startIcon={<RotateCcw size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.secondary", whiteSpace: "nowrap" }}>
+                      Use automatic card
+                    </Button>
+                  )}
+                </Box>
+                <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.25 }}>
+                  {ownCard ? "The frame on the left, exactly as you see it." : "Change the template, text or picture and your design posts instead."}
+                </Typography>
+              </Box>
+            )}
 
             <Box sx={{ position: { lg: "sticky" }, bottom: { lg: -16 }, mt: "auto", mx: -2, mb: -2, px: 2, py: 1.25, backgroundColor: "background.paper", borderTop: "1px solid", borderColor: "divider" }}>
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-                <Button color="error" onClick={() => setDialog("reject")} disabled={!permissions.canApproveSocialContent} startIcon={<Ban size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1 }}>
+                <Button color="error" onClick={() => setDialog("reject")} disabled={!canEdit || !!busy} startIcon={<Ban size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1 }}>
                   Reject
                 </Button>
                 <Box sx={{ flex: 1 }} />
-                <Button variant="outlined" onClick={save} disabled={!permissions.canApproveSocialContent} startIcon={<Save size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25, whiteSpace: "nowrap" }}>
+                <Button variant="outlined" onClick={save} disabled={!canEdit || !!busy} startIcon={busy === "save" ? <CircularProgress size={13} color="inherit" /> : <Save size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25, whiteSpace: "nowrap" }}>
                   Save draft
                 </Button>
-                <Tooltip title={blockedReason}>
+                <Tooltip title={live ? "Scheduling isn't available on the live desk yet" : blockedReason}>
                   <span>
-                    <Button variant="outlined" onClick={() => setDialog("schedule")} disabled={!canPost} startIcon={<CalendarClock size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25 }}>
+                    <Button variant="outlined" onClick={() => setDialog("schedule")} disabled={!canPost || !!live} startIcon={<CalendarClock size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25 }}>
                       Schedule
                     </Button>
                   </span>
@@ -1361,6 +1741,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
           headline={item.headline}
           onClose={() => setDialog(null)}
           onConfirm={(reason, note) => {
+            if (live) {
+              setDialog(null);
+              void rejectLive(reason, note);
+              return;
+            }
             rejectDraft(buildPayload(), reason, note);
             onClose();
           }}
@@ -1378,6 +1763,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved 
           }}
         />
       )}
+
+      {linkOpen && <PostedLinkDialog open headline={item.headline} platformName={meta.short} busy={busy === "posted"} onClose={() => setLinkOpen(false)} onConfirm={markPostedLive} />}
 
       <Snackbar open={!!notice} autoHideDuration={5000} onClose={() => setNotice("")} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
         <Alert severity="warning" onClose={() => setNotice("")} sx={{ fontSize: "0.8125rem" }}>

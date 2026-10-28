@@ -35,6 +35,7 @@ import { SocialPlatform } from "@/types/newsroom";
 import PostedPostsList from "./BreakingDesk/PostedPostsList";
 import FtpStatus from "./BreakingDesk/FtpStatus";
 import { PLATFORM_META, PlatformIcon, TagChip, timeAgo } from "./BreakingDesk/shared";
+import { useLiveDesk } from "./BreakingDesk/live/LiveDesk";
 
 function AnimatedCounter({ value, duration = 1200 }: { value: number; duration?: number }) {
   const [display, setDisplay] = useState(0);
@@ -58,13 +59,30 @@ function AnimatedCounter({ value, duration = 1200 }: { value: number; duration?:
 const PIE_COLORS = ["#FF6384", "#36A2EB", "#FFCE56", "#4BC0C0", "#9966FF", "#FF9F40", "#C9CBCF"];
 
 const NewsroomDashboard: React.FC = () => {
-  const { metrics, stories, aiContent, engagement, activity, ftpNews, socialPosts, permissions } = useNewsroom();
+  const { metrics: demoMetrics, stories, aiContent, engagement, activity, ftpNews, socialPosts, permissions } = useNewsroom();
+  // Live desk (NEXT_PUBLIC_USE_MOCKS off): the same widgets, fed from the Socia backend where they map
+  const desk = useLiveDesk();
 
   // Breaking stories from the FTP that are not yet out on both platforms
   const postedOn = (platform: SocialPlatform) => new Set(socialPosts.filter((p) => p.platform === platform && p.status !== "recalled").map((p) => p.newsId));
   const DESKS: SocialPlatform[] = ["X (Twitter)", "Instagram", "Facebook"];
   const postedSets = Object.fromEntries(DESKS.map((p) => [p, postedOn(p)])) as Record<SocialPlatform, Set<string>>;
-  const breakingQueue = ftpNews.filter((n) => DESKS.some((p) => !postedSets[p].has(n.id)));
+  // Live: the X queue; a story there is by definition not posted yet, and only X is connected
+  const breakingQueue = desk ? desk.queue : ftpNews.filter((n) => DESKS.some((p) => !postedSets[p].has(n.id)));
+  const isDone = (platform: SocialPlatform, id: string) => (desk ? false : postedSets[platform].has(id));
+  const canPost = (platform: SocialPlatform) => (desk ? desk.canAct && platform === "X (Twitter)" : permissions.canApproveSocialContent);
+  const postedCount = desk ? (desk.posts.data?.items.length ?? 0) : socialPosts.length;
+
+  // Live counts replace the social numbers; the assignment-desk numbers stay on the demo data
+  const c = desk?.counts.data;
+  const metrics = c
+    ? {
+        ...demoMetrics,
+        aiGeneratedPosts: Object.values(c.byStatus).reduce((t, n) => t + (n ?? 0), 0),
+        pendingAIApproval: c.byView.inbox,
+        publishedToday: c.publishedToday,
+      }
+    : demoMetrics;
   const { mode } = useThemeMode();
   const theme = useTheme();
 
@@ -268,7 +286,7 @@ const NewsroomDashboard: React.FC = () => {
                     </Box>
                   </Box>
                   {DESKS.map((platform) => {
-                    const done = postedSets[platform].has(item.id);
+                    const done = isDone(platform, item.id);
                     return (
                       <Button
                         key={platform}
@@ -276,7 +294,7 @@ const NewsroomDashboard: React.FC = () => {
                         href={`${PLATFORM_META[platform].path}?compose=${item.id}`}
                         size="small"
                         variant="outlined"
-                        disabled={done || !permissions.canApproveSocialContent}
+                        disabled={done || !canPost(platform)}
                         aria-label={done ? `Posted to ${PLATFORM_META[platform].short}` : `Post to ${PLATFORM_META[platform].short}`}
                         sx={{ minWidth: 0, minHeight: 30, px: 1, gap: 0.5, borderRadius: "8px", fontSize: "0.75rem", flexShrink: 0 }}
                       >
@@ -294,7 +312,7 @@ const NewsroomDashboard: React.FC = () => {
         <Box sx={{ backgroundColor: "background.paper", borderRadius: "12px", p: 2, boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.03)", border: "1px solid", borderColor: "divider" }}>
           <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
             <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>Posted to Social</Typography>
-            <Chip label={`${socialPosts.length} posts`} size="small" sx={{ fontSize: "0.6875rem", height: 22, fontWeight: 600, borderRadius: "6px" }} />
+            <Chip label={`${postedCount} posts`} size="small" sx={{ fontSize: "0.6875rem", height: 22, fontWeight: 600, borderRadius: "6px" }} />
           </Box>
           <Box sx={{ maxHeight: 320, overflowY: "auto", mx: -1.25 }}>
             <PostedPostsList limit={6} bare />

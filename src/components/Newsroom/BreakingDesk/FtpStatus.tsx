@@ -4,16 +4,43 @@ import React, { useEffect, useState } from "react";
 import { Box, Typography, Button, Popover, CircularProgress, Tooltip } from "@mui/material";
 import { History, RefreshCw } from "lucide-react";
 import { FTP_POLL_SECONDS, useNewsroom } from "@/providers/NewsroomProvider";
+import { useLiveDesk } from "./live/LiveDesk";
+import * as socia from "@/lib/socia/api";
+import { ApiError } from "@/lib/socia/client";
+import { usePolled } from "@/lib/socia/usePolled";
+import type { IngestStatus } from "@/lib/socia/types";
+
+/** The backend worker checks Samvadia and the FTP every 5 seconds (contract: /ingest/status). */
+const LIVE_POLL_SECONDS = 5;
+
+async function ingestOrNull(): Promise<IngestStatus | null> {
+  try {
+    return await socia.fetchIngestStatus();
+  } catch (err) {
+    // A server without the route shows the chip without times
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
+}
 
 const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
 /** Checks the FTP for new stories on demand; the automatic checks keep running in the background. */
 export function FtpRefresh({ onDone, size = "medium" }: { onDone?: (added: number) => void; size?: "small" | "medium" }) {
   const { fetchFtpNews } = useNewsroom();
+  const desk = useLiveDesk();
   const [checking, setChecking] = useState(false);
 
   const refresh = () => {
     setChecking(true);
+    // Live: the backend's worker reads the FTP and Samvadia; this asks the server for what it has now
+    if (desk) {
+      void desk.refreshAll().then((added) => {
+        setChecking(false);
+        onDone?.(added);
+      });
+      return;
+    }
     // Brief delay stands in for the FTP round-trip
     setTimeout(() => {
       const added = fetchFtpNews();
@@ -38,6 +65,9 @@ export function FtpRefresh({ onDone, size = "medium" }: { onDone?: (added: numbe
 /** Shows that the FTP is being checked automatically, when it last ran, and what recent checks brought in. */
 export default function FtpStatus({ onManualFetch, compact }: { onManualFetch?: (added: number) => void; compact?: boolean }) {
   const { ftpSyncedAt, ftpFetchLog, fetchFtpNews, nextFetchAt } = useNewsroom();
+  // Live: the backend worker's intake status in place of the demo's fetch log
+  const desk = useLiveDesk();
+  const ingest = usePolled(ingestOrNull, LIVE_POLL_SECONDS * 1000, "ingest", !!desk).data;
   const [now, setNow] = useState(() => Date.now());
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [checking, setChecking] = useState(false);
@@ -47,12 +77,23 @@ export default function FtpStatus({ onManualFetch, compact }: { onManualFetch?: 
     return () => clearInterval(timer);
   }, []);
 
-  const since = Math.max(0, Math.round((now - new Date(ftpSyncedAt).getTime()) / 1000));
-  const nextIn = Math.max(0, Math.ceil((nextFetchAt - now) / 1000));
+  const lastPoll = desk ? ingest?.lastPollAt : ftpSyncedAt;
+  const since = lastPoll ? Math.max(0, Math.round((now - new Date(lastPoll).getTime()) / 1000)) : 0;
+  const nextAt = desk ? (lastPoll ? new Date(lastPoll).getTime() + LIVE_POLL_SECONDS * 1000 : now) : nextFetchAt;
+  const nextIn = Math.max(0, Math.ceil((nextAt - now) / 1000));
   const last = ftpFetchLog[0];
+  // Live: red when the last poll failed or the worker has gone quiet
+  const healthy = !desk || (!!ingest && !ingest.lastError && since < 60);
 
   const checkNow = () => {
     setChecking(true);
+    if (desk) {
+      void desk.refreshAll().then((added) => {
+        setChecking(false);
+        onManualFetch?.(added);
+      });
+      return;
+    }
     // Brief delay stands in for the FTP round-trip
     setTimeout(() => {
       const added = fetchFtpNews();
@@ -75,11 +116,11 @@ export default function FtpStatus({ onManualFetch, compact }: { onManualFetch?: 
               width: 8,
               height: 8,
               borderRadius: "50%",
-              backgroundColor: "success.main",
+              backgroundColor: healthy ? "success.main" : "error.main",
               position: "relative",
               flexShrink: 0,
               // The ring grows with transform and opacity, which the GPU animates without repainting the page
-              "&::after": { content: '""', position: "absolute", inset: 0, borderRadius: "50%", backgroundColor: "success.main", animation: "ftpPulse 2s ease-out infinite" },
+              "&::after": { content: '""', position: "absolute", inset: 0, borderRadius: "50%", backgroundColor: healthy ? "success.main" : "error.main", animation: "ftpPulse 2s ease-out infinite" },
               "@keyframes ftpPulse": { "0%": { transform: "scale(1)", opacity: 0.5 }, "70%, 100%": { transform: "scale(2.5)", opacity: 0 } },
               "@media (prefers-reduced-motion: reduce)": { "&::after": { animation: "none", opacity: 0 } },
             }}
@@ -87,7 +128,7 @@ export default function FtpStatus({ onManualFetch, compact }: { onManualFetch?: 
           <Box sx={{ textAlign: "left", lineHeight: 1.2 }}>
             <Typography sx={{ fontSize: "0.75rem", fontWeight: 600 }}>{compact ? "Auto-fetch on" : "FTP auto-fetch on"}</Typography>
             <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
-              checked {since < 2 ? "just now" : `${since}s ago`} · next in {nextIn}s
+              {desk && !lastPoll ? "waiting for the first check" : <>checked {since < 2 ? "just now" : `${since}s ago`} · next in {nextIn}s</>}
             </Typography>
           </Box>
           <History size={14} />
@@ -115,9 +156,35 @@ export default function FtpStatus({ onManualFetch, compact }: { onManualFetch?: 
         <Box sx={{ px: 2, py: 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
           <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>FTP fetch history</Typography>
           <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
-            Checked automatically every {FTP_POLL_SECONDS} seconds{last ? `. Last: ${clock(last.at)}` : ""}
+            {desk
+              ? `Checked automatically every ${LIVE_POLL_SECONDS} seconds${ingest?.lastPollAt ? `. Last: ${clock(ingest.lastPollAt)}` : ""}`
+              : `Checked automatically every ${FTP_POLL_SECONDS} seconds${last ? `. Last: ${clock(last.at)}` : ""}`}
           </Typography>
         </Box>
+        {desk ? (
+          <Box sx={{ maxHeight: 340, overflowY: "auto" }}>
+            {!ingest ? (
+              <Typography sx={{ p: 2, fontSize: "0.8125rem", color: "text.secondary" }}>The server has not reported a check yet.</Typography>
+            ) : (
+              <>
+                <Box sx={{ px: 2, py: 1, fontSize: "0.8125rem" }}>
+                  <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, color: ingest.today.stories ? "success.main" : "text.secondary" }}>
+                    {ingest.today.stories} {ingest.today.stories === 1 ? "story" : "stories"} today
+                  </Typography>
+                  <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
+                    {ingest.today.mediaCopied} footage files copied · {ingest.today.mediaSkipped} skipped · {ingest.mediaWaiting} waiting for footage
+                  </Typography>
+                </Box>
+                {ingest.recentErrors.map((e, i) => (
+                  <Box key={`${e.at}-${i}`} sx={{ display: "flex", gap: 1.25, px: 2, py: 1, borderTop: "1px solid", borderColor: "divider" }}>
+                    <Typography sx={{ fontSize: "0.75rem", fontFamily: "var(--font-mono), monospace", color: "text.secondary", pt: "1px", flexShrink: 0 }}>{clock(e.at)}</Typography>
+                    <Typography sx={{ fontSize: "0.75rem", color: "error.main", minWidth: 0 }}>{e.message}</Typography>
+                  </Box>
+                ))}
+              </>
+            )}
+          </Box>
+        ) : (
         <Box sx={{ maxHeight: 340, overflowY: "auto" }}>
           {ftpFetchLog.length === 0 && <Typography sx={{ p: 2, fontSize: "0.8125rem", color: "text.secondary" }}>No checks yet. The first one runs within {FTP_POLL_SECONDS} seconds.</Typography>}
           {ftpFetchLog.map((run, i) => (
@@ -139,6 +206,7 @@ export default function FtpStatus({ onManualFetch, compact }: { onManualFetch?: 
             </Box>
           ))}
         </Box>
+        )}
       </Popover>
     </Box>
   );

@@ -39,6 +39,7 @@ import SearchModal from "./SearchModal";
 import { useThemeMode } from "@/providers/MuiProvider";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { UserRole, ROLE_LABELS } from "@/types/newsroom";
+import { useSociaSession } from "@/providers/SociaSessionProvider";
 import { CONTENT_MAX_WIDTH } from "@/constants";
 
 const NOTIFICATION_ICONS: Record<string, React.ReactNode> = {
@@ -57,6 +58,9 @@ const DashBoardCommonHeader: React.FC = () => {
   const { mode, toggleTheme } = useThemeMode();
   const { currentRole, setRole, notifications, markNotificationRead, markAllNotificationsRead, unreadCount, activity } = useNewsroom();
   const [roleAnchorEl, setRoleAnchorEl] = useState<null | HTMLElement>(null);
+  // On the live backend the role comes from the account; the switcher is a demo-only control
+  const { me, live } = useSociaSession();
+  const greetName = me?.user.name.split(" ")[0] ?? "Admin";
   const [notifAnchorEl, setNotifAnchorEl] = useState<null | HTMLElement>(null);
   const [activityAnchorEl, setActivityAnchorEl] = useState<null | HTMLElement>(null);
   const theme = useTheme();
@@ -132,7 +136,7 @@ const DashBoardCommonHeader: React.FC = () => {
         </Typography>
         <Typography sx={{ color: mode === "light" ? BLACK_COLOR : "#fff" }}>
           <span style={{ fontSize: "1.125rem" }}>Hi </span>
-          <span style={{ fontWeight: 600, fontSize: "1.125rem" }}>Admin</span>
+          <span style={{ fontWeight: 600, fontSize: "1.125rem" }}>{greetName}</span>
         </Typography>
       </Box>
 
@@ -141,10 +145,12 @@ const DashBoardCommonHeader: React.FC = () => {
         <Button
           variant="outlined"
           startIcon={<User size={16} />}
-          onClick={(e) => setRoleAnchorEl(e.currentTarget)}
+          onClick={(e) => !live && setRoleAnchorEl(e.currentTarget)}
+          aria-label={live ? `Signed in as ${ROLE_LABELS[currentRole]}` : undefined}
           sx={{
             textTransform: "none",
             borderRadius: "12px",
+            ...(live && { cursor: "default" }),
             color: mode === "light" ? "#1f2937" : "#fff",
             borderColor: mode === "light" ? "#e5e7eb" : "#333",
             backgroundColor: mode === "light" ? "#fff" : "#1e1e1e",

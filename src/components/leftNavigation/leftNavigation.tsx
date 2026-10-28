@@ -30,6 +30,7 @@ import NavigationLabel from "../Overview/NavigationLabel";
 import SociaMark from "@/components/Login/SociaMark";
 import { FacebookIcon } from "@/components/Newsroom/BreakingDesk/shared";
 import { useNewsroom } from "@/providers/NewsroomProvider";
+import { useSociaSession } from "@/providers/SociaSessionProvider";
 
 const YoutubeIcon: React.FC<{ size?: number; color?: string }> = ({ size = 16, color = "#FF0000" }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
@@ -58,6 +59,7 @@ const MAX_WIDTH = 280;
 
 const LeftNavigation: React.FC = () => {
   const router = useRouter();
+  const { signOut } = useSociaSession();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const currentPlatform = searchParams.get("platform");
@@ -183,8 +185,9 @@ const LeftNavigation: React.FC = () => {
     },
   ];
 
-  const handleLogoutClick = () => {
+  const handleLogoutClick = async () => {
     localStorage.removeItem("token");
+    await signOut();
     router.push("/");
   };
 

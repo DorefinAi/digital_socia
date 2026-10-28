@@ -25,6 +25,10 @@ import { useRouter } from "next/navigation";
 import { loginUser } from "@/redux/slices/authSlice";
 import { APP_NAME, CHANNEL } from "@/constants";
 import SociaMark from "./SociaMark";
+import { USE_MOCKS } from "@/lib/socia/config";
+import { enableTotp, login, startTotpSetup, verifyTotp } from "@/lib/socia/api";
+import { ApiError } from "@/lib/socia/client";
+import { useSociaSession } from "@/providers/SociaSessionProvider";
 
 // Follows the app theme (useThemeMode), so the choice made here carries into
 // the desk. Status colours are darker in light mode to keep AA contrast.
@@ -116,8 +120,15 @@ const istTime = () =>
 
 const LoginForm: React.FC = () => {
   const [mounted, setMounted] = useState(false);
-  const [email, setEmail] = useState("admin@dashb.com");
-  const [password, setPassword] = useState("password123");
+  // The demo build keeps its shared sign-in; the live desk starts empty
+  const [email, setEmail] = useState(USE_MOCKS ? "admin@dashb.com" : "");
+  const [password, setPassword] = useState(USE_MOCKS ? "password123" : "");
+  // Second step, only when the backend asks for it: "totp" = enter a code, "totp_setup" = add Socia to an authenticator first
+  const [secondStep, setSecondStep] = useState<"totp" | "totp_setup" | null>(null);
+  const [setupKey, setSetupKey] = useState<{ secret: string; otpauthUri: string } | null>(null);
+  const [code, setCode] = useState("");
+  const [formError, setFormError] = useState("");
+  const session = useSociaSession();
   const [showPassword, setShowPassword] = useState(false);
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -197,10 +208,59 @@ const LoginForm: React.FC = () => {
     return true;
   };
 
+  // Someone with a live session (or one just made) goes straight to the desk
+  useEffect(() => {
+    if (session.status === "signed_in") router.replace("/dashboard");
+  }, [session.status, router]);
+
+  const enterDesk = async () => {
+    const me = await session.refresh();
+    if (me?.verified) {
+      dispatch(loginUser({ user: { id: me.user.id, name: me.user.name, email: me.user.email }, token: "socia-session" }));
+      router.push("/dashboard");
+    } else {
+      setFormError("Your session did not start. Try signing in again.");
+    }
+  };
+
+  const goToSecondStep = async (next: "totp" | "totp_setup") => {
+    setSecondStep(next);
+    setCode("");
+    if (next === "totp_setup") setSetupKey(await startTotpSetup());
+  };
+
+  const handleLiveSubmit = async () => {
+    setFormError("");
+    setLoading(true);
+    try {
+      if (!secondStep) {
+        const res = await login(email.trim(), password);
+        if (res.next === "done") await enterDesk();
+        else await goToSecondStep(res.next);
+      } else {
+        await (secondStep === "totp" ? verifyTotp(code.trim()) : enableTotp(code.trim()));
+        await enterDesk();
+      }
+    } catch (err) {
+      setFormError(err instanceof ApiError ? err.message : "Sign-in failed. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!USE_MOCKS && secondStep) {
+      void handleLiveSubmit();
+      return;
+    }
     const isEmailValid = validateEmail(email);
     const isPasswordValid = validatePassword(password);
+
+    if (isEmailValid && isPasswordValid && !USE_MOCKS) {
+      void handleLiveSubmit();
+      return;
+    }
 
     if (isEmailValid && isPasswordValid) {
       setLoading(true);
@@ -407,13 +467,44 @@ const LoginForm: React.FC = () => {
           >
             <Box>
               <Typography component="h2" sx={{ fontSize: "1.375rem", fontWeight: 700, letterSpacing: "-0.02em", m: 0 }}>
-                Sign in to the desk
+                {secondStep === "totp" ? "Enter your sign-in code" : secondStep === "totp_setup" ? "Set up two-step sign-in" : "Sign in to the desk"}
               </Typography>
               <Typography sx={{ mt: 0.75, color: C.ink2, fontSize: "0.875rem" }}>
-                Use your newsroom account.
+                {secondStep === "totp"
+                  ? "Open your authenticator app and type the 6-digit code for Socia."
+                  : secondStep === "totp_setup"
+                  ? "Add Socia to an authenticator app with this key, then type the 6-digit code it shows."
+                  : "Use your newsroom account."}
               </Typography>
             </Box>
 
+            {secondStep === "totp_setup" && setupKey && (
+              <Box sx={{ borderRadius: "12px", border: `1px solid ${C.hair2}`, p: 1.5, bgcolor: C.field }}>
+                <Typography sx={{ fontSize: "0.75rem", color: C.ink3 }}>Setup key</Typography>
+                <Typography sx={{ fontFamily: "var(--font-mono), monospace", fontSize: "0.9375rem", fontWeight: 600, letterSpacing: "0.08em", overflowWrap: "anywhere", userSelect: "all" }}>
+                  {setupKey.secret}
+                </Typography>
+                <Typography component="a" href={setupKey.otpauthUri} sx={{ display: "inline-block", mt: 0.75, fontSize: "0.8125rem", color: C.ink }}>
+                  Open in authenticator app
+                </Typography>
+              </Box>
+            )}
+
+            {secondStep && (
+              <TextField
+                label="6-digit code"
+                autoComplete="one-time-code"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                fullWidth
+                autoFocus
+                sx={fieldSx}
+                slotProps={{ htmlInput: { inputMode: "numeric", pattern: "[0-9]*", maxLength: 6 } }}
+              />
+            )}
+
+            {!secondStep && (
+            <>
             <TextField
               type="email"
               label="Email"
@@ -459,11 +550,19 @@ const LoginForm: React.FC = () => {
                 },
               }}
             />
+            </>
+            )}
+
+            {formError && (
+              <Typography role="alert" sx={{ color: C.live, fontSize: "0.8125rem", fontWeight: 600 }}>
+                {formError}
+              </Typography>
+            )}
 
             <Button
               type="submit"
               fullWidth
-              disabled={!email || !password || !!emailError || !!passwordError || loading}
+              disabled={(secondStep ? code.length !== 6 : !email || !password || !!emailError || !!passwordError) || loading}
               sx={{
                 mt: 0.5,
                 minHeight: 50,
@@ -480,12 +579,26 @@ const LoginForm: React.FC = () => {
                 "&.Mui-disabled": { bgcolor: C.btnDisabled, color: C.ink3 },
               }}
             >
-              Sign in
+              {loading ? "Signing in…" : secondStep ? "Verify and continue" : "Sign in"}
             </Button>
 
-            <Typography sx={{ textAlign: "center", color: C.ink3, fontSize: "0.8125rem" }}>
-              No account yet? Ask your desk admin for access.
-            </Typography>
+            {secondStep ? (
+              <Button
+                type="button"
+                onClick={() => {
+                  setSecondStep(null);
+                  setSetupKey(null);
+                  setFormError("");
+                }}
+                sx={{ alignSelf: "center", textTransform: "none", color: C.ink2, fontSize: "0.8125rem" }}
+              >
+                Use a different account
+              </Button>
+            ) : (
+              <Typography sx={{ textAlign: "center", color: C.ink3, fontSize: "0.8125rem" }}>
+                No account yet? Ask your desk admin for access.
+              </Typography>
+            )}
           </Box>
 
           {/* How one story goes out: plays once on load, then rests on Posted */}

@@ -7,6 +7,9 @@ import { BreakingTag, FtpNewsItem, SocialPlatform } from "@/types/newsroom";
 import { isLiveOn } from "@/data/socialDesk";
 import { FtpRefresh } from "./FtpStatus";
 import { srOnly, TAG_TINT, tagTint, timeAgo } from "./shared";
+import type { DraftView } from "@/lib/socia/types";
+import { isLiveItem, useLiveDesk } from "./live/LiveDesk";
+import FootageList from "./live/FootageList";
 
 const STATUS_STYLE: Record<string, { label: string; color: string }> = {
   posted: { label: "Posted", color: "success.main" },
@@ -16,11 +19,14 @@ const STATUS_STYLE: Record<string, { label: string; color: string }> = {
 };
 
 /** Live FTP feed beside the editor: newest first, new arrivals marked, click to switch story. */
-export default function FtpFeedPanel({ platform, currentId, onPick }: { platform: SocialPlatform; currentId: string; onPick: (item: FtpNewsItem) => void }) {
+export default function FtpFeedPanel({ platform, currentId, onPick, footage }: { platform: SocialPlatform; currentId: string; onPick: (item: FtpNewsItem) => void; footage?: DraftView }) {
   const { ftpNews, socialPosts, socialDrafts } = useNewsroom();
+  const desk = useLiveDesk();
   const listRef = useRef<HTMLDivElement>(null);
   const [openedAt] = useState(() => Date.now());
-  const sorted = [...ftpNews].sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
+  // Live: the stories waiting in the X queue, newest first
+  const stories: FtpNewsItem[] = desk ? desk.queue : ftpNews;
+  const sorted = [...stories].sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
   const newest = sorted[0]?.id;
 
   // When a story arrives, bring the top of the feed into view so it is seen
@@ -29,6 +35,7 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
   }, [newest]);
 
   const statusOf = (id: string) => {
+    if (desk) return undefined;
     if (isLiveOn(socialPosts, id, platform)) return "posted";
     const draft = socialDrafts.find((d) => d.newsId === id && d.platform === platform && d.status !== "deleted");
     return draft?.status;
@@ -43,6 +50,7 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
         </Box>
         <FtpRefresh size="small" />
       </Box>
+      {footage && <FootageList draft={footage} />}
       <Box aria-hidden sx={{ display: "flex", flexWrap: "wrap", columnGap: 1.5, rowGap: 0.5 }}>
         {(Object.keys(TAG_TINT) as BreakingTag[]).map((tag) => (
           <Box key={tag} sx={{ display: "flex", alignItems: "center", gap: 0.6, fontSize: "0.6875rem", color: "text.secondary", whiteSpace: "nowrap" }}>
@@ -55,8 +63,11 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
         {sorted.map((n) => {
           const current = n.id === currentId;
           const status = statusOf(n.id);
-          const fresh = new Date(n.receivedAt).getTime() > openedAt;
+          const live = isLiveItem(n) ? n.live : null;
+          const fresh = new Date(live?.createdAt ?? n.receivedAt).getTime() > openedAt;
           const cover = n.media[0];
+          // Live: who has the story open; never when their hold runs out
+          const holder = live?.claim && !current ? (live.claim.mine ? "With you" : `${live.claim.name} is editing`) : null;
           return (
             <Box
               key={n.id}
@@ -94,6 +105,11 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
                   <Box component="span" sx={srOnly}>{TAG_TINT[n.tag].label}</Box>
                   {fresh && <Box component="span" sx={{ px: 0.5, borderRadius: "3px", backgroundColor: "success.main", color: "#fff", fontWeight: 700 }}>NEW</Box>}
                   <span>{timeAgo(n.receivedAt)}</span>
+                  {holder && (
+                    <Box component="span" sx={{ color: "info.main", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {holder}
+                    </Box>
+                  )}
                   {status && STATUS_STYLE[status] && (
                     <Box component="span" sx={{ color: STATUS_STYLE[status].color, fontWeight: 600 }}>
                       {STATUS_STYLE[status].label}

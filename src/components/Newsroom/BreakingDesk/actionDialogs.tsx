@@ -148,3 +148,55 @@ export function RecallDialog({ open, headline, platformName, onClose, onConfirm 
     </Dialog>
   );
 }
+
+// ─── Posted by hand (live desk) ───────────────────────────────────────────────
+const POST_LINK = /^https:\/\/(www\.)?(x|twitter)\.com\/\w{1,15}\/status\/\d{5,25}(?:[/?#].*)?$/;
+
+/** Asks for the link of a post the operator made by hand, so the desk can record it as posted. */
+export function PostedLinkDialog({ open, headline, platformName, busy, onClose, onConfirm }: { open: boolean; headline: string; platformName: string; busy?: boolean; onClose: () => void; onConfirm: (permalink: string) => Promise<string | null> }) {
+  const [link, setLink] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const value = link.trim();
+  const valid = POST_LINK.test(value);
+
+  const confirm = async () => {
+    if (!valid || busy) return;
+    setError(await onConfirm(value));
+  };
+
+  return (
+    <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="xs" fullWidth {...paperSx}>
+      <DialogFrame
+        title={`Save as posted on ${platformName}`}
+        subtitle={headline}
+        actions={
+          <>
+            <Button onClick={onClose} disabled={busy}>Cancel</Button>
+            <Button variant="contained" disabled={!valid || busy} onClick={() => void confirm()}>
+              {busy ? "Saving" : "Save as posted"}
+            </Button>
+          </>
+        }
+      >
+        <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary" }}>
+          The card was downloaded. Post it on {platformName}, then paste the post&apos;s link here.
+        </Typography>
+        <TextField
+          size="small"
+          label="Link to the post"
+          placeholder="https://x.com/handle/status/…"
+          value={link}
+          onChange={(e) => {
+            setLink(e.target.value);
+            setError(null);
+          }}
+          onKeyDown={(e) => e.key === "Enter" && void confirm()}
+          error={!!error || (value.length > 0 && !valid)}
+          helperText={error ?? (value.length > 0 && !valid ? "Paste the full link of the post, like https://x.com/handle/status/123…" : " ")}
+          autoFocus
+          sx={fieldSx}
+        />
+      </DialogFrame>
+    </Dialog>
+  );
+}

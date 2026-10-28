@@ -6,6 +6,7 @@ import { Ban, CheckCircle, Film, Image as ImageIcon, Lock, MapPin, PenLine, Save
 import { useThemeMode } from "@/providers/MuiProvider";
 import { FtpNewsItem } from "@/types/newsroom";
 import { TagChip, timeAgo } from "./shared";
+import { isLiveItem } from "./live/LiveDesk";
 
 export interface QueueViewProps {
   items: FtpNewsItem[];
@@ -17,9 +18,15 @@ export interface QueueViewProps {
   /** Short name of the other platform when the story is already live there */
   liveElsewhere: (newsId: string) => string | null;
   canAct: boolean;
+  /** Live: the name of whoever else has the story open (never their hold's end time) */
+  heldBy?: (newsId: string) => string | null;
+  /** Live: what a story the operator already holds is called ("With you") */
+  savedLabel?: string;
 }
 
 const countMedia = (item: FtpNewsItem) => {
+  // Live queue items carry the draft's file counts, not the files themselves
+  if (isLiveItem(item)) return { videos: item.live.media?.videos ?? 0, images: item.live.media?.images ?? 0 };
   const videos = item.media.filter((m) => m.kind === "video").length;
   return { videos, images: item.media.length - videos };
 };
@@ -42,33 +49,34 @@ function MediaCounts({ item }: { item: FtpNewsItem }) {
   );
 }
 
-function StatusChip({ saved, elsewhere }: { saved: boolean; elsewhere: string | null }) {
-  if (saved) return <Chip icon={<Save size={11} />} label="Draft saved" size="small" sx={{ height: 22, fontSize: "0.6875rem", fontWeight: 600, borderRadius: "6px" }} />;
+function StatusChip({ saved, elsewhere, held, savedLabel = "Draft saved" }: { saved: boolean; elsewhere: string | null; held?: string | null; savedLabel?: string }) {
+  if (held) return <Chip icon={<Lock size={11} />} label={`${held} is editing`} size="small" sx={{ height: 22, maxWidth: 170, fontSize: "0.6875rem", fontWeight: 600, borderRadius: "6px" }} />;
+  if (saved) return <Chip icon={<Save size={11} />} label={savedLabel} size="small" sx={{ height: 22, fontSize: "0.6875rem", fontWeight: 600, borderRadius: "6px" }} />;
   if (elsewhere) return <Chip icon={<CheckCircle size={11} />} label={`On ${elsewhere}`} size="small" color="success" variant="outlined" sx={{ height: 22, fontSize: "0.6875rem", fontWeight: 600, borderRadius: "6px" }} />;
   return <Chip label="New" size="small" sx={{ height: 22, fontSize: "0.6875rem", fontWeight: 600, borderRadius: "6px", backgroundColor: "#FFF8E1", color: "#F57F17" }} />;
 }
 
-function Actions({ item, saved, canAct, onOpen, onReject, compact, align = "end" }: { item: FtpNewsItem; saved: boolean; canAct: boolean; onOpen: () => void; onReject: () => void; compact?: boolean; align?: "start" | "end" }) {
+function Actions({ item, saved, held, canAct, onOpen, onReject, compact, align = "end" }: { item: FtpNewsItem; saved: boolean; held?: string | null; canAct: boolean; onOpen: () => void; onReject: () => void; compact?: boolean; align?: "start" | "end" }) {
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, justifyContent: align === "end" ? "flex-end" : "flex-start" }} onClick={(e) => e.stopPropagation()}>
-      {canAct && (
+      {canAct && !held && (
         <Tooltip title="Reject (R)">
           <IconButton size="small" aria-label={`Reject ${item.headline}`} onClick={onReject} sx={{ width: { xs: 40, md: 32 }, height: { xs: 40, md: 32 }, borderRadius: "8px", color: "text.secondary", "&:hover": { color: "error.main" } }}>
             <Ban size={15} />
           </IconButton>
         </Tooltip>
       )}
-      <Tooltip title={canAct ? "Open in editor (Enter)" : "Your role can view posts but not publish them"}>
+      <Tooltip title={held ? `${held} is working on this story. Open it to look` : canAct ? "Open in editor (Enter)" : "Your role can view posts but not publish them"}>
         <span>
           <Button
             size="small"
-            variant="contained"
+            variant={held ? "outlined" : "contained"}
             onClick={onOpen}
             disabled={!canAct}
-            startIcon={canAct ? <PenLine size={14} /> : <Lock size={14} />}
+            startIcon={canAct && !held ? <PenLine size={14} /> : <Lock size={14} />}
             sx={{ minHeight: { xs: 40, md: 32 }, borderRadius: "8px", textTransform: "none", fontSize: compact ? "0.7rem" : "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}
           >
-            {saved ? "Continue" : "Create post"}
+            {held ? "View" : saved ? "Continue" : "Create post"}
           </Button>
         </span>
       </Tooltip>
@@ -77,13 +85,14 @@ function Actions({ item, saved, canAct, onOpen, onReject, compact, align = "end"
 }
 
 // ─── Cards ───────────────────────────────────────────────────────────────────
-export function QueueCards({ items, focusedId, onFocus, onOpen, onReject, isSaved, liveElsewhere, canAct }: QueueViewProps) {
+export function QueueCards({ items, focusedId, onFocus, onOpen, onReject, isSaved, liveElsewhere, canAct, heldBy, savedLabel }: QueueViewProps) {
   return (
     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", lg: "repeat(3, 1fr)" }, gap: 2.5 }}>
       {items.map((item, i) => {
         const cover = item.media[0];
         const saved = isSaved(item.id);
         const elsewhere = liveElsewhere(item.id);
+        const held = heldBy?.(item.id) ?? null;
         return (
           <Box
             key={item.id}
@@ -124,8 +133,8 @@ export function QueueCards({ items, focusedId, onFocus, onOpen, onReject, isSave
                 <span>{timeAgo(item.receivedAt)}</span>
               </Box>
               <Box sx={{ mt: "auto", pt: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
-                <StatusChip saved={saved} elsewhere={elsewhere} />
-                <Actions item={item} saved={saved} canAct={canAct} onOpen={() => onOpen(item)} onReject={() => onReject(item)} />
+                <StatusChip saved={saved} elsewhere={elsewhere} held={held} savedLabel={savedLabel} />
+                <Actions item={item} saved={saved} held={held} canAct={canAct} onOpen={() => onOpen(item)} onReject={() => onReject(item)} />
               </Box>
             </Box>
           </Box>
@@ -139,7 +148,7 @@ export function QueueCards({ items, focusedId, onFocus, onOpen, onReject, isSave
 // Fits the column at any width: tag, area, files and time sit under the
 // headline, the thumbnail appears from sm, status gets its own column from md,
 // and on phones the actions move into the story cell.
-export function QueueTable({ items, focusedId, onFocus, onOpen, onReject, isSaved, liveElsewhere, canAct }: QueueViewProps) {
+export function QueueTable({ items, focusedId, onFocus, onOpen, onReject, isSaved, liveElsewhere, canAct, heldBy, savedLabel }: QueueViewProps) {
   const { mode } = useThemeMode();
   const head = { fontWeight: 700, fontSize: "0.75rem", whiteSpace: "nowrap" as const };
   const fromSm = { display: { xs: "none", sm: "table-cell" } };
@@ -163,6 +172,7 @@ export function QueueTable({ items, focusedId, onFocus, onOpen, onReject, isSave
             const cover = item.media[0];
             const saved = isSaved(item.id);
             const elsewhere = liveElsewhere(item.id);
+            const held = heldBy?.(item.id) ?? null;
             return (
               <TableRow
                 key={item.id}
@@ -188,19 +198,19 @@ export function QueueTable({ items, focusedId, onFocus, onOpen, onReject, isSave
                     <MediaCounts item={item} />
                     <span>{timeAgo(item.receivedAt)}</span>
                     <Box sx={{ display: { xs: "inline-flex", md: "none" } }}>
-                      <StatusChip saved={saved} elsewhere={elsewhere} />
+                      <StatusChip saved={saved} elsewhere={elsewhere} held={held} savedLabel={savedLabel} />
                     </Box>
                   </Box>
                   <Typography sx={{ display: { xs: "none", sm: "block" }, mt: 0.5, fontSize: "0.6875rem", color: "text.disabled", fontFamily: "var(--font-mono), monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.ftpPath}</Typography>
                   <Box sx={{ display: { xs: "block", sm: "none" }, mt: 1 }}>
-                    <Actions item={item} saved={saved} canAct={canAct} onOpen={() => onOpen(item)} onReject={() => onReject(item)} align="start" />
+                    <Actions item={item} saved={saved} held={held} canAct={canAct} onOpen={() => onOpen(item)} onReject={() => onReject(item)} align="start" />
                   </Box>
                 </TableCell>
                 <TableCell sx={fromMd}>
-                  <StatusChip saved={saved} elsewhere={elsewhere} />
+                  <StatusChip saved={saved} elsewhere={elsewhere} held={held} savedLabel={savedLabel} />
                 </TableCell>
                 <TableCell align="right" sx={fromSm}>
-                  <Actions item={item} saved={saved} canAct={canAct} onOpen={() => onOpen(item)} onReject={() => onReject(item)} compact />
+                  <Actions item={item} saved={saved} held={held} canAct={canAct} onOpen={() => onOpen(item)} onReject={() => onReject(item)} compact />
                 </TableCell>
               </TableRow>
             );

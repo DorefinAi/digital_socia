@@ -7,6 +7,8 @@ import { useNewsroom } from "@/providers/NewsroomProvider";
 import { SocialPlatform, SocialPost } from "@/types/newsroom";
 import { RecallDialog } from "./actionDialogs";
 import { PLATFORM_META, PlatformIcon, timeAgo } from "./shared";
+import { postToSocial, useLiveDesk } from "./live/LiveDesk";
+import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
 
 interface PostedPostsListProps {
   platform?: SocialPlatform;
@@ -20,10 +22,19 @@ interface PostedPostsListProps {
 
 export default function PostedPostsList({ platform, limit, emptyHint, bare, allowRecall }: PostedPostsListProps) {
   const { socialPosts, recallPost, permissions } = useNewsroom();
+  const desk = useLiveDesk();
   const [recalling, setRecalling] = useState<SocialPost | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [recallError, setRecallError] = useState<string | null>(null);
 
-  const posts = socialPosts.filter((p) => !platform || p.platform === platform).slice(0, limit);
+  // Live: the real X posts from the server
+  const source = desk ? (desk.posts.data?.items ?? []).map(postToSocial) : socialPosts;
+  const canRecall = desk ? desk.canAct : permissions.canApproveSocialContent;
+  const posts = source.filter((p) => !platform || p.platform === platform).slice(0, limit);
+
+  if (desk && !desk.posts.data) {
+    return desk.posts.error ? <LoadError error={desk.posts.error} onRetry={() => void desk.posts.refresh()} /> : <LoadingRows />;
+  }
 
   const copy = async (id: string, url: string) => {
     try {
@@ -106,7 +117,7 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare, allo
           </Box>
 
           <Box sx={{ display: "flex", alignItems: "center" }}>
-            {allowRecall && permissions.canApproveSocialContent && post.status !== "recalled" && (
+            {allowRecall && canRecall && post.status !== "recalled" && (
               <Button size="small" color="error" startIcon={<Undo2 size={13} />} onClick={() => setRecalling(post)} sx={{ minHeight: 28, fontSize: "0.75rem", px: 1, mr: 0.5 }}>
                 Recall
               </Button>
@@ -131,10 +142,17 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare, allo
           platformName={PLATFORM_META[recalling.platform].short}
           onClose={() => setRecalling(null)}
           onConfirm={(reason) => {
-            recallPost(recalling.id, reason);
+            if (desk) {
+              void desk.recall(recalling.id, reason).then(setRecallError);
+            } else recallPost(recalling.id, reason);
             setRecalling(null);
           }}
         />
+      )}
+      {recallError && (
+        <Typography role="alert" sx={{ px: 1.25, py: 1, fontSize: "0.75rem", color: "error.main", borderTop: "1px solid", borderColor: "divider" }}>
+          {recallError}
+        </Typography>
       )}
     </Box>
   );

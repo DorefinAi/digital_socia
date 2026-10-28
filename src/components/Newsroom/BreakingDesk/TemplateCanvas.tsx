@@ -30,6 +30,8 @@ export interface TemplateCanvasHandle {
   snapshot: (maxWidth: number) => string | null;
   /** Saves the full-size frame as PNG; false when the media host blocks pixel access */
   download: (fileName: string) => boolean;
+  /** The current frame as a PNG no bigger than `maxBytes`, scaled down if needed; null when the media host blocks pixel access */
+  png: (maxBytes: number) => Promise<Blob | null>;
   /** Moves a video background to `time` seconds */
   seek: (time: number) => void;
   /** Renders the kept clips back to back with the template burnt in; null when the browser or media host does not allow it */
@@ -297,6 +299,33 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
       } catch {
         return false;
       }
+    },
+    png: async (maxBytes) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      const encode = (source: HTMLCanvasElement) =>
+        new Promise<Blob | null>((resolve) => {
+          try {
+            source.toBlob(resolve, "image/png");
+          } catch {
+            // A tainted canvas (media host without CORS) refuses to export
+            resolve(null);
+          }
+        });
+      // Full size first; a busy photo can pass the limit, so step the frame down until it fits
+      for (const scale of [1, 0.8, 0.65, 0.5]) {
+        let source = canvas;
+        if (scale < 1) {
+          source = document.createElement("canvas");
+          source.width = Math.round(canvas.width * scale);
+          source.height = Math.round(canvas.height * scale);
+          source.getContext("2d")?.drawImage(canvas, 0, 0, source.width, source.height);
+        }
+        const blob = await encode(source);
+        if (!blob) return null;
+        if (blob.size <= maxBytes) return blob;
+      }
+      return null;
     },
     seek: (time) => {
       const video = sourceRef.current;

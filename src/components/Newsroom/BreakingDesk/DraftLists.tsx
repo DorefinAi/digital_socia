@@ -2,11 +2,14 @@
 
 import React, { useState } from "react";
 import { Box, Typography, Button, Chip, Dialog } from "@mui/material";
-import { CalendarClock, Pencil, Send, Undo2, Trash2 } from "lucide-react";
+import { CalendarClock, Pencil, RotateCcw, Send, Undo2, Trash2 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { REJECT_REASONS, SocialDraft, SocialPlatform } from "@/types/newsroom";
 import { ScheduleDialog } from "./actionDialogs";
 import { EmptyState, ListThumb, formatStamp, listFrameSx, timeAgo } from "./shared";
+import { fileUrl, useLiveDesk } from "./live/LiveDesk";
+import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
+import type { QueueItem } from "@/lib/socia/types";
 
 const rowSx = (i: number) => ({
   display: "grid",
@@ -76,8 +79,11 @@ export function ScheduledList({ platform, onEdit }: { platform: SocialPlatform; 
 // ─── Rejected ────────────────────────────────────────────────────────────────
 export function RejectedList({ platform }: { platform: SocialPlatform }) {
   const { socialDrafts, restoreDraft, deleteDraft, permissions } = useNewsroom();
+  const desk = useLiveDesk();
   const [deleting, setDeleting] = useState<SocialDraft | null>(null);
   const drafts = socialDrafts.filter((d) => d.platform === platform && d.status === "rejected");
+
+  if (desk) return <LiveRejectedList />;
 
   if (!drafts.length) return <EmptyState title="Nothing rejected" hint="Stories rejected from the queue are kept here with the reason, and can be restored." />;
 
@@ -125,6 +131,111 @@ export function RejectedList({ platform }: { platform: SocialPlatform }) {
           </Box>
         </Box>
       </Dialog>
+    </Box>
+  );
+}
+
+// ─── Live desk ───────────────────────────────────────────────────────────────
+function useRowAction() {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const run = async (id: string, fn: () => Promise<string | null>) => {
+    setBusyId(id);
+    setError(await fn());
+    setBusyId(null);
+  };
+  return { busyId, error, run };
+}
+
+function LiveRows({ items, empty, children }: { items: QueueItem[] | undefined; empty: React.ReactNode; children: (item: QueueItem) => React.ReactNode }) {
+  if (!items?.length) return <>{empty}</>;
+  return (
+    <Box sx={listFrameSx}>
+      {items.map((item, i) => (
+        <Box key={item.id} sx={rowSx(i)}>
+          {children(item)}
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+/** Rejected drafts from the server, with the reason; Restore puts a story back in the queue. */
+function LiveRejectedList() {
+  const desk = useLiveDesk();
+  const { busyId, error, run } = useRowAction();
+  if (!desk) return null;
+  const { rejected } = desk;
+  if (!rejected.data) return rejected.error ? <LoadError error={rejected.error} onRetry={() => void rejected.refresh()} /> : <LoadingRows />;
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      {error && <Typography role="alert" sx={{ fontSize: "0.8125rem", color: "error.main" }}>{error}</Typography>}
+      <LiveRows items={rejected.data.items} empty={<EmptyState title="Nothing rejected" hint="Stories rejected from the queue are kept here with the reason, and can be restored." />}>
+        {(d) => (
+          <>
+            <ListThumb src={fileUrl(d.cardUrl)} dim />
+            <Box sx={{ minWidth: 0 }}>
+              <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.headline}</Typography>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.4, flexWrap: "wrap" }}>
+                {d.rejectReason && <Chip label={REJECT_REASONS[d.rejectReason]} size="small" color="error" variant="outlined" sx={{ height: 20, fontSize: "0.6875rem", borderRadius: "6px" }} />}
+                <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary" }}>
+                  {[d.district, `received ${timeAgo(d.receivedAt)}`].filter(Boolean).join(" · ")}
+                </Typography>
+              </Box>
+            </Box>
+            {desk.canAct && (
+              <Box sx={actionsSx}>
+                <Button size="small" startIcon={<Undo2 size={13} />} disabled={busyId === d.id} onClick={() => void run(d.id, () => desk.restore(d.id))} sx={smallBtn}>
+                  Restore to queue
+                </Button>
+              </Box>
+            )}
+          </>
+        )}
+      </LiveRows>
+    </Box>
+  );
+}
+
+const SENDING_LABEL: Partial<Record<QueueItem["status"], string>> = { queued: "In the undo window", publishing: "Posting now", failed: "Post failed", render_failed: "Card failed to draw" };
+
+/** Posts on their way to X, and ones that failed (with Retry). Takes the Scheduled tab's place on the live desk. */
+export function LiveSendingList() {
+  const desk = useLiveDesk();
+  const { busyId, error, run } = useRowAction();
+  if (!desk) return null;
+  const { sending, failed } = desk;
+  if (!sending.data || !failed.data) {
+    const err = sending.error ?? failed.error;
+    return err ? <LoadError error={err} onRetry={() => void Promise.all([sending.refresh(), failed.refresh()])} /> : <LoadingRows />;
+  }
+  const items = [...failed.data.items, ...sending.data.items];
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      {error && <Typography role="alert" sx={{ fontSize: "0.8125rem", color: "error.main" }}>{error}</Typography>}
+      <LiveRows items={items} empty={<EmptyState title="Nothing on its way" hint="Approved stories wait here for their 10-second undo window, then go to X." />}>
+        {(d) => {
+          const isFailed = d.status === "failed" || d.status === "render_failed";
+          return (
+            <>
+              <ListThumb src={fileUrl(d.cardUrl)} dim={isFailed} />
+              <Box sx={{ minWidth: 0 }}>
+                <Typography sx={{ fontSize: "0.75rem", fontWeight: 700, color: isFailed ? "error.main" : "text.secondary" }}>{SENDING_LABEL[d.status] ?? d.status}</Typography>
+                <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, mt: 0.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.headline}</Typography>
+              </Box>
+              {desk.canAct && d.status === "failed" && (
+                <Box sx={actionsSx}>
+                  <Button size="small" startIcon={<RotateCcw size={13} />} disabled={busyId === d.id} onClick={() => void run(d.id, () => desk.retry(d.id))} sx={smallBtn}>
+                    Retry
+                  </Button>
+                </Box>
+              )}
+            </>
+          );
+        }}
+      </LiveRows>
     </Box>
   );
 }

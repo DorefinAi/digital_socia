@@ -1,0 +1,76 @@
+"use client";
+
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { USE_MOCKS } from "@/lib/socia/config";
+import { fetchMe, logout } from "@/lib/socia/api";
+import { ApiError, onSignedOut } from "@/lib/socia/client";
+import type { Me, SociaRole } from "@/lib/socia/types";
+import type { UserRole } from "@/types/newsroom";
+
+type SessionStatus = "mock" | "loading" | "signed_in" | "needs_second_step" | "signed_out" | "offline";
+
+interface SociaSession {
+  status: SessionStatus;
+  me: Me | null;
+  /** Reloads /me, e.g. right after sign-in */
+  refresh: () => Promise<Me | null>;
+  signOut: () => Promise<void>;
+  /** The live backend is in use (not the demo data) */
+  live: boolean;
+}
+
+const SessionContext = createContext<SociaSession | null>(null);
+
+/** How a backend role shows in the desk's own role model (nav access, header label). */
+export const DESK_ROLE: Record<SociaRole, UserRole> = { admin: "admin", editor: "editor", operator: "digital_team", viewer: "viewer" };
+
+export function SociaSessionProvider({ children }: { children: React.ReactNode }) {
+  const [status, setStatus] = useState<SessionStatus>(USE_MOCKS ? "mock" : "loading");
+  const [me, setMe] = useState<Me | null>(null);
+
+  const apply = useCallback((next: Me) => {
+    setMe(next);
+    setStatus(next.verified ? "signed_in" : "needs_second_step");
+    return next;
+  }, []);
+  const applyError = useCallback((err: unknown) => {
+    setMe(null);
+    setStatus(err instanceof ApiError && err.code === "offline" ? "offline" : "signed_out");
+    return null;
+  }, []);
+
+  const refresh = useCallback(async () => {
+    if (USE_MOCKS) return null;
+    return fetchMe().then(apply, applyError);
+  }, [apply, applyError]);
+
+  const signOut = useCallback(async () => {
+    if (USE_MOCKS) return;
+    try {
+      await logout();
+    } catch {
+      // Already signed out on the server; the local state is cleared either way
+    }
+    setMe(null);
+    setStatus("signed_out");
+  }, []);
+
+  useEffect(() => {
+    if (USE_MOCKS) return;
+    // The state updates land after /me answers, not during the effect
+    fetchMe().then(apply, applyError);
+    return onSignedOut(() => {
+      setMe(null);
+      setStatus("signed_out");
+    });
+  }, [apply, applyError]);
+
+  const value = useMemo(() => ({ status, me, refresh, signOut, live: !USE_MOCKS }), [status, me, refresh, signOut]);
+  return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
+}
+
+export function useSociaSession(): SociaSession {
+  const ctx = useContext(SessionContext);
+  if (!ctx) throw new Error("useSociaSession must be used inside SociaSessionProvider");
+  return ctx;
+}
