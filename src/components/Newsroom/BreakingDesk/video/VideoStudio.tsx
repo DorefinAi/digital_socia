@@ -16,7 +16,7 @@ import { importMusic, isAudioFile, releaseAudioAsset } from "./audio/importMusic
 import { probeHasAudio } from "./audio/decode";
 import ExportDialog from "./export/ExportDialog";
 import { PLATFORM_ASPECT, assetFrom, projectFromStory, type MediaFacts, type StoryMediaSource, type StudioPlatform } from "./projectFromStory";
-import { clearSaved, readSaved, studioKey, useAutosave } from "./panels/autosave";
+import { clearSaved, readSaved, studioKey, useAutosave, writeSaved } from "./panels/autosave";
 import { kindOf, probeMedia } from "./panels/probe";
 import { useStudioApi } from "./panels/studioApi";
 import { BinPanel, BinRail, type BinId } from "./panels/Bins";
@@ -207,10 +207,44 @@ function StudioShell({ platform, draftId, story, aspect, title, onClose, onUseVi
     engine.pause();
     setExporting(true);
   }, [engine]);
-  // Shell actions in the timeline's Ctrl+K palette
+  const previewRef = useRef<HTMLDivElement>(null);
+  // Shell actions in the timeline's Ctrl+K palette; ids that are in the keymap also get its shortcut
   const commands = useMemo<StudioCommand[]>(
     () => [
       { id: "studio.export", label: "Export video", section: "Edit", keywords: "mp4 download render", run: openExport },
+      {
+        id: "studio.save",
+        label: "Save now",
+        section: "Edit",
+        keywords: "save store",
+        run: ({ store: st }) => setNotice(writeSaved(key, st.getState().project) ? "Saved in this browser." : "Could not save: this browser's storage is full or blocked."),
+      },
+      {
+        id: "studio.saveAs",
+        label: "Save as a copy",
+        section: "Edit",
+        keywords: "save copy download project json",
+        // The project file (clips, text, settings); files imported from the computer are not inside it
+        run: ({ store: st }) => {
+          const url = URL.createObjectURL(new Blob([JSON.stringify(st.getState().project, null, 2)], { type: "application/json" }));
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${platform.toLowerCase()}-${draftId}-project.json`;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(url), 0);
+          setNotice("Project copy downloaded. Imported files are not inside it.");
+        },
+      },
+      {
+        id: "preview.fullscreen",
+        label: "Full-screen preview",
+        section: "View",
+        keywords: "fullscreen full screen",
+        run: () => {
+          if (document.fullscreenElement) void document.exitFullscreen();
+          else void previewRef.current?.requestFullscreen?.().catch(() => setNotice("This browser did not allow full screen."));
+        },
+      },
       ...(["16:9", "9:16", "1:1", "4:5"] as const).map((a): StudioCommand => ({
         id: `studio.aspect.${a}`,
         label: `Frame ${a}: ${ASPECTS[a].label}`,
@@ -219,7 +253,7 @@ function StudioShell({ platform, draftId, story, aspect, title, onClose, onUseVi
         run: ({ store: st }) => st.dispatch({ type: "project/set", patch: { aspect: a } }),
       })),
     ],
-    [openExport],
+    [openExport, key, platform, draftId],
   );
 
   // Right-click inside the studio shows editor menus, never the browser's (text fields and Shift+right-click excepted)
@@ -290,7 +324,7 @@ function StudioShell({ platform, draftId, story, aspect, title, onClose, onUseVi
       <Box sx={{ display: "flex", minHeight: 0 }}>
         <BinRail active={bin} onChange={setBin} />
         <BinPanel api={api} bin={bin} onImport={(f) => void importFiles(f)} missing={missing} headline={headline} />
-        <Box component="main" aria-label="Preview" sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", position: "relative" }}>
+        <Box ref={previewRef} component="main" aria-label="Preview" sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", position: "relative", bgcolor: S.stage }}>
           {ready ? (
             <StudioPreview pool={pool} engine={engine} onTogglePlay={togglePlay} />
           ) : (

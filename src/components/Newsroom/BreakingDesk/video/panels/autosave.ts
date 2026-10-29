@@ -34,6 +34,17 @@ export function clearSaved(key: string) {
   }
 }
 
+/** Writes `project` under `key` now (Ctrl+S); false when storage is full or blocked */
+export function writeSaved(key: string, project: Project): boolean {
+  try {
+    const data: Saved = { v: 1, savedAt: new Date().toISOString(), project };
+    localStorage.setItem(key, JSON.stringify(data));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export type SaveState = { kind: "idle" } | { kind: "saved"; at: Date } | { kind: "failed" };
 
 const DEBOUNCE_MS = 800;
@@ -51,14 +62,8 @@ export function useAutosave(key: string, project: Project, enabled: boolean): Sa
       return;
     }
     const timer = setTimeout(() => {
-      try {
-        const data: Saved = { v: 1, savedAt: new Date().toISOString(), project };
-        localStorage.setItem(key, JSON.stringify(data));
-        setState({ kind: "saved", at: new Date() });
-      } catch {
-        // Quota or private mode: say so instead of pretending
-        setState({ kind: "failed" });
-      }
+      // Quota or private mode: say so instead of pretending
+      setState(writeSaved(key, project) ? { kind: "saved", at: new Date() } : { kind: "failed" });
     }, DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [key, project, enabled]);

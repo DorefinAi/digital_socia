@@ -24,7 +24,6 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Globe,
-  LineChart,
 } from "lucide-react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { canSeeRejectedNews, REJECTED_NEWS_LABEL, REJECTED_NEWS_PATH } from "@/lib/rejectedNews";
@@ -136,7 +135,7 @@ const LeftNavigation: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (pathname.startsWith("/ai-content") || pathname === "/analytics") {
+    if (pathname.startsWith("/ai-content")) {
       setAiSubmenuOpen(true);
     }
   }, [pathname]);
@@ -158,11 +157,7 @@ const LeftNavigation: React.FC = () => {
       path: "/ai-content",
       accessible: permissions.canAccessAIContentReview,
       hasSubmenu: true,
-      subItems: [
-        ...AI_CONTENT_PLATFORMS.map((p) => ({ label: p.label, icon: p.icon(16), platformKey: p.platformKey, path: p.path })),
-        // Post analytics (our desk numbers and platform metrics): editors and admins only
-        ...(currentRole === "admin" || currentRole === "editor" ? [{ label: "Analytics", icon: <LineChart size={16} />, platformKey: "analytics", path: "/analytics" }] : []),
-      ],
+      subItems: AI_CONTENT_PLATFORMS.map((p) => ({ label: p.label, icon: p.icon(16), platformKey: p.platformKey, path: p.path })),
     },
   ];
 
