@@ -3,7 +3,8 @@
 import React, { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { BreakingTag, CardLayout, ClipSegment, FtpMedia } from "@/types/newsroom";
 import { CHANNEL } from "@/constants";
-import { CardRects, FrameTime, Rect, TEMPLATE_FORMATS, TemplateFormat, drawCard, fittedSize, fontsFor, mediaRectFor } from "./cardRender";
+import { CardRects, FrameTime, MIN_BOX, Rect, TEMPLATE_FORMATS, TemplateFormat, drawCard, fittedSize, fontsFor, mediaRectFor } from "./cardRender";
+import { BoxHandle, FrameBox, ResizeFrame, resizeBox, useBoxGesture } from "./ResizeFrame";
 
 export { BIG_BREAKING_YELLOW, BREAKING_RED, DEFAULT_TEXT_Y, TEMPLATE_FORMATS } from "./cardRender";
 export type { TemplateFormat } from "./cardRender";
@@ -66,15 +67,15 @@ interface TemplateCanvasProps {
 
 const SELECT_BLUE = "#2F7BFF";
 
-type Drag =
-  | { mode: "move"; target: Exclude<CanvasSelection, null>; x: number; y: number; layout: TemplateLayout; dx: number; dy: number }
-  | { mode: "resize"; target: Exclude<CanvasSelection, "background" | null>; left: number; layout: TemplateLayout };
+type Drag = { target: Exclude<CanvasSelection, null>; x: number; y: number; layout: TemplateLayout; dx: number; dy: number; box: Rect | null };
 
 /** How close, in canvas px at 1080, a dragged box's centre snaps to the frame's centre lines */
 const SNAP = 14;
 
 export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHandle}`, tag, layout, onLayoutChange, selection, onSelect, onEditText, renderScale = 1, paused, segments, onDuration, onTime, sound = false, ref, style }: TemplateCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const startGesture = useBoxGesture();
   const sourceRef = useRef<Source | null>(null);
   const rectsRef = useRef<CardRects>({ headline: null, headlineArea: null, layers: {} });
   const dragRef = useRef<Drag | null>(null);
@@ -471,20 +472,39 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!editable) return;
     const p = toCanvas(e);
-    // The round handle on the right edge of the selected box changes its width
-    const selected = selection !== "background" ? rectOf(selection ?? null) : null;
-    if (selected && selection && selection !== "background" && Math.abs(p.x - (selected.x + selected.w)) < 14 * p.perPx && Math.abs(p.y - (selected.y + selected.h / 2)) < Math.max(18 * p.perPx, selected.h / 2)) {
-      const layer = selection.startsWith("layer:") ? layout.layers?.find((l) => l.id === selection.slice(6)) : undefined;
-      const left = layer ? (layer.x - layer.width / 2) * size.w : selected.x;
-      dragRef.current = { mode: "resize", target: selection, left, layout };
-      e.currentTarget.setPointerCapture(e.pointerId);
-      return;
-    }
     const target = hitTest(p);
     const r = rectOf(target);
     onSelect?.(target);
-    dragRef.current = { mode: "move", target, x: p.x, y: p.y, layout, dx: r ? p.x - (r.x + r.w / 2) : 0, dy: r ? p.y - (r.y + r.h / 2) : 0 };
+    dragRef.current = { target, x: p.x, y: p.y, layout, dx: r ? p.x - (r.x + r.w / 2) : 0, dy: r ? p.y - (r.y + r.h / 2) : 0, box: r ? { ...r } : null };
     e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  /** Writes a hand-sized box back: from now on it keeps this size and its text shrinks to fit. */
+  const applyBox = (base: TemplateLayout, target: Exclude<CanvasSelection, "background" | null>, box: FrameBox): TemplateLayout => {
+    const centre = { x: (box.x + box.w / 2) / size.w, y: (box.y + box.h / 2) / size.h };
+    if (target === "headline") {
+      const areaW = rectsRef.current.headlineArea?.width || size.w;
+      return { ...base, textX: centre.x, textY: centre.y, textWidth: box.w / areaW, textHeight: box.h / size.h };
+    }
+    return patchLayer(base, target.slice(6), { x: centre.x, y: centre.y, width: box.w / size.w, height: box.h / size.h });
+  };
+
+  /** One of the eight handles on the selected box: top and bottom change the height, the sides the width, corners both. */
+  const onHandleDown = (handle: BoxHandle, e: React.PointerEvent<HTMLSpanElement>) => {
+    const frame = frameRef.current;
+    if (!editable || !onLayoutChange || !frame || !selection || selection === "background") return;
+    const target = selection;
+    // The box as drawn now; an older design without a height starts from the height its text takes
+    const start = rectOf(target);
+    if (!start) return;
+    const base = layout;
+    startGesture(e, {
+      frame,
+      gesture: handle,
+      start: { ...start },
+      limits: { W: size.w, H: size.h, minW: MIN_BOX.w * u, minH: MIN_BOX.h * u },
+      onChange: (box) => onLayoutChange(applyBox(base, target, box)),
+    });
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -492,19 +512,6 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     if (!drag || !onLayoutChange) return;
     const p = toCanvas(e);
     const base = drag.layout;
-
-    if (drag.mode === "resize") {
-      const width = Math.max(80 * u, p.x - drag.left);
-      if (drag.target === "headline") {
-        const areaW = rectsRef.current.headlineArea?.width ?? size.w;
-        const share = Math.max(0.3, Math.min(1, width / areaW));
-        onLayoutChange({ ...base, textWidth: share, textX: (drag.left + (share * areaW) / 2) / size.w });
-      } else {
-        const share = Math.max(0.08, Math.min(1, width / size.w));
-        onLayoutChange(patchLayer(base, drag.target.slice(6), { width: share, x: (drag.left + share * size.w / 2) / size.w }));
-      }
-      return;
-    }
 
     if (drag.target !== "background") {
       // Move by the box centre, snapping to the frame's centre lines
@@ -516,8 +523,15 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
       if (snapH) cy = size.h / 2;
       setGuides((g) => (g.v === snapV && g.h === snapH ? g : { v: snapV, h: snapH }));
       const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+      // The box stays on the card
+      const keepIn = (c: number, extent: number, total: number) => (extent >= total ? total / 2 : Math.max(extent / 2, Math.min(total - extent / 2, c)));
+      if (drag.box) {
+        cx = keepIn(cx, drag.box.w, size.w);
+        cy = keepIn(cy, drag.box.h, size.h);
+      }
       if (drag.target === "headline") {
-        onLayoutChange({ ...base, textY: Math.max(0.05, Math.min(0.95, cy / size.h)), ...((base.textWidth ?? 1) < 1 ? { textX: clamp01(cx / size.w) } : {}) });
+        if (base.textHeight !== undefined) onLayoutChange({ ...base, textX: clamp01(cx / size.w), textY: clamp01(cy / size.h) });
+        else onLayoutChange({ ...base, textY: Math.max(0.05, Math.min(0.95, cy / size.h)), ...((base.textWidth ?? 1) < 1 ? { textX: clamp01(cx / size.w) } : {}) });
       } else {
         onLayoutChange(patchLayer(base, drag.target.slice(6), { x: clamp01(cx / size.w), y: clamp01(cy / size.h) }));
       }
@@ -537,16 +551,39 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     });
   };
 
+  /**
+   * Keyboard resize for the selected text: Alt+arrows move the bottom-right corner (Shift for bigger steps).
+   * Plain arrows are left to the editor, which moves the selection.
+   */
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!editable || !onLayoutChange || !e.altKey || !e.key.startsWith("Arrow")) return;
+    if (!selection || selection === "background") return;
+    const start = rectOf(selection);
+    if (!start) return;
+    e.preventDefault();
+    // Keeps the editor's own arrow handling (which moves the box) out of it
+    e.stopPropagation();
+    const step = (e.shiftKey ? 0.02 : 0.005) * Math.min(size.w, size.h);
+    const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+    const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+    const box = resizeBox({ ...start }, "se", dx, dy, { W: size.w, H: size.h, minW: MIN_BOX.w * u, minH: MIN_BOX.h * u });
+    onLayoutChange(applyBox(layout, selection, box));
+  };
+
   const endDrag = () => {
     dragRef.current = null;
     setGuides({ v: false, h: false });
   };
 
   const selectedBox = selection && selection !== "background" ? boxes[selection] : undefined;
-  const handleDot = (pos: React.CSSProperties) => ({ position: "absolute" as const, width: 10, height: 10, borderRadius: "50%", background: "#fff", border: `2px solid ${SELECT_BLUE}`, ...pos });
 
   return (
     <div
+      ref={frameRef}
+      tabIndex={editable ? 0 : undefined}
+      role={editable ? "group" : undefined}
+      aria-label={editable ? "Card designer. Click a text to select it. Arrow keys move the selected text; Alt and arrow keys resize it." : undefined}
+      onKeyDown={onKeyDown}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
@@ -579,14 +616,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
       {editable && selection === "background" && (
         <div style={{ position: "absolute", inset: 0, outline: `2px solid ${SELECT_BLUE}`, outlineOffset: -2, pointerEvents: "none" }} />
       )}
-      {editable && selectedBox && (
-        <div style={{ position: "absolute", left: `${selectedBox.x}%`, top: `${selectedBox.y}%`, width: `${selectedBox.w}%`, height: `${selectedBox.h}%`, outline: `2px solid ${SELECT_BLUE}`, pointerEvents: "none" }}>
-          <span style={handleDot({ left: -5, top: -5 })} />
-          <span style={handleDot({ left: -5, bottom: -5 })} />
-          {/* Width handle */}
-          <span style={{ position: "absolute", right: -5, top: "50%", width: 10, height: 26, marginTop: -13, borderRadius: 5, background: "#fff", border: `2px solid ${SELECT_BLUE}`, cursor: "ew-resize" }} />
-        </div>
-      )}
+      {editable && selectedBox && <ResizeFrame box={selectedBox} color={SELECT_BLUE} onHandleDown={onHandleDown} />}
       {guides.v && <div style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "#FF3EA5", pointerEvents: "none" }} />}
       {guides.h && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "#FF3EA5", pointerEvents: "none" }} />}
     </div>

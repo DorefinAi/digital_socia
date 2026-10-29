@@ -15,7 +15,7 @@ import {
   Menu,
   Lock,
   LayoutDashboard,
-  CheckCircle,
+  XCircle,
   BarChart3,
   Sparkles,
   LogOut,
@@ -26,31 +26,12 @@ import {
   Globe,
 } from "lucide-react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { canSeeRejectedNews, REJECTED_NEWS_LABEL, REJECTED_NEWS_PATH } from "@/lib/rejectedNews";
 import NavigationLabel from "../Overview/NavigationLabel";
 import SociaMark from "@/components/Login/SociaMark";
-import { FacebookIcon } from "@/components/Newsroom/BreakingDesk/shared";
+import { AI_CONTENT_PLATFORMS } from "./aiContentPlatforms";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { useSociaSession } from "@/providers/SociaSessionProvider";
-
-const YoutubeIcon: React.FC<{ size?: number; color?: string }> = ({ size = 16, color = "#FF0000" }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
-    <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
-  </svg>
-);
-
-const InstagramIcon: React.FC<{ size?: number; color?: string }> = ({ size = 16, color = "#E4405F" }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
-    <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
-    <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
-  </svg>
-);
-
-const XIcon: React.FC<{ size?: number; color?: string }> = ({ size = 16, color = "#1DA1F2" }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
-    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-  </svg>
-);
 
 const COLLAPSED_WIDTH = 60;
 const EXPANDED_WIDTH = 220;
@@ -167,7 +148,7 @@ const LeftNavigation: React.FC = () => {
 
   const navItems = [
     { label: "Dashboard", icon: <LayoutDashboard size={20} />, path: "/dashboard", accessible: permissions.canAccessDashboard },
-    { label: "Approval Portal", icon: <CheckCircle size={20} />, path: "/approval", accessible: permissions.canAccessApprovalPortal },
+    { label: REJECTED_NEWS_LABEL, icon: <XCircle size={20} />, path: REJECTED_NEWS_PATH, accessible: canSeeRejectedNews(permissions) },
     { label: "Digital Dashboard", icon: <BarChart3 size={20} />, path: "/digital", accessible: permissions.canAccessDigitalDashboard },
     { label: "Web Scraper", icon: <Globe size={20} />, path: "/web-scraper", accessible: permissions.canAccessWebScraper !== false },
     {
@@ -176,12 +157,7 @@ const LeftNavigation: React.FC = () => {
       path: "/ai-content",
       accessible: permissions.canAccessAIContentReview,
       hasSubmenu: true,
-      subItems: [
-        { label: "YouTube", icon: <YoutubeIcon size={16} color="#FF0000" />, platformKey: "YouTube", path: "/ai-content/youtube" },
-        { label: "Instagram", icon: <InstagramIcon size={16} color="#E4405F" />, platformKey: "Instagram", path: "/ai-content/instagram" },
-        { label: "X (Twitter)", icon: <XIcon size={16} color="#1DA1F2" />, platformKey: "X", path: "/ai-content/x" },
-        { label: "Facebook", icon: <FacebookIcon size={16} />, platformKey: "Facebook", path: "/ai-content/facebook" },
-      ],
+      subItems: AI_CONTENT_PLATFORMS.map((p) => ({ label: p.label, icon: p.icon(16), platformKey: p.platformKey, path: p.path })),
     },
   ];
 
@@ -209,7 +185,7 @@ const LeftNavigation: React.FC = () => {
       }}
     >
       {/* Brand */}
-      <Box sx={{ px: isCollapsed ? 0 : 0.5, py: 1, mb: 1, display: "flex", justifyContent: isCollapsed ? "center" : "flex-start", alignItems: "center", minHeight: 40 }}>
+      <Box sx={{ px: isCollapsed ? 0 : 0.5, py: 1, mb: 1, display: "flex", flexDirection: isCollapsed ? "column" : "row", justifyContent: isCollapsed ? "center" : "space-between", alignItems: "center", gap: isCollapsed ? 1 : 0.5, minHeight: 40 }}>
         {isCollapsed ? (
           <Tooltip title="Socia · Digital desk" placement="right" arrow>
             <Box sx={{ display: "flex", color: "text.primary" }} role="img" aria-label="Socia digital desk">
@@ -217,7 +193,7 @@ const LeftNavigation: React.FC = () => {
             </Box>
           </Tooltip>
         ) : (
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, color: "text.primary" }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, color: "text.primary", minWidth: 0 }}>
             <SociaMark size={22} />
             <Box sx={{ minWidth: 0 }}>
               <Typography sx={{ fontSize: "1.05rem", fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.15, whiteSpace: "nowrap" }}>Socia</Typography>
@@ -225,6 +201,22 @@ const LeftNavigation: React.FC = () => {
             </Box>
           </Box>
         )}
+        {/* Collapse toggle, at the top beside the brand */}
+        <Tooltip title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"} placement="right" arrow>
+          <IconButton
+            onClick={toggleCollapse}
+            size="small"
+            aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            sx={{
+              flexShrink: 0,
+              borderRadius: "8px",
+              color: "text.secondary",
+              "&:hover": { backgroundColor: theme.palette.action.hover, color: "text.primary" },
+            }}
+          >
+            {isCollapsed ? <ChevronsRight size={18} /> : <ChevronsLeft size={18} />}
+          </IconButton>
+        </Tooltip>
       </Box>
 
       {/* Nav items */}
@@ -351,31 +343,6 @@ const LeftNavigation: React.FC = () => {
 
       {/* Bottom section */}
       <Box sx={{ mt: "auto", pt: 1, borderTop: "1px solid", borderColor: theme.palette.divider, display: "flex", flexDirection: "column", gap: 0.5 }}>
-        {/* Collapse toggle */}
-        <Tooltip title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"} placement="right" arrow>
-          <Box
-            onClick={toggleCollapse}
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: isCollapsed ? "center" : "flex-start",
-              gap: 1,
-              px: isCollapsed ? 0 : 1.25,
-              py: 0.85,
-              borderRadius: "8px",
-              cursor: "pointer",
-              color: "text.secondary",
-              transition: "all 0.15s ease",
-              "&:hover": { backgroundColor: theme.palette.action.hover, color: "text.primary" },
-            }}
-          >
-            {isCollapsed ? <ChevronsRight size={18} /> : <ChevronsLeft size={18} />}
-            {!isCollapsed && (
-              <Typography sx={{ fontWeight: 500, fontSize: "0.8125rem" }}>Collapse</Typography>
-            )}
-          </Box>
-        </Tooltip>
-
         {/* Logout */}
         <Tooltip title={isCollapsed ? "Logout" : ""} placement="right" arrow>
           <Box

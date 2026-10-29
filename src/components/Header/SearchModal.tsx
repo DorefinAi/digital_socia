@@ -17,12 +17,13 @@ import {
   Search,
   LayoutDashboard,
   ClipboardList,
-  CheckCircle,
+  XCircle,
   BarChart3,
   Sparkles,
   Filter,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { canSeeRejectedNews, REJECTED_NEWS_LABEL, REJECTED_NEWS_PATH } from "@/lib/rejectedNews";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { useThemeMode } from "@/providers/MuiProvider";
 
@@ -49,7 +50,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ open, onClose }) => {
 
   const navItems = [
     { label: "Dashboard", path: "/dashboard", icon: <LayoutDashboard size={18} />, accessible: permissions.canAccessDashboard },
-    { label: "Approval Portal", path: "/approval", icon: <CheckCircle size={18} />, accessible: permissions.canAccessApprovalPortal },
+    { label: REJECTED_NEWS_LABEL, path: REJECTED_NEWS_PATH, icon: <XCircle size={18} />, accessible: canSeeRejectedNews(permissions) },
     { label: "Digital Dashboard", path: "/digital", icon: <BarChart3 size={18} />, accessible: permissions.canAccessDigitalDashboard },
     { label: "AI Content Review", path: "/ai-content", icon: <Sparkles size={18} />, accessible: permissions.canAccessAIContentReview },
   ];

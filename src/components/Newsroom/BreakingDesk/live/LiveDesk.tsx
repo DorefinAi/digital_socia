@@ -30,6 +30,7 @@ import type {
   QueueItem,
   QueueResponse,
   RejectReasonCode,
+  UserCardTemplate,
 } from "@/lib/socia/types";
 import type { FtpMedia, FtpNewsItem, SocialPost } from "@/types/newsroom";
 
@@ -52,6 +53,26 @@ export function fileUrl(url: string | null | undefined): string {
   try {
     const u = new URL(url, window.location.origin);
     if (u.pathname.startsWith("/dev-files/"))
+      return `${SOCIA_API_URL}${u.pathname}${u.search}`;
+  } catch {
+    // Not a URL; use as is
+  }
+  return url;
+}
+
+/**
+ * The card background must load from this app's origin (through the /socia-api proxy), or the editor
+ * could not export the card drawn on it. API paths ("/me/...") get the API base; links to the API's own
+ * host go through the proxy; anything else (signed storage URLs) is left alone.
+ */
+export function apiFileUrl(url: string | null | undefined): string {
+  if (!url) return "";
+  const proxied = SOCIA_API_URL.startsWith("/");
+  if (url.startsWith("/")) return proxied && url.startsWith(`${SOCIA_API_URL}/`) ? url : `${SOCIA_API_URL}${url}`;
+  if (!proxied) return url;
+  try {
+    const u = new URL(url);
+    if (u.origin !== window.location.origin && (u.hostname === "localhost" || u.hostname === "127.0.0.1" || /^\/(dev-files|me)\//.test(u.pathname)))
       return `${SOCIA_API_URL}${u.pathname}${u.search}`;
   } catch {
     // Not a URL; use as is
@@ -147,6 +168,8 @@ interface LiveDeskValue {
   rejected: Polled<QueueResponse>;
   posts: Polled<{ items: PublishedPost[] }>;
   counts: Polled<Counts>;
+  /** The signed-in user's X card background; `data.template` is null until they upload one */
+  cardTemplate: Polled<{ template: UserCardTemplate | null }>;
   /** The inbox, in the desk's story shape */
   queue: LiveNewsItem[];
   /** Polls everything now; resolves to the number of stories that were not in the inbox before */
@@ -209,6 +232,13 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
     () => socia.fetchCountsOrDerive(),
     POLL_MS.counts,
     "counts",
+  );
+
+  // Changes only from the Templates tab, which refreshes it; the slow poll picks up another tab's change
+  const cardTemplate = usePolled(
+    () => socia.fetchCardTemplate("x"),
+    POLL_MS.cardTemplate,
+    "card-template",
   );
 
   const queue = useMemo(
@@ -419,6 +449,7 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
       rejected,
       posts,
       counts,
+      cardTemplate,
       queue,
       refreshAll,
       pending,
@@ -438,6 +469,7 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
       rejected,
       posts,
       counts,
+      cardTemplate,
       queue,
       refreshAll,
       pending,

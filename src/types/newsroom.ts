@@ -294,8 +294,13 @@ export interface CardLayout {
   accent?: string;
   /** Horizontal centre of the headline block, 0 – 1; the template's column when absent */
   textX?: number;
-  /** Headline block width as a share of the template's column, 0.3 – 1 */
+  /** Headline block width as a share of the template's column; 0.3 – 1 until the box is given a height */
   textWidth?: number;
+  /**
+   * Headline box height as a share of the frame height. Set once the box is resized by hand: the box then
+   * keeps this size (textX/textY are its centre) and the text shrinks to fit it. Absent: the height follows the text.
+   */
+  textHeight?: number;
   /** Headline styling on top of the template's defaults */
   headlineStyle?: CardTextStyle;
   /** Extra text boxes, drawn above the headline in order */
@@ -376,6 +381,8 @@ export interface CardTextLayer {
   y: number;
   /** Wrapping width as a share of the frame width */
   width: number;
+  /** Box height as a share of the frame height, once resized by hand; the text then shrinks to fit. Absent: follows the text. */
+  height?: number;
   /** Font size in px on a 1080 frame */
   size: number;
   style: CardTextStyle;

@@ -5,8 +5,21 @@ import { Box, Typography, Button, Chip, IconButton, Tooltip, Table, TableBody, T
 import { Ban, CheckCircle, Film, Image as ImageIcon, Lock, MapPin, PenLine, Save } from "lucide-react";
 import { useThemeMode } from "@/providers/MuiProvider";
 import { FtpNewsItem } from "@/types/newsroom";
-import { TagChip, timeAgo } from "./shared";
+import { CategoryLabel, storyCategory, storyTag, TagChip, timeAgo } from "./shared";
 import { isLiveItem } from "./live/LiveDesk";
+import { freshHighlightSx } from "./NewStoriesPill";
+
+/** The story's Breaking / Big Breaking chip; nothing for a normal story. */
+export const StoryTagChip = ({ item }: { item: FtpNewsItem }) => {
+  const tag = storyTag(item);
+  return tag ? <TagChip tag={tag} /> : null;
+};
+
+/** The story's category; nothing when it has none. */
+export const StoryCategory = ({ item }: { item: FtpNewsItem }) => {
+  const category = storyCategory(item);
+  return category ? <CategoryLabel category={category} /> : null;
+};
 
 export interface QueueViewProps {
   items: FtpNewsItem[];
@@ -22,16 +35,18 @@ export interface QueueViewProps {
   heldBy?: (newsId: string) => string | null;
   /** Live: what a story the operator already holds is called ("With you") */
   savedLabel?: string;
+  /** Stories just shown from the "new stories" pill; they get a brief highlight */
+  highlightIds?: ReadonlySet<string>;
 }
 
-const countMedia = (item: FtpNewsItem) => {
+export const countMedia = (item: FtpNewsItem) => {
   // Live queue items carry the draft's file counts, not the files themselves
   if (isLiveItem(item)) return { videos: item.live.media?.videos ?? 0, images: item.live.media?.images ?? 0 };
   const videos = item.media.filter((m) => m.kind === "video").length;
   return { videos, images: item.media.length - videos };
 };
 
-function MediaCounts({ item }: { item: FtpNewsItem }) {
+export function MediaCounts({ item }: { item: FtpNewsItem }) {
   const { videos, images } = countMedia(item);
   return (
     <>
@@ -85,7 +100,7 @@ function Actions({ item, saved, held, canAct, onOpen, onReject, compact, align =
 }
 
 // ─── Cards ───────────────────────────────────────────────────────────────────
-export function QueueCards({ items, focusedId, onFocus, onOpen, onReject, isSaved, liveElsewhere, canAct, heldBy, savedLabel }: QueueViewProps) {
+export function QueueCards({ items, focusedId, onFocus, onOpen, onReject, isSaved, liveElsewhere, canAct, heldBy, savedLabel, highlightIds }: QueueViewProps) {
   return (
     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", lg: "repeat(3, 1fr)" }, gap: 2.5 }}>
       {items.map((item, i) => {
@@ -108,13 +123,14 @@ export function QueueCards({ items, focusedId, onFocus, onOpen, onReject, isSave
               flexDirection: "column",
               transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
               "&:hover": { transform: "translateY(-2px)", boxShadow: "0px 8px 24px rgba(0, 0, 0, 0.08)" },
+              ...(highlightIds?.has(item.id) ? freshHighlightSx : {}),
             }}
           >
             <Box sx={{ position: "relative", height: 150, backgroundColor: "#000", cursor: canAct ? "pointer" : "default" }} onClick={() => canAct && onOpen(item)}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={cover.posterUrl ?? cover.url} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
               <Box sx={{ position: "absolute", left: 10, top: 10 }}>
-                <TagChip tag={item.tag} />
+                <StoryTagChip item={item} />
               </Box>
               {cover.kind === "video" && (
                 <Box sx={{ position: "absolute", right: 10, top: 10, display: "flex", alignItems: "center", gap: 0.4, px: 0.75, py: 0.25, borderRadius: "4px", backgroundColor: "rgba(0,0,0,0.7)", color: "#fff", fontSize: "0.625rem", fontWeight: 700 }}>
@@ -126,6 +142,7 @@ export function QueueCards({ items, focusedId, onFocus, onOpen, onReject, isSave
               <Typography sx={{ fontSize: "0.875rem", fontWeight: 600, lineHeight: 1.45 }}>{item.headline}</Typography>
               <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", lineHeight: 1.55, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{item.shortText}</Typography>
               <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, flexWrap: "wrap", fontSize: "0.6875rem", color: "text.secondary" }}>
+                <StoryCategory item={item} />
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.4 }}>
                   <MapPin size={12} /> {item.area}
                 </Box>
@@ -148,7 +165,7 @@ export function QueueCards({ items, focusedId, onFocus, onOpen, onReject, isSave
 // Fits the column at any width: tag, area, files and time sit under the
 // headline, the thumbnail appears from sm, status gets its own column from md,
 // and on phones the actions move into the story cell.
-export function QueueTable({ items, focusedId, onFocus, onOpen, onReject, isSaved, liveElsewhere, canAct, heldBy, savedLabel }: QueueViewProps) {
+export function QueueTable({ items, focusedId, onFocus, onOpen, onReject, isSaved, liveElsewhere, canAct, heldBy, savedLabel, highlightIds }: QueueViewProps) {
   const { mode } = useThemeMode();
   const head = { fontWeight: 700, fontSize: "0.75rem", whiteSpace: "nowrap" as const };
   const fromSm = { display: { xs: "none", sm: "table-cell" } };
@@ -180,7 +197,7 @@ export function QueueTable({ items, focusedId, onFocus, onOpen, onReject, isSave
                 selected={item.id === focusedId}
                 onClick={() => onFocus(i)}
                 onDoubleClick={() => canAct && onOpen(item)}
-                sx={{ cursor: "pointer", verticalAlign: "top", "& > td": { py: 1.25 } }}
+                sx={{ cursor: "pointer", verticalAlign: "top", "& > td": { py: 1.25, ...(highlightIds?.has(item.id) ? freshHighlightSx : {}) } }}
               >
                 <TableCell sx={fromSm}>
                   <Box sx={{ position: "relative", width: 64, height: 40, borderRadius: "6px", overflow: "hidden", backgroundColor: "#111" }}>
@@ -191,7 +208,8 @@ export function QueueTable({ items, focusedId, onFocus, onOpen, onReject, isSave
                 <TableCell sx={{ minWidth: 0 }}>
                   <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, lineHeight: 1.4, overflowWrap: "anywhere" }}>{item.headline}</Typography>
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", mt: 0.5, fontSize: "0.75rem", color: "text.secondary" }}>
-                    <TagChip tag={item.tag} />
+                    <StoryTagChip item={item} />
+                    <StoryCategory item={item} />
                     <Box sx={{ display: "flex", alignItems: "center", gap: 0.4 }}>
                       <MapPin size={12} /> {item.area}
                     </Box>

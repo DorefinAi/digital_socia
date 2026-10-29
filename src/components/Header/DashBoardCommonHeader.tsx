@@ -4,7 +4,6 @@ import { BLACK_COLOR, LIGHT_GRAY } from "@/assets/colors";
 import {
   Box,
   Typography,
-  Button,
   IconButton,
   Menu,
   MenuItem,
@@ -15,7 +14,8 @@ import {
   ListItemText,
   ListItemIcon,
   Divider,
-  Chip,
+  Tooltip,
+  Collapse,
   useMediaQuery,
   useTheme,
 } from "@mui/material";
@@ -25,7 +25,9 @@ import {
   Moon,
   Sun,
   Bell,
-  User,
+  UserRound,
+  ChevronUp,
+  ChevronDown,
   CheckCircle,
   XCircle,
   Pencil,
@@ -41,6 +43,49 @@ import { useNewsroom } from "@/providers/NewsroomProvider";
 import { UserRole, ROLE_LABELS } from "@/types/newsroom";
 import { useSociaSession } from "@/providers/SociaSessionProvider";
 import { CONTENT_MAX_WIDTH } from "@/constants";
+import { useHeaderCollapsed } from "./useHeaderCollapsed";
+
+const HEADER_HEIGHT = 56;
+const FOLD_MS = 220;
+
+const focusRing = { outline: "2px solid", outlineColor: "primary.main", outlineOffset: 1 } as const;
+
+/** Quiet square icon button used for every header action; the label doubles as the tooltip. */
+function HeaderAction({
+  label,
+  onClick,
+  children,
+  ...rest
+}: {
+  label: string;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  children: React.ReactNode;
+  "aria-haspopup"?: "menu";
+  "aria-expanded"?: "true" | "false";
+  "aria-keyshortcuts"?: string;
+}) {
+  return (
+    <Tooltip title={label} enterDelay={300} arrow>
+      <IconButton
+        aria-label={label}
+        onClick={onClick}
+        {...rest}
+        sx={{
+          width: { xs: 34, sm: 36 },
+          height: { xs: 34, sm: 36 },
+          p: 0,
+          flexShrink: 0,
+          borderRadius: "10px",
+          color: "text.primary",
+          "&:hover": { backgroundColor: "action.hover" },
+          "&:focus-visible": focusRing,
+        }}
+      >
+        {children}
+      </IconButton>
+    </Tooltip>
+  );
+}
 
 const NOTIFICATION_ICONS: Record<string, React.ReactNode> = {
   story_approved: <CheckCircle size={16} color="#28a745" />,
@@ -61,10 +106,18 @@ const DashBoardCommonHeader: React.FC = () => {
   // On the live backend the role comes from the account; the switcher is a demo-only control
   const { me, live } = useSociaSession();
   const greetName = me?.user.name.split(" ")[0] ?? "Admin";
+  const fullName = me?.user.name ?? greetName;
   const [notifAnchorEl, setNotifAnchorEl] = useState<null | HTMLElement>(null);
   const [activityAnchorEl, setActivityAnchorEl] = useState<null | HTMLElement>(null);
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  // Below lg the sidebar becomes a floating menu button that shares this row, so the header
+  // is already at its minimum there; folding is a desktop affordance.
+  const canFold = useMediaQuery(theme.breakpoints.up("lg"));
+  const [storedCollapsed, setCollapsed] = useHeaderCollapsed();
+  const collapsed = canFold && storedCollapsed;
+  // Relative times are measured from when a panel was opened (keeps render pure).
+  const [now, setNow] = useState(0);
 
   const getPageTitle = () => {
     const path = pathname.split("/").filter(Boolean);
@@ -72,7 +125,8 @@ const DashBoardCommonHeader: React.FC = () => {
     const lastPart = path[path.length - 1];
     const titles: Record<string, string> = {
       dashboard: "Dashboard",
-      approval: "Approval Portal",
+      approval: "Rejected news",
+      "rejected-news": "Rejected news",
       digital: "Digital Dashboard",
       "ai-content": "AI Content Review",
       "web-scraper": "Web Scraper",
@@ -92,7 +146,7 @@ const DashBoardCommonHeader: React.FC = () => {
   }, []);
 
   const formatTime = (timestamp: string) => {
-    const diff = Date.now() - new Date(timestamp).getTime();
+    const diff = now - new Date(timestamp).getTime();
     const mins = Math.floor(diff / 60000);
     if (mins < 1) return "Just now";
     if (mins < 60) return `${mins}m ago`;
@@ -101,348 +155,292 @@ const DashBoardCommonHeader: React.FC = () => {
     return `${Math.floor(hours / 24)}d ago`;
   };
 
+  const iconColor = mode === "light" ? "#374151" : "#e5e7eb";
+  const muted = mode === "light" ? LIGHT_GRAY : "rgba(255,255,255,0.5)";
+  const ink = mode === "light" ? BLACK_COLOR : "#fff";
+  const rule = mode === "light" ? "#E5E7EB" : "#333";
+
   return (
     <Box
+      component="header"
       sx={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: { xs: "flex-start", sm: "center" },
-        mt: { xs: "56px", lg: "24px" },
-        pb: { xs: 2, lg: 2.5 },
         position: "relative",
         mx: "auto",
-        borderBottom: "1px solid",
-        borderColor: mode === "light" ? "#E5E7EB" : "#333",
         width: "100%",
         maxWidth: CONTENT_MAX_WIDTH,
-        flexDirection: { xs: "column", sm: "row" },
-        gap: { xs: 1.5, sm: 0 },
+        mt: { xs: "8px", lg: "4px" },
+        mb: { xs: 1.5, lg: collapsed ? 1 : 1.5 },
+        transition: `margin ${FOLD_MS}ms ease`,
       }}
     >
-      <Box sx={{ gap: "4px", display: "flex", flexDirection: "column" }}>
-        <Typography
+      <Collapse in={!collapsed} timeout={FOLD_MS} appear={false}>
+        <Box
           sx={{
-            fontWeight: 400,
-            fontSize: "0.8125rem",
             display: "flex",
-            flexDirection: "row",
-            alignItems: "center"
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 1,
+            height: HEADER_HEIGHT,
+            // Clear the floating menu button the sidebar shows below lg (16px inset + 40px button)
+            pl: { xs: "50px", lg: 0 },
+            borderBottom: "1px solid",
+            borderColor: rule,
           }}
         >
-          <span style={{ color: mode === "light" ? LIGHT_GRAY : "rgba(255,255,255,0.5)" }}>socia / </span>
-          <span style={{ color: mode === "light" ? BLACK_COLOR : "#fff", fontWeight: 600, marginLeft: "4px" }}>
-            {getPageTitle()}
-          </span>
-        </Typography>
-        <Typography sx={{ color: mode === "light" ? BLACK_COLOR : "#fff" }}>
-          <span style={{ fontSize: "1.125rem" }}>Hi </span>
-          <span style={{ fontWeight: 600, fontSize: "1.125rem" }}>{greetName}</span>
-        </Typography>
-      </Box>
+          <Typography
+            component="p"
+            noWrap
+            sx={{ minWidth: 0, flex: "1 1 auto", fontSize: "0.875rem", lineHeight: 1.3, color: ink }}
+          >
+            <Box component="span" sx={{ color: muted, display: { xs: "none", sm: "inline" } }}>socia / </Box>
+            <Box component="span" sx={{ fontWeight: 600 }}>{getPageTitle()}</Box>
+            <Box component="span" sx={{ display: { xs: "none", md: "inline" } }}>
+              <Box component="span" aria-hidden sx={{ color: rule, mx: 1.25 }}>|</Box>
+              <Box component="span" sx={{ color: muted }}>Hi </Box>
+              <Box component="span" sx={{ fontWeight: 600 }}>{greetName}</Box>
+            </Box>
+          </Typography>
 
-      <Box sx={{ display: "flex", alignItems: "center", gap: { xs: 0.75, sm: 1.5 }, flexWrap: "wrap", minWidth: 0 }}>
-        {/* Role Switcher */}
-        <Button
-          variant="outlined"
-          startIcon={<User size={16} />}
-          onClick={(e) => !live && setRoleAnchorEl(e.currentTarget)}
-          aria-label={live ? `Signed in as ${ROLE_LABELS[currentRole]}` : undefined}
-          sx={{
-            textTransform: "none",
-            borderRadius: "12px",
-            ...(live && { cursor: "default" }),
-            color: mode === "light" ? "#1f2937" : "#fff",
-            borderColor: mode === "light" ? "#e5e7eb" : "#333",
-            backgroundColor: mode === "light" ? "#fff" : "#1e1e1e",
-            boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
-            "&:hover": { borderColor: mode === "light" ? "#d1d5db" : "#444", backgroundColor: mode === "light" ? "#f9fafb" : "#2a2a2a" },
-            minHeight: 40,
-            px: { xs: 1, sm: 1.5 },
-            py: 0.75,
-            fontSize: "0.8125rem",
-            fontWeight: 600,
-          }}
-        >
-          <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
-            {ROLE_LABELS[currentRole]}
-          </Box>
-          <Box component="span" sx={{ display: { xs: "inline", sm: "none" }, fontSize: "0.75rem" }}>
-            Role
-          </Box>
-        </Button>
-        <Menu
-          anchorEl={roleAnchorEl}
-          open={Boolean(roleAnchorEl)}
-          onClose={() => setRoleAnchorEl(null)}
-          slotProps={{
-            paper: {
-              sx: {
-                mt: 1,
-                boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.1)",
-                borderRadius: "12px",
-                backgroundColor: "background.paper",
-                minWidth: 180,
-              },
-            },
-          }}
-        >
-          {(Object.keys(ROLE_LABELS) as UserRole[]).map((role) => (
-            <MenuItem
-              key={role}
-              onClick={() => { setRole(role); setRoleAnchorEl(null); }}
-              sx={{
-                fontWeight: currentRole === role ? 600 : 400,
-                backgroundColor: currentRole === role ? "action.selected" : "transparent",
-                fontSize: "0.8125rem",
+          <Box
+            role="toolbar"
+            aria-label="Desk tools"
+            sx={{ display: "flex", alignItems: "center", gap: { xs: 0.25, sm: 0.5 }, flexShrink: 0 }}
+          >
+            {/* Account and role */}
+            <HeaderAction
+              label={`${fullName}, ${ROLE_LABELS[currentRole]}`}
+              aria-haspopup="menu"
+              aria-expanded={roleAnchorEl ? "true" : "false"}
+              onClick={(e) => setRoleAnchorEl(e.currentTarget)}
+            >
+              <UserRound size={18} color={iconColor} />
+            </HeaderAction>
+            <Menu
+              anchorEl={roleAnchorEl}
+              open={Boolean(roleAnchorEl)}
+              onClose={() => setRoleAnchorEl(null)}
+              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+              transformOrigin={{ vertical: "top", horizontal: "right" }}
+              slotProps={{
+                paper: {
+                  sx: {
+                    mt: 1,
+                    boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.1)",
+                    borderRadius: "12px",
+                    backgroundColor: "background.paper",
+                    minWidth: 220,
+                  },
+                },
               }}
             >
-              {ROLE_LABELS[role]}
-            </MenuItem>
-          ))}
-        </Menu>
+              <Box sx={{ px: 2, pt: 1, pb: 1.25 }}>
+                <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>{fullName}</Typography>
+                <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>{ROLE_LABELS[currentRole]}</Typography>
+              </Box>
+              {!live && <Divider />}
+              {!live && (
+                <Typography sx={{ px: 2, pt: 1, pb: 0.5, fontSize: "0.75rem", color: "text.secondary" }}>
+                  Switch role (demo)
+                </Typography>
+              )}
+              {!live &&
+                (Object.keys(ROLE_LABELS) as UserRole[]).map((role) => (
+                  <MenuItem
+                    key={role}
+                    selected={currentRole === role}
+                    onClick={() => { setRole(role); setRoleAnchorEl(null); }}
+                    sx={{ fontWeight: currentRole === role ? 600 : 400, fontSize: "0.8125rem" }}
+                  >
+                    {ROLE_LABELS[role]}
+                  </MenuItem>
+                ))}
+            </Menu>
 
-        {/* Activity Timeline */}
-        <IconButton
-          onClick={(e) => setActivityAnchorEl(e.currentTarget)}
-          sx={{
-            border: "1px solid",
-            borderColor: mode === "light" ? "#e5e7eb" : "#333",
-            borderRadius: "12px",
-            width: 40,
-            height: 40,
-            p: 0,
-            minWidth: 0,
-            flexShrink: 0,
-          }}
-        >
-          <Clock size={18} color={mode === "light" ? "#374151" : "#fff"} />
-        </IconButton>
-        <Popover
-          open={Boolean(activityAnchorEl)}
-          anchorEl={activityAnchorEl}
-          onClose={() => setActivityAnchorEl(null)}
-          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-          transformOrigin={{ vertical: "top", horizontal: "right" }}
-          slotProps={{
-            paper: {
-              sx: {
-                mt: 1,
-                boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.15)",
-                borderRadius: "12px",
-                backgroundColor: "background.paper",
-                width: isMobile ? 320 : 380,
-                maxHeight: 420,
-              },
-            },
-          }}
-        >
-          <Box sx={{ p: 2, pb: 1 }}>
-            <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>Recent Activity</Typography>
-          </Box>
-          <Divider />
-          <List sx={{ py: 0, maxHeight: 360, overflowY: "auto" }}>
-            {activity.slice(0, 10).map((item) => (
-              <ListItem key={item.id} sx={{ py: 1, alignItems: "flex-start" }}>
-                <ListItemIcon sx={{ minWidth: 32, mt: 0.5 }}>
-                  {item.action === "approved" && <CheckCircle size={14} color="#28a745" />}
-                  {item.action === "rejected" && <XCircle size={14} color="#dc3545" />}
-                  {item.action === "edited" && <Pencil size={14} color="#3498db" />}
-                  {item.action === "generated" && <Sparkles size={14} color="#9b59b6" />}
-                  {item.action === "assigned" && <ClipboardList size={14} color="#6c757d" />}
-                  {item.action === "published" && <Send size={14} color="#28a745" />}
-                </ListItemIcon>
-                <ListItemText
-                  primary={
-                    <Typography sx={{ fontSize: "0.8125rem", fontWeight: 500, lineHeight: 1.4 }}>
-                      <strong>{item.actor}</strong> {item.action} <strong>{item.target}</strong>
-                    </Typography>
-                  }
-                  secondary={
-                    <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
-                      {formatTime(item.timestamp)}
-                    </Typography>
-                  }
-                />
-              </ListItem>
-            ))}
-          </List>
-        </Popover>
+            {/* Activity Timeline */}
+            <HeaderAction
+              label="Recent activity"
+              onClick={(e) => { setNow(Date.now()); setActivityAnchorEl(e.currentTarget); }}
+            >
+              <Clock size={18} color={iconColor} />
+            </HeaderAction>
+            <Popover
+              open={Boolean(activityAnchorEl)}
+              anchorEl={activityAnchorEl}
+              onClose={() => setActivityAnchorEl(null)}
+              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+              transformOrigin={{ vertical: "top", horizontal: "right" }}
+              slotProps={{
+                paper: {
+                  sx: {
+                    mt: 1,
+                    boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.15)",
+                    borderRadius: "12px",
+                    backgroundColor: "background.paper",
+                    width: isMobile ? 320 : 380,
+                    maxHeight: 420,
+                  },
+                },
+              }}
+            >
+              <Box sx={{ p: 2, pb: 1 }}>
+                <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>Recent Activity</Typography>
+              </Box>
+              <Divider />
+              <List sx={{ py: 0, maxHeight: 360, overflowY: "auto" }}>
+                {activity.slice(0, 10).map((item) => (
+                  <ListItem key={item.id} sx={{ py: 1, alignItems: "flex-start" }}>
+                    <ListItemIcon sx={{ minWidth: 32, mt: 0.5 }}>
+                      {item.action === "approved" && <CheckCircle size={14} color="#28a745" />}
+                      {item.action === "rejected" && <XCircle size={14} color="#dc3545" />}
+                      {item.action === "edited" && <Pencil size={14} color="#3498db" />}
+                      {item.action === "generated" && <Sparkles size={14} color="#9b59b6" />}
+                      {item.action === "assigned" && <ClipboardList size={14} color="#6c757d" />}
+                      {item.action === "published" && <Send size={14} color="#28a745" />}
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={
+                        <Typography sx={{ fontSize: "0.8125rem", fontWeight: 500, lineHeight: 1.4 }}>
+                          <strong>{item.actor}</strong> {item.action} <strong>{item.target}</strong>
+                        </Typography>
+                      }
+                      secondary={
+                        <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
+                          {formatTime(item.timestamp)}
+                        </Typography>
+                      }
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            </Popover>
 
-        {/* Notifications */}
-        <IconButton
-          onClick={(e) => setNotifAnchorEl(e.currentTarget)}
-          sx={{
-            border: "1px solid",
-            borderColor: mode === "light" ? "#e5e7eb" : "#333",
-            borderRadius: "12px",
-            width: 40,
-            height: 40,
-            p: 0,
-            minWidth: 0,
-            flexShrink: 0,
-          }}
-        >
-          <Badge badgeContent={unreadCount} color="error" variant="dot" invisible={unreadCount === 0}>
-            <Bell size={18} color={mode === "light" ? "#374151" : "#fff"} />
-          </Badge>
-        </IconButton>
-        <Popover
-          open={Boolean(notifAnchorEl)}
-          anchorEl={notifAnchorEl}
-          onClose={() => setNotifAnchorEl(null)}
-          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-          transformOrigin={{ vertical: "top", horizontal: "right" }}
-          slotProps={{
-            paper: {
-              sx: {
-                mt: 1,
-                boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.15)",
-                borderRadius: "12px",
-                backgroundColor: "background.paper",
-                width: isMobile ? 320 : 380,
-                maxHeight: 420,
-              },
-            },
-          }}
-        >
-          <Box sx={{ p: 2, pb: 1, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>Notifications</Typography>
-            {unreadCount > 0 && (
-              <Typography
-                sx={{ fontSize: "0.75rem", color: "primary.main", cursor: "pointer", fontWeight: 500 }}
-                onClick={markAllNotificationsRead}
-              >
-                Mark all read
-              </Typography>
+            {/* Notifications */}
+            <HeaderAction
+              label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"}
+              onClick={(e) => { setNow(Date.now()); setNotifAnchorEl(e.currentTarget); }}
+            >
+              <Badge badgeContent={unreadCount} color="error" variant="dot" invisible={unreadCount === 0}>
+                <Bell size={18} color={iconColor} />
+              </Badge>
+            </HeaderAction>
+            <Popover
+              open={Boolean(notifAnchorEl)}
+              anchorEl={notifAnchorEl}
+              onClose={() => setNotifAnchorEl(null)}
+              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+              transformOrigin={{ vertical: "top", horizontal: "right" }}
+              slotProps={{
+                paper: {
+                  sx: {
+                    mt: 1,
+                    boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.15)",
+                    borderRadius: "12px",
+                    backgroundColor: "background.paper",
+                    width: isMobile ? 320 : 380,
+                    maxHeight: 420,
+                  },
+                },
+              }}
+            >
+              <Box sx={{ p: 2, pb: 1, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>Notifications</Typography>
+                {unreadCount > 0 && (
+                  <Typography
+                    sx={{ fontSize: "0.75rem", color: "primary.main", cursor: "pointer", fontWeight: 500 }}
+                    onClick={markAllNotificationsRead}
+                  >
+                    Mark all read
+                  </Typography>
+                )}
+              </Box>
+              <Divider />
+              <List sx={{ py: 0, maxHeight: 360, overflowY: "auto" }}>
+                {notifications.map((notif) => (
+                  <ListItem
+                    key={notif.id}
+                    onClick={() => markNotificationRead(notif.id)}
+                    sx={{
+                      py: 1.5,
+                      cursor: "pointer",
+                      backgroundColor: notif.read ? "transparent" : "action.hover",
+                      "&:hover": { backgroundColor: "action.hover" },
+                      alignItems: "flex-start",
+                    }}
+                  >
+                    <ListItemIcon sx={{ minWidth: 36, mt: 0.5 }}>
+                      {NOTIFICATION_ICONS[notif.type] || <Bell size={16} />}
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={
+                        <Typography sx={{ fontSize: "0.8125rem", fontWeight: notif.read ? 400 : 500, lineHeight: 1.4 }}>
+                          {notif.message}
+                        </Typography>
+                      }
+                      secondary={
+                        <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.25 }}>
+                          {formatTime(notif.timestamp)}
+                        </Typography>
+                      }
+                    />
+                    {!notif.read && (
+                      <Box sx={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: "#3498db", mt: 1, ml: 1, flexShrink: 0 }} />
+                    )}
+                  </ListItem>
+                ))}
+              </List>
+            </Popover>
+
+            {/* Theme Toggle */}
+            <HeaderAction label={mode === "light" ? "Switch to dark theme" : "Switch to light theme"} onClick={toggleTheme}>
+              {mode === "light" ? <Moon size={18} color={iconColor} /> : <Sun size={18} color={iconColor} />}
+            </HeaderAction>
+
+            {/* Quick Access; Cmd/Ctrl+K opens it from anywhere */}
+            <HeaderAction label="Quick access (⌘K / Ctrl+K)" aria-keyshortcuts="Control+K Meta+K" onClick={() => setSearchOpen(true)}>
+              <Zap size={18} color={mode === "light" ? "#2563eb" : "#60a5fa"} />
+            </HeaderAction>
+
+            {canFold && (
+              <>
+                <Box aria-hidden sx={{ width: "1px", height: 20, backgroundColor: rule, mx: 0.5 }} />
+                <HeaderAction label="Hide header" aria-expanded="true" onClick={() => setCollapsed(true)}>
+                  <ChevronUp size={18} color={iconColor} />
+                </HeaderAction>
+              </>
             )}
           </Box>
-          <Divider />
-          <List sx={{ py: 0, maxHeight: 360, overflowY: "auto" }}>
-            {notifications.map((notif) => (
-              <ListItem
-                key={notif.id}
-                onClick={() => markNotificationRead(notif.id)}
-                sx={{
-                  py: 1.5,
-                  cursor: "pointer",
-                  backgroundColor: notif.read ? "transparent" : "action.hover",
-                  "&:hover": { backgroundColor: "action.hover" },
-                  alignItems: "flex-start",
-                }}
-              >
-                <ListItemIcon sx={{ minWidth: 36, mt: 0.5 }}>
-                  {NOTIFICATION_ICONS[notif.type] || <Bell size={16} />}
-                </ListItemIcon>
-                <ListItemText
-                  primary={
-                    <Typography sx={{ fontSize: "0.8125rem", fontWeight: notif.read ? 400 : 500, lineHeight: 1.4 }}>
-                      {notif.message}
-                    </Typography>
-                  }
-                  secondary={
-                    <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.25 }}>
-                      {formatTime(notif.timestamp)}
-                    </Typography>
-                  }
-                />
-                {!notif.read && (
-                  <Box sx={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: "#3498db", mt: 1, ml: 1, flexShrink: 0 }} />
-                )}
-              </ListItem>
-            ))}
-          </List>
-        </Popover>
+        </Box>
+      </Collapse>
 
-        {/* Theme Toggle */}
-        <IconButton
-          onClick={toggleTheme}
-          sx={{
-            border: "1px solid",
-            borderColor: mode === "light" ? "#e5e7eb" : "#333",
-            borderRadius: "12px",
-            width: 40,
-            height: 40,
-            p: 0,
-            minWidth: 0,
-            flexShrink: 0,
-          }}
-        >
-          {mode === "light" ? <Moon size={18} color="#374151" /> : <Sun size={18} color="#fff" />}
-        </IconButton>
-
-        {/* Quick Access */}
-        <Button
-          variant="outlined"
-          onClick={() => setSearchOpen(true)}
-          sx={{
-            display: { xs: "none", sm: "inline-flex" },
-            textTransform: "none",
-            borderRadius: "10px",
-            color: mode === "light" ? "#374151" : "#d1d5db",
-            borderColor: mode === "light" ? "#e5e7eb" : "#333",
-            backgroundColor: mode === "light" ? "#f9fafb" : "#1e1e1e",
-            boxShadow: "0 1px 2px rgba(0, 0, 0, 0.03)",
-            transition: "all 0.15s ease",
-            "&:hover": {
-              borderColor: mode === "light" ? "#d1d5db" : "#444",
-              backgroundColor: mode === "light" ? "#f3f4f6" : "#2a2a2a",
-              color: mode === "light" ? "#111827" : "#fff",
-              boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
-            },
-            minHeight: 38,
-            px: 1.5,
-            py: 0.5,
-            minWidth: 0,
-            flexShrink: 0,
-            alignItems: "center",
-            gap: 1,
-          }}
-        >
-          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-            <Zap size={15} style={{ color: mode === "light" ? "#2563eb" : "#60a5fa" }} />
-            <Typography sx={{ fontSize: "0.8125rem", fontWeight: 500 }}>
-              Quick Access
-            </Typography>
-          </Box>
-          <Box
-            component="span"
-            sx={{
-              px: 0.75,
-              py: 0.2,
-              fontSize: "0.7rem",
-              fontWeight: 600,
-              fontFamily: "var(--font-mono), monospace",
-              letterSpacing: "0.5px",
-              color: mode === "light" ? "#6b7280" : "#9ca3af",
-              backgroundColor: mode === "light" ? "#ffffff" : "#2a2a2a",
-              border: "1px solid",
-              borderColor: mode === "light" ? "#e5e7eb" : "#444",
-              borderRadius: "6px",
-              boxShadow: mode === "light" ? "0 1px 1px rgba(0,0,0,0.05)" : "none",
-              ml: 0.5,
-            }}
-          >
-            ⌘K
-          </Box>
-        </Button>
-        {/* Mobile search icon */}
-        <IconButton
-          onClick={() => setSearchOpen(true)}
-          sx={{
-            display: { xs: "flex", sm: "none" },
-            border: "1px solid",
-            borderColor: mode === "light" ? "#e5e7eb" : "#333",
-            borderRadius: "12px",
-            width: 40,
-            height: 40,
-            p: 0,
-            minWidth: 0,
-            flexShrink: 0,
-          }}
-        >
-          <Zap size={18} color={mode === "light" ? "#374151" : "#fff"} />
-        </IconButton>
-      </Box>
+      {/* Folded: a hairline with a small tab where the hide chevron was */}
+      <Collapse in={collapsed} timeout={FOLD_MS} appear={false} unmountOnExit>
+        <Box sx={{ position: "relative", height: 14, borderTop: "1px solid", borderColor: rule }}>
+          <Tooltip title="Show header" enterDelay={300} arrow>
+            <IconButton
+              aria-label="Show header"
+              aria-expanded="false"
+              onClick={() => setCollapsed(false)}
+              sx={{
+                position: "absolute",
+                top: -1,
+                right: 0,
+                width: 40,
+                height: 18,
+                p: 0,
+                borderRadius: "0 0 8px 8px",
+                border: "1px solid",
+                borderTop: "none",
+                borderColor: rule,
+                backgroundColor: "background.paper",
+                "&:hover": { backgroundColor: "action.hover" },
+                "&:focus-visible": focusRing,
+              }}
+            >
+              <ChevronDown size={14} color={iconColor} />
+            </IconButton>
+          </Tooltip>
+        </Box>
+      </Collapse>
 
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
     </Box>

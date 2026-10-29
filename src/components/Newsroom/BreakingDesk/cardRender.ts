@@ -175,6 +175,11 @@ export interface TextBlockSpec {
   inset: Inset;
   /** The box shrinks to the longest line instead of filling the column */
   hug?: boolean;
+  /**
+   * The block is exactly `width` × (maxY − minY), as resized by hand: the size steps down (to `minSize`)
+   * until the words fit both ways, and they sit centred in it top to bottom. `hug` and `centerY` are ignored.
+   */
+  fixed?: boolean;
   u: number;
   /** Template extras drawn over the box and under the words */
   decorate?: (ctx: CanvasRenderingContext2D, rect: Rect) => void;
@@ -204,21 +209,29 @@ export function drawTextBlock(ctx: CanvasRenderingContext2D, spec: TextBlockSpec
   let lineH = 0;
   let blockH = 0;
   let space = 0;
+  let longest = 0;
   for (let step = 0; step < 60; step++) {
     ctx.font = fontString(s, size);
     setLetterSpacing(ctx, s.letterSpacing * size);
     space = ctx.measureText(" ").width;
     lines = layoutLines(ctx, paragraphs, innerW, space);
+    longest = Math.max(...lines.map((l) => l.w));
     lineH = size * s.lineHeight;
     blockH = lines.length * lineH + inset.t + inset.b;
-    if (spec.minSize === undefined || blockH <= spec.maxY - spec.minY || size <= spec.minSize) break;
+    // A fixed box also has to hold its longest word across
+    const fits = blockH <= spec.maxY - spec.minY && (!spec.fixed || longest <= innerW + 0.5);
+    if (spec.minSize === undefined || fits || size <= spec.minSize) break;
     size *= 0.95;
   }
 
-  const longest = Math.max(...lines.map((l) => l.w));
-  const blockW = spec.hug ? Math.min(spec.width, longest + inset.l + inset.r) : spec.width;
-  const blockX = !spec.hug || s.align === "left" ? spec.x : s.align === "right" ? spec.x + spec.width - blockW : spec.x + (spec.width - blockW) / 2;
-  const blockY = Math.max(spec.minY, Math.min(spec.maxY - blockH, spec.centerY - blockH / 2));
+  // The words' own height; a fixed box can be taller, with the words centred in it
+  const textH = blockH;
+  if (spec.fixed) blockH = spec.maxY - spec.minY;
+  const hug = spec.hug && !spec.fixed;
+  const blockW = hug ? Math.min(spec.width, longest + inset.l + inset.r) : spec.width;
+  const blockX = !hug || s.align === "left" ? spec.x : s.align === "right" ? spec.x + spec.width - blockW : spec.x + (spec.width - blockW) / 2;
+  const blockY = spec.fixed ? spec.minY : Math.max(spec.minY, Math.min(spec.maxY - blockH, spec.centerY - blockH / 2));
+  const textTop = blockY + (blockH - textH) / 2;
   const rect = { x: blockX, y: blockY, w: blockW, h: blockH };
 
   const motion = spec.motion;
@@ -264,7 +277,7 @@ export function drawTextBlock(ctx: CanvasRenderingContext2D, spec: TextBlockSpec
   };
 
   lines.forEach((line, i) => {
-    const y = blockY + inset.t + lineH * (i + 0.5);
+    const y = textTop + inset.t + lineH * (i + 0.5);
     const startX = blockX + inset.l + (s.align === "center" ? (innerBlockW - line.w) / 2 : s.align === "right" ? innerBlockW - line.w : 0);
     let x = startX;
     line.words.forEach((word, wi) => {
@@ -714,7 +727,7 @@ export const resolveLayerStyle = (layer: CardTextLayer): ResolvedStyle => ({ ...
 
 /** Layout changes that switch template; the words, crop and text boxes stay. */
 export function templatePatch(template: CardTemplate, format: TemplateFormat): Partial<CardLayout> {
-  return { template: template.id, color: "auto", align: template.align ?? "left", textY: template.textY?.(format) ?? DEFAULT_TEXT_Y[format], headlineStyle: {}, textX: undefined, textWidth: undefined };
+  return { template: template.id, color: "auto", align: template.align ?? "left", textY: template.textY?.(format) ?? DEFAULT_TEXT_Y[format], headlineStyle: {}, textX: undefined, textWidth: undefined, textHeight: undefined };
 }
 
 export const mediaRectFor = (layout: CardLayout, format: TemplateFormat): Rect => {
@@ -743,6 +756,9 @@ export function fittedSize(source: Source, W: number, H: number, zoom: number, f
   const scale = (fit === "contain" ? Math.min(W / w, H / h) : Math.max(W / w, H / h)) * zoom;
   return { dw: w * scale, dh: h * scale };
 }
+
+/** Smallest text box a hand resize leaves, in px on a 1080 frame */
+export const MIN_BOX = { w: 80, h: 36 };
 
 export interface CardRects {
   headline: Rect | null;
@@ -814,22 +830,30 @@ export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, 
   const stamp = new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
   const area = template.draw({ ctx, W, H, u, pad, format, tag, accent, ink: inkOn(accent), handle, stamp, headline });
 
-  // The headline column can be narrowed and moved; the template's column is the default
-  const width = area.width * Math.max(0.3, Math.min(1, layout.textWidth ?? 1));
+  // The headline column can be narrowed and moved; the template's column is the default. Once resized by
+  // hand the box has its own height and may go anywhere on the card; the text then shrinks to fit it.
+  const fixed = layout.textHeight !== undefined;
+  const width = fixed
+    ? Math.min(W, Math.max(MIN_BOX.w * u, area.width * (layout.textWidth ?? 1)))
+    : area.width * Math.max(0.3, Math.min(1, layout.textWidth ?? 1));
+  const margin = fixed ? 0 : pad / 2;
   const centreX = layout.textX !== undefined ? layout.textX * W : area.x + area.width / 2;
-  const x = Math.max(pad / 2, Math.min(W - pad / 2 - width, centreX - width / 2));
+  const x = Math.max(margin, Math.min(W - margin - width, centreX - width / 2));
+  const boxH = fixed ? Math.min(H, Math.max(MIN_BOX.h * u, (layout.textHeight ?? 0) * H)) : 0;
+  const boxTop = fixed ? Math.max(0, Math.min(H - boxH, layout.textY * H - boxH / 2)) : 0;
   const headlineMotion = motionAt(layout.headlineMotion, frame);
   const headlineRect = headlineMotion === null ? null : drawTextBlock(ctx, {
     motion: headlineMotion,
     text: layout.headline,
     style: headline,
     size: area.baseSize * layout.fontScale,
-    minSize: 16 * u,
+    minSize: (fixed ? 8 : 16) * u,
     x,
     width,
     centerY: H * layout.textY,
-    minY: area.minY,
-    maxY: area.maxY,
+    minY: fixed ? boxTop : area.minY,
+    maxY: fixed ? boxTop + boxH : area.maxY,
+    fixed,
     inset: area.inset,
     u,
     decorate: area.decorate,
@@ -844,6 +868,8 @@ export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, 
     const w = layer.width * W;
     const padX = style.box ? size * 0.4 : 0;
     const padY = style.box ? size * 0.22 : 0;
+    // A box resized by hand keeps its height and shrinks the words to fit; otherwise it follows the words
+    const h = layer.height !== undefined ? Math.max(MIN_BOX.h * u, layer.height * H) : 0;
     const rect = drawTextBlock(ctx, {
       text: layer.text,
       style,
@@ -851,10 +877,11 @@ export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, 
       x: layer.x * W - w / 2,
       width: w,
       centerY: layer.y * H,
-      minY: -H,
-      maxY: H * 2,
+      minY: h ? layer.y * H - h / 2 : -H,
+      maxY: h ? layer.y * H + h / 2 : H * 2,
       inset: { l: padX, r: padX, t: padY, b: padY },
       hug: true,
+      ...(h ? { fixed: true, minSize: Math.min(size, 8 * u) } : {}),
       u,
       motion,
     });

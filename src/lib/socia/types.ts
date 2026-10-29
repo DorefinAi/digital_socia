@@ -55,7 +55,16 @@ export interface QueueItem {
   source?: "samvadia" | "file";
   /** new: counts include recorded-only files */
   media?: { images: number; videos: number; state: "awaiting" | "attached" | "none" };
+  /** new: Samvadia's priority; "breaking" is Big Breaking, "high" is Breaking */
+  priority?: StoryPriority;
+  /** new: Samvadia's category; null when it sent none */
+  category?: string | null;
+  /** new: the note left with a reject, when there is one */
+  rejectNote?: string | null;
 }
+
+/** How urgent Samvadia marked a story */
+export type StoryPriority = "normal" | "high" | "breaking";
 
 export interface QueueResponse {
   cap: CapUsage;
@@ -130,6 +139,10 @@ export interface DraftView {
     source?: "samvadia" | "file";
     /** new */
     district?: string | null;
+    /** new: Samvadia's priority */
+    priority?: StoryPriority;
+    /** new: Samvadia's category; null when it sent none */
+    category?: string | null;
     /** new: what Samvadia said; null for file stories */
     external?: {
       storyId: string;
@@ -190,6 +203,36 @@ export interface PublishedPost {
   slug?: string;
   /** v1.1: recorded by hand with "Save as posted" */
   manual?: boolean;
+}
+
+/** A slot on the card background, as fractions (0..1) of the image's width and height. */
+export interface CardSlot {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Where the card text goes on a user's background (contract: first-india-card-contract.md §2). */
+export interface CardTemplateLayout {
+  /** `format` uses DD, MM and YYYY, e.g. "Date:DD/MM/YYYY" */
+  date: CardSlot & { color: string; format: string };
+  box: CardSlot;
+  headline: { color: string };
+  body: { color: string };
+  fontMinPx: number;
+  fontMaxPx: number;
+}
+
+/** One background per user per platform; the editor draws every card of that platform on it. */
+export interface UserCardTemplate {
+  platform: "x";
+  /** Changes whenever the image changes, so it is safe to cache */
+  backgroundUrl: string;
+  width: number;
+  height: number;
+  layout: CardTemplateLayout;
+  updatedAt: string;
 }
 
 export interface IngestStatus {

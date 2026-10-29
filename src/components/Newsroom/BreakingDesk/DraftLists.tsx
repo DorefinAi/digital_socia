@@ -1,12 +1,12 @@
 "use client";
 
 import React, { useState } from "react";
-import { Box, Typography, Button, Chip, Dialog } from "@mui/material";
-import { CalendarClock, Pencil, RotateCcw, Send, Undo2, Trash2 } from "lucide-react";
+import { Box, Typography, Button } from "@mui/material";
+import { CalendarClock, Pencil, RotateCcw, Send } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
-import { REJECT_REASONS, SocialDraft, SocialPlatform } from "@/types/newsroom";
+import { SocialDraft, SocialPlatform } from "@/types/newsroom";
 import { ScheduleDialog } from "./actionDialogs";
-import { EmptyState, ListThumb, formatStamp, listFrameSx, timeAgo } from "./shared";
+import { EmptyState, ListThumb, formatStamp, listFrameSx } from "./shared";
 import { fileUrl, useLiveDesk } from "./live/LiveDesk";
 import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
 import type { QueueItem } from "@/lib/socia/types";
@@ -76,65 +76,6 @@ export function ScheduledList({ platform, onEdit }: { platform: SocialPlatform; 
   );
 }
 
-// ─── Rejected ────────────────────────────────────────────────────────────────
-export function RejectedList({ platform }: { platform: SocialPlatform }) {
-  const { socialDrafts, restoreDraft, deleteDraft, permissions } = useNewsroom();
-  const desk = useLiveDesk();
-  const [deleting, setDeleting] = useState<SocialDraft | null>(null);
-  const drafts = socialDrafts.filter((d) => d.platform === platform && d.status === "rejected");
-
-  if (desk) return <LiveRejectedList />;
-
-  if (!drafts.length) return <EmptyState title="Nothing rejected" hint="Stories rejected from the queue are kept here with the reason, and can be restored." />;
-
-  return (
-    <Box sx={listFrameSx}>
-      {drafts.map((d, i) => (
-        <Box key={d.id} sx={rowSx(i)}>
-          <ListThumb src={d.thumbUrl} dim />
-          <Box sx={{ minWidth: 0 }}>
-            <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.headline}</Typography>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.4, flexWrap: "wrap" }}>
-              {d.rejectReason && <Chip label={REJECT_REASONS[d.rejectReason]} size="small" color="error" variant="outlined" sx={{ height: 20, fontSize: "0.6875rem", borderRadius: "6px" }} />}
-              <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary" }}>
-                {timeAgo(d.updatedAt)} · {d.postedBy}
-              </Typography>
-            </Box>
-            {d.rejectNote && <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.4 }}>&ldquo;{d.rejectNote}&rdquo;</Typography>}
-          </Box>
-          {permissions.canApproveSocialContent && (
-            <Box sx={actionsSx}>
-              <Button size="small" startIcon={<Undo2 size={13} />} onClick={() => restoreDraft(d.id)} sx={smallBtn}>Restore to queue</Button>
-              <Button size="small" color="error" startIcon={<Trash2 size={13} />} onClick={() => setDeleting(d)} sx={smallBtn}>Delete</Button>
-            </Box>
-          )}
-        </Box>
-      ))}
-      <Dialog open={!!deleting} onClose={() => setDeleting(null)} maxWidth="xs" fullWidth slotProps={{ paper: { sx: { borderRadius: "14px", backgroundImage: "none" } } }}>
-        <Box sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 2 }}>
-          <Typography sx={{ fontWeight: 700 }}>Delete this rejected draft?</Typography>
-          <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary" }}>
-            The draft and its reason are removed for good. The story stays on the FTP and will not come back to the queue.
-          </Typography>
-          <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1 }}>
-            <Button onClick={() => setDeleting(null)}>Cancel</Button>
-            <Button
-              variant="contained"
-              color="error"
-              onClick={() => {
-                if (deleting) deleteDraft(deleting.id);
-                setDeleting(null);
-              }}
-            >
-              Delete
-            </Button>
-          </Box>
-        </Box>
-      </Dialog>
-    </Box>
-  );
-}
-
 // ─── Live desk ───────────────────────────────────────────────────────────────
 function useRowAction() {
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -156,44 +97,6 @@ function LiveRows({ items, empty, children }: { items: QueueItem[] | undefined; 
           {children(item)}
         </Box>
       ))}
-    </Box>
-  );
-}
-
-/** Rejected drafts from the server, with the reason; Restore puts a story back in the queue. */
-function LiveRejectedList() {
-  const desk = useLiveDesk();
-  const { busyId, error, run } = useRowAction();
-  if (!desk) return null;
-  const { rejected } = desk;
-  if (!rejected.data) return rejected.error ? <LoadError error={rejected.error} onRetry={() => void rejected.refresh()} /> : <LoadingRows />;
-
-  return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-      {error && <Typography role="alert" sx={{ fontSize: "0.8125rem", color: "error.main" }}>{error}</Typography>}
-      <LiveRows items={rejected.data.items} empty={<EmptyState title="Nothing rejected" hint="Stories rejected from the queue are kept here with the reason, and can be restored." />}>
-        {(d) => (
-          <>
-            <ListThumb src={fileUrl(d.cardUrl)} dim />
-            <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.headline}</Typography>
-              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.4, flexWrap: "wrap" }}>
-                {d.rejectReason && <Chip label={REJECT_REASONS[d.rejectReason]} size="small" color="error" variant="outlined" sx={{ height: 20, fontSize: "0.6875rem", borderRadius: "6px" }} />}
-                <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary" }}>
-                  {[d.district, `received ${timeAgo(d.receivedAt)}`].filter(Boolean).join(" · ")}
-                </Typography>
-              </Box>
-            </Box>
-            {desk.canAct && (
-              <Box sx={actionsSx}>
-                <Button size="small" startIcon={<Undo2 size={13} />} disabled={busyId === d.id} onClick={() => void run(d.id, () => desk.restore(d.id))} sx={smallBtn}>
-                  Restore to queue
-                </Button>
-              </Box>
-            )}
-          </>
-        )}
-      </LiveRows>
     </Box>
   );
 }

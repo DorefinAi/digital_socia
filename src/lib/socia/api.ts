@@ -2,7 +2,7 @@
 
 import { ApiError, api, setCsrfToken } from "./client";
 import type {
-  Counts, DraftPatch, DraftView, IngestStatus, Me, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep,
+  CardTemplateLayout, Counts, DraftPatch, DraftView, IngestStatus, Me, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, UserCardTemplate,
 } from "./types";
 
 const enc = encodeURIComponent;
@@ -60,6 +60,17 @@ export const retryDraft = (id: string) => api<{ jobId: string }>("POST", `/draft
 // ─── Published ───────────────────────────────────────────────────────────────
 export const fetchPosts = (limit = 50) => api<{ items: PublishedPost[] }>("GET", `/posts?limit=${limit}`);
 export const recallPost = (id: string, reason: string) => api<{ jobId: string }>("POST", `/posts/${enc(id)}/recall`, { reason });
+
+// ─── Card background (one per user per platform) ─────────────────────────────
+/** The signed-in user's card background, or null when they have not uploaded one. */
+export const fetchCardTemplate = (platform = "x") =>
+  api<{ template: UserCardTemplate | null }>("GET", `/me/card-template?platform=${enc(platform)}`);
+/** Creates or replaces the background (PNG or JPEG, up to 5 MB, both sides at least 600 px). The layout is kept on replace. */
+export const uploadCardTemplate = (image: Blob, platform = "x") =>
+  api<{ template: UserCardTemplate }>("PUT", `/me/card-template?platform=${enc(platform)}`, image);
+export const saveCardTemplateLayout = (layout: CardTemplateLayout, platform = "x") =>
+  api<{ template: UserCardTemplate }>("PATCH", `/me/card-template?platform=${enc(platform)}`, { layout });
+export const deleteCardTemplate = (platform = "x") => api<unknown>("DELETE", `/me/card-template?platform=${enc(platform)}`);
 
 // ─── Source health ───────────────────────────────────────────────────────────
 export const fetchIngestStatus = () => api<IngestStatus>("GET", "/ingest/status");

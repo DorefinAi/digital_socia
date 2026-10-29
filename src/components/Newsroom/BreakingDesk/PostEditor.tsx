@@ -1,13 +1,13 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Typography, Button, TextField, Dialog, IconButton, Slider, Switch, Tooltip, LinearProgress, Alert, Snackbar, CircularProgress } from "@mui/material";
+import { Box, Typography, Button, TextField, Dialog, IconButton, Slider, Switch, Tooltip, LinearProgress, Alert, Snackbar, CircularProgress, useMediaQuery } from "@mui/material";
+import type { Theme } from "@mui/material/styles";
 import {
   X as CloseIcon,
   ArrowLeft,
   Eye,
   Send,
-  Download,
   Film,
   Scissors,
   RotateCcw,
@@ -57,7 +57,8 @@ import TemplateCanvas, {
 } from "./TemplateCanvas";
 import { PLATFORM_LIMITS, TagSuggestion, composePostText, countChars, findUrl, shortenToFit, suggestHashtags, suggestMentions } from "./socialText";
 import { RejectDialog, ScheduleDialog } from "./actionDialogs";
-import { PLATFORM_META, PlatformIcon, srOnly, TAG_TINT, tagTint } from "./shared";
+import { FoldedPanelStrip, PanelResizeHandle, PanelsConfig, useResizablePanels } from "./ResizablePanels";
+import { CategoryLabel, PLATFORM_META, PlatformIcon, priorityTag, rejectedNotice, srOnly, TAG_TINT, tagTint } from "./shared";
 import { PostMock, TagOption, TagPicker, fieldSx, sectionLabel } from "./composerParts";
 import VideoTimeline, { CLIP_SPEEDS, TimelineText, clock, outputLength } from "./VideoTimeline";
 import TextControls, { ALIGN_ICONS, FontSelect } from "./TextControls";
@@ -69,7 +70,8 @@ import { DAILY_CAP, isLiveOn } from "@/data/socialDesk";
 import * as socia from "@/lib/socia/api";
 import type { DraftView } from "@/lib/socia/types";
 import type { LiveEditing } from "./live/LiveEditor";
-import { errorCode, errorText, useLiveDesk } from "./live/LiveDesk";
+import { apiFileUrl, errorCode, errorText, useLiveDesk } from "./live/LiveDesk";
+import { keyHash, useBackgroundCard } from "./live/useBackgroundCard";
 import { PostedLinkDialog } from "./actionDialogs";
 
 type Tool = "ftp" | "template" | "background" | "text" | "video" | "story";
@@ -110,6 +112,18 @@ const chromeButton = {
 const toolbarIcon = { borderRadius: "6px", width: 30, height: 30, color: "text.primary" };
 const toolbarDivider = <Box sx={{ width: "1px", height: 20, backgroundColor: "divider", mx: 0.5 }} />;
 const panelTitle = { fontSize: "0.9375rem", fontWeight: 700, mb: 1.5 };
+
+// Desktop columns: tool rail, tool panel, card, post panel. The side panels resize and fold.
+const EDITOR_PANELS: PanelsConfig = {
+  storageKey: "breakingDesk.editorPanels.v1",
+  leftFixed: 72,
+  rightFolded: 36,
+  minMiddle: 420,
+  left: { initial: 280, min: 240, max: 480 },
+  right: { initial: 340, min: 300, max: 560 },
+};
+// A folded panel stays mounted (its scroll and feed stay put) but takes no space and no focus
+const foldedPanelSx = { visibility: "hidden", overflow: "hidden", p: 0, borderLeft: 0, borderRight: 0 } as const;
 const floatingSx = { backgroundColor: "background.paper", border: "1px solid", borderColor: "divider", boxShadow: "0 4px 14px rgba(0,0,0,0.08)" };
 
 /** Longest text the card template takes; the font shrinks to fit anything up to this. */
@@ -159,10 +173,42 @@ interface PostEditorProps {
 const CARD_MAX_BYTES = 5 * 1024 * 1024;
 const plainCardText = (text: string) => text.replace(/\*\*/g, "").trim();
 
+/** Small per-draft records in this browser's storage; a blocked storage just means nothing is remembered. */
+function draftStore<T>(prefix: string) {
+  const key = (id: string) => `${prefix}${id}`;
+  return {
+    key,
+    read(id: string): T | null {
+      try {
+        const raw = localStorage.getItem(key(id));
+        return raw ? (JSON.parse(raw) as T) : null;
+      } catch {
+        return null;
+      }
+    },
+    write(id: string, value: T | null) {
+      try {
+        if (value) localStorage.setItem(key(id), JSON.stringify(value));
+        else localStorage.removeItem(key(id));
+      } catch {
+        // Storage blocked: nothing is remembered for this draft
+      }
+    },
+  };
+}
+
+/**
+ * The X-background card this browser last uploaded for a draft: a fingerprint of the drawing (draft,
+ * background, layout, date, words) and the card URL the server gave it. Reopening with the same drawing
+ * skips the upload, and a different URL on the server means someone else replaced the card since.
+ */
+const bgStore = draftStore<{ hash: string; cardUrl: string }>("socia_bg_card_");
+
 /** The card design last sent to the server for a draft, so reopening shows the card that will be posted. */
 const designStore = {
   key: (id: string) => `socia_card_design_${id}`,
-  read(id: string): { layout: TemplateLayout; mediaFile: string } | null {
+  /** `cardUrl` is the server's card after the upload; absent in records from before it was kept */
+  read(id: string): { layout: TemplateLayout; mediaFile: string; cardUrl?: string | null } | null {
     try {
       const raw = localStorage.getItem(designStore.key(id));
       return raw ? JSON.parse(raw) : null;
@@ -170,7 +216,7 @@ const designStore = {
       return null;
     }
   },
-  write(id: string, value: { layout: TemplateLayout; mediaFile: string } | null) {
+  write(id: string, value: { layout: TemplateLayout; mediaFile: string; cardUrl?: string | null } | null) {
     try {
       if (value) localStorage.setItem(designStore.key(id), JSON.stringify(value));
       else localStorage.removeItem(designStore.key(id));
@@ -202,8 +248,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const storyStart = (story: FtpNewsItem) => {
     if (live) {
       const d = live.draft;
-      // Reopening shows the design that was last sent for this draft, if this browser sent it
-      const saved = d.card.custom ? designStore.read(d.id) : null;
+      // Reopening shows the design that was last sent for this draft, if this browser sent it and nobody replaced it since
+      const record = d.card.custom ? designStore.read(d.id) : null;
+      const saved = record && (!record.cardUrl || record.cardUrl === d.card.url) ? record : null;
+      const ownBg = d.card.custom ? bgStore.read(d.id) : null;
       const layout = saved?.layout ?? defaultLayout(d.cardHeadline, "x");
       return {
         id: story.id,
@@ -215,6 +263,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         ...liveTags(d),
         // Until the design changes, the server's card is the one that posts
         custom: !!d.card.custom,
+        // A design sent from this browser wins over the operator's X background when the story reopens
+        savedDesign: !!saved,
+        // A custom card this browser did not send (another operator or browser) stays until the operator chooses
+        serverCard: !!d.card.custom && !saved && ownBg?.cardUrl !== d.card.url,
       };
     }
     const draft = socialDrafts.find((d) => d.newsId === story.id && d.platform === platform && (d.status === "saved" || d.status === "scheduled"));
@@ -229,6 +281,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       hashtags: withDraftChoices(suggestHashtags(story, hashtagRules), draft?.hashtags),
       mentions: withDraftChoices(suggestMentions(story, platform, handleDirectory), draft?.mentions),
       custom: false,
+      savedDesign: false,
+      serverCard: false,
     };
   };
   const [start, setStart] = useState(() => storyStart(item));
@@ -257,6 +311,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // Card versions for undo and redo; a version is kept once the card has been still for a moment
   const [history, setHistory] = useState({ stack: [start.layout], index: 0 });
   const [tool, setTool] = useState<Tool>("ftp");
+  const { measure: measureWorkspace, columns: workspaceColumns, left: leftPanel, right: rightPanel } = useResizablePanels(EDITOR_PANELS);
+  // Below lg the columns stack and the panels keep their natural size
+  const wide = useMediaQuery((t: Theme) => t.breakpoints.up("lg"));
+  const leftFolded = wide && leftPanel.collapsed;
+  const rightFolded = wide && rightPanel.collapsed;
   const [selection, setSelection] = useState<CanvasSelection>(null);
   const [zoom, setZoom] = useState(1);
   const [stage, setStage] = useState({ w: 0, h: 0 });
@@ -285,6 +344,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const [linkOpen, setLinkOpen] = useState(false);
   // The design that was last uploaded as this draft's card
   const [uploaded, setUploaded] = useState<{ layout: TemplateLayout; url: string } | null>(null);
+  // Where the posted card comes from: the operator's X background or this editor's design. null follows the default.
+  const [cardSource, setCardSource] = useState<"background" | "design" | null>(null);
+  // The background card last uploaded as this draft's card, by draft and drawing
+  const [bgUploaded, setBgUploaded] = useState<{ id: string; key: string } | null>(null);
 
   // Switching stories swaps the story's state in place. The editor stays mounted, so the
   // screen does not flash and the feed, tool panel and zoom stay where the operator left them.
@@ -315,6 +378,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     setStale(null);
     setLinkOpen(false);
     setUploaded(null);
+    setCardSource(null);
+    setBgUploaded(null);
     setBusy(null);
   }
 
@@ -343,6 +408,24 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const fit = Math.max(0.05, Math.min(stage.w / frame.w, stage.h / frame.h));
   const frameWidth = Math.round(frame.w * fit * zoom);
 
+  // ── The operator's X background (Templates tab): X cards are drawn on it unless they design their own ──
+  const cardTemplates = live && isX ? desk?.cardTemplate : undefined;
+  const cardTemplate = cardTemplates?.data?.template ?? null;
+  // The card on the draft was made elsewhere: it is shown and kept until the operator edits here or picks a source
+  const cardTouched = layout !== start.layout || mediaIndex !== start.mediaIndex || uploads.length > 0;
+  const serverView = !!live?.draft.card.custom && !!live.draft.card.url && start.serverCard && cardSource === null && !cardTouched;
+  const bgMode = !!cardTemplate && !serverView && (cardSource ?? (start.savedDesign || start.serverCard ? "design" : "background")) === "background";
+  const bg = useBackgroundCard(bgMode ? cardTemplate : null, plainCardText(layout.headline) || item.headline, item.body, CARD_MAX_BYTES, live?.draft.id ?? item.id);
+  // The drawing is on the server already: uploaded in this session, or recorded for this draft and card URL
+  const bgRecord = bgMode && live?.draft.card.custom ? bgStore.read(live.draft.id) : null;
+  const bgSynced =
+    bg.status === "ready" &&
+    ((bgUploaded?.id === item.id && bgUploaded.key === bg.key) || (!!bgRecord && bgRecord.cardUrl === live?.draft.card.url && bgRecord.hash === keyHash(bg.key)));
+  const bgFrame = { w: bg.card?.width ?? cardTemplate?.width ?? 1080, h: bg.card?.height ?? cardTemplate?.height ?? 1080 };
+  const bgFrameWidth = Math.round(bgFrame.w * Math.max(0.05, Math.min(stage.w / bgFrame.w, stage.h / bgFrame.h)) * zoom);
+  // Background cards are still images, so a video story posts (and downloads) the card
+  const exportsVideo = isVideo && !bgMode;
+
   const selectedHashtags = useMemo(() => hashtags.filter((h) => h.checked).map((h) => h.value), [hashtags]);
   const selectedMentions = useMemo(() => mentions.filter((m) => m.checked).map((m) => m.value), [mentions]);
   const finalText = composePostText(text, selectedMentions, selectedHashtags);
@@ -359,7 +442,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   // Links multiply the cost of an X post, so the X formatter refuses them outright
   const url = isX ? findUrl(finalText) : null;
-  const canPost = canEdit && !busy && stale === null && !overLimit && !tooManyTags && !url && !capReached && text.trim().length > 0 && layout.headline.trim().length > 0;
+  const bgFailed = bgMode && bg.status === "error";
+  const canPost = canEdit && !busy && stale === null && !overLimit && !tooManyTags && !url && !capReached && !bgFailed && text.trim().length > 0 && layout.headline.trim().length > 0;
 
   let blockedReason = "";
   if (live?.lease.kind === "held") blockedReason = `${live.lease.name} is working on this story`;
@@ -372,6 +456,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   else if (tooManyTags) blockedReason = "Too many hashtags or mentions selected";
   else if (url) blockedReason = `Remove the link "${url}" first`;
   else if (capReached) blockedReason = `Today's ${meta.short} cap of ${cap} posts is reached`;
+  else if (bgFailed) blockedReason = "The card on your X background didn't draw. Use the automatic card instead";
 
   const patch = (changes: Partial<TemplateLayout>) => setLayout((l) => ({ ...l, ...changes }));
 
@@ -567,6 +652,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         const dx = key === "arrowleft" ? -step : key === "arrowright" ? step : 0;
         const dy = key === "arrowup" ? -step : key === "arrowdown" ? step : 0;
         if (activeLayer) patchLayer(activeLayer.id, { x: Math.max(0, Math.min(1, activeLayer.x + dx)), y: Math.max(0, Math.min(1, activeLayer.y + dy)) });
+        // A headline box sized by hand moves both ways; one that follows its text only up and down
+        else if (layout.textHeight !== undefined) patch(dx ? { textX: Math.max(0, Math.min(1, (layout.textX ?? 0.5) + dx)) } : { textY: Math.max(0, Math.min(1, layout.textY + dy)) });
         else patch({ textY: Math.max(0.05, Math.min(0.95, layout.textY + dy)) });
       }
     };
@@ -664,12 +751,26 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     }
   };
 
+  /** Saves the card drawn on the operator's X background. */
+  const downloadBackgroundCard = async () => {
+    try {
+      const { card } = await bg.whenReady();
+      const link = document.createElement("a");
+      link.href = card.url;
+      link.download = `${item.id}-x.png`;
+      link.click();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const saveAsPosted = async () => {
     if (!canPost) return;
     // Live: the operator posts the downloaded card by hand, then gives the desk the post's link
     if (live) {
-      const ok = isVideo ? await exportVideo() : canvasRef.current?.download(`${item.id}-${format}.png`) ?? false;
-      if (!ok && !isVideo) setNotice("This media file does not allow image export from the browser. Download the card from Preview, or post with Post to X.");
+      const ok = exportsVideo ? await exportVideo() : bgMode ? await downloadBackgroundCard() : canvasRef.current?.download(`${item.id}-${format}.png`) ?? false;
+      if (!ok && !exportsVideo) setNotice("This media file does not allow image export from the browser. Download the card from Preview, or post with Post to X.");
       setLinkOpen(true);
       return;
     }
@@ -706,6 +807,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   }, [liveVersion]);
   const adopt = (d: DraftView) => {
     versionRef.current = d.version;
+    draftRef.current = d;
     live?.onDraft(d);
   };
 
@@ -729,9 +831,20 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const textDirty = !!live && patchKey !== JSON.stringify(serverPatch);
 
   // The card: the server's automatic card posts until the design here is changed, then this canvas does
-  const designEdited = !!live && (layout !== start.layout || mediaIndex !== start.mediaIndex || uploads.length > 0);
+  // On the X background the drawn card is always the one that posts; the design here does not apply
+  const designEdited = !!live && !bgMode && cardTouched;
   const cardSynced = !!uploaded && uploaded.layout === layout && uploaded.url === media.url;
-  const ownCard = designEdited || !!live?.draft.card.custom;
+  const ownCard = bgMode || designEdited || !!live?.draft.card.custom;
+  // The card goes up only when the operator means it: Post, Save draft, Save as posted, or leaving after
+  // changing the card here (its words or design, or picking the X background over a card made elsewhere)
+  const cardChosen = cardTouched || cardSource !== null;
+  const cardUnsent = bgMode ? cardChosen && !bgSynced : designEdited && !cardSynced;
+  // The server's draft as of the last answer, for calls queued behind others
+  const liveDraft = live?.draft;
+  const draftRef = useRef(liveDraft);
+  useEffect(() => {
+    if (liveDraft) draftRef.current = liveDraft;
+  }, [liveDraft]);
 
   // One server call at a time, in order, so versions never cross
   const chain = useRef<Promise<unknown>>(Promise.resolve());
@@ -747,21 +860,57 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   };
 
   const uploadOwnCard = async () => {
-    if (!live || !canEdit || !designEdited || cardSynced) return;
+    if (!live || !canEdit) return;
+    if (bgMode) {
+      const current = draftRef.current ?? live.draft;
+      const id = current.id;
+      // Only a drawing made for this draft may go up as its card
+      const drawn = await bg.whenReady(id);
+      const hash = keyHash(drawn.key);
+      const record = bgStore.read(id);
+      // Same drawing as the card already on the server: nothing to send
+      if (current.card.custom && record?.hash === hash && record.cardUrl === current.card.url) return;
+      const d = await socia.uploadCard(id, versionRef.current, drawn.card.blob);
+      adopt(d);
+      bgStore.write(id, { hash, cardUrl: d.card.url ?? "" });
+      setBgUploaded({ id, key: drawn.key });
+      // Reopening draws on the background again rather than restoring an older design
+      designStore.write(d.id, null);
+      return;
+    }
+    if (!designEdited || cardSynced) return;
     const png = await canvasRef.current?.png(CARD_MAX_BYTES);
     if (!png) throw new Error("The browser couldn't export your card, so the automatic card stays. Try another photo, or try again.");
     const d = await socia.uploadCard(live.draft.id, versionRef.current, png);
     adopt(d);
     setUploaded({ layout, url: media.url });
-    designStore.write(d.id, { layout, mediaFile: media.fileName });
+    designStore.write(d.id, { layout, mediaFile: media.fileName, cardUrl: d.card.url });
+    bgStore.write(d.id, null);
   };
 
-  /** Sends whatever is not on the server yet: text first, then the card. */
+  /** Sends whatever is not on the server yet: text first, then the card (Post, Save draft, Save as posted). */
   const flush = () =>
     serial(async () => {
       await saveText();
       await uploadOwnCard();
     });
+
+  /**
+   * Leaving a story (close or switch): the text must save, or the operator stays. The card goes up only
+   * if it was changed here, and a card that fails to draw or upload never keeps anyone in the story.
+   * Resolves to a sentence about the card when it didn't go up, else null; throws when the text didn't save.
+   */
+  const flushForLeave = async (): Promise<string | null> => {
+    await serial(saveText);
+    if (!cardUnsent) return null;
+    try {
+      await serial(uploadOwnCard);
+      return null;
+    } catch (err) {
+      const why = errorCode(err) ? errorText(err) : err instanceof Error ? err.message : errorText(err);
+      return `Your text is saved, but the card didn't upload: ${why} Open the story again to send it.`;
+    }
+  };
 
   const runLive = async (kind: NonNullable<typeof busy>, fn: () => Promise<void>) => {
     setBusy(kind);
@@ -781,6 +930,20 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patchKey, canEdit, stale, textDirty]);
+
+  // The card drawn on the X background is not uploaded on its own: opening or reading a story changes
+  // nothing on the server. It goes up with Post, Save draft or Save as posted, or on leaving after an edit.
+
+  // Ctrl+S saves the draft, even while typing, instead of the browser's "save page"
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "s") return;
+      e.preventDefault();
+      if (!dialog && !previewOpen && canEdit && !busy) save();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   /** Approve: the server holds the post for its 10-second undo window, then the worker posts it. */
   const postLive = () =>
@@ -834,7 +997,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       await socia.rejectDraft(live.draft.id, reason, note || undefined);
       live.onFinished();
       void desk?.refreshAll();
-      onSaved?.(`Rejected. "${item.headline}" moved to Rejected.`);
+      onSaved?.(rejectedNotice(item.headline));
       onClose();
     });
 
@@ -842,14 +1005,19 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const switchToAutoCard = () =>
     runLive("card", async () => {
       if (!live) return;
-      let d = live.draft;
-      if (d.card.custom) {
-        const id = d.id;
-        d = await serial(() => socia.resetCard(id, versionRef.current));
-        adopt(d);
-      }
+      // Decided inside the queue, on the draft as it is after any upload still in flight
+      const d = await serial(async () => {
+        const current = draftRef.current ?? live.draft;
+        if (!current.card.custom) return current;
+        const reset = await socia.resetCard(current.id, versionRef.current);
+        adopt(reset);
+        return reset;
+      });
       designStore.write(d.id, null);
+      bgStore.write(d.id, null);
       const fresh = defaultLayout(d.cardHeadline, "x");
+      setCardSource("design");
+      setBgUploaded(null);
       setStart((s) => ({ ...s, layout: fresh, mediaIndex: 0, custom: false }));
       setUploads([]);
       setMediaIndex(0);
@@ -882,15 +1050,18 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   /** Leaving the editor sends what is not saved yet, so nothing typed is lost. */
   const close = async () => {
-    if (live && canEdit && (textDirty || (designEdited && !cardSynced))) {
+    if (live && canEdit && (textDirty || cardUnsent)) {
       setBusy("save");
+      let cardProblem: string | null = null;
       try {
-        await flush();
+        cardProblem = await flushForLeave();
       } catch (err) {
         setBusy(null);
         liveFail(err);
         return;
       }
+      // The desk shows it after the editor closes
+      if (cardProblem) onSaved?.(cardProblem);
     }
     onClose();
   };
@@ -933,7 +1104,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           {onDark ? phoneLabel(copied ? "Copied" : "Copy") : copied ? "Copied" : "Copy"}
         </Button>
       </Tooltip>
-      <Tooltip title={blockedReason || (live ? `Downloads the ${isVideo ? "clip" : "card"} to post by hand, then asks for the post's link` : `Downloads the ${isVideo ? "clip" : "card"} and marks this story posted on ${meta.short}`)}>
+      <Tooltip title={blockedReason || (live ? `Downloads the ${exportsVideo ? "clip" : "card"} to post by hand, then asks for the post's link` : `Downloads the ${isVideo ? "clip" : "card"} and marks this story posted on ${meta.short}`)}>
         <span>
           <Button
             variant={live ? (onDark ? "text" : "outlined") : "contained"}
@@ -957,9 +1128,14 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     </>
   );
 
+  // Top bar: the story's tag and category. Live, they come from the draft (Samvadia's priority and category)
+  const headTag = live ? priorityTag(live.draft.story.priority) : item.tag;
+  const headCategory = live?.draft.story.category?.trim() || null;
+
   return (
-    <Dialog open fullScreen onClose={() => void close()} transitionDuration={150} slotProps={{ paper: { sx: { borderRadius: 0, backgroundImage: "none", backgroundColor: "background.default" } } }}>
-      <Box sx={{ display: "flex", flexDirection: "column", height: "100dvh" }}>
+    <Dialog open fullScreen onClose={() => void close()} transitionDuration={150} slotProps={{ paper: { sx: { borderRadius: 0, backgroundImage: "none", backgroundColor: "background.default", overflow: "hidden" } } }}>
+      {/* Exactly one viewport tall; the columns scroll on their own and the dialog itself never scrolls */}
+      <Box sx={{ position: "relative", display: "flex", flexDirection: "column", height: "100dvh", overflow: "hidden" }}>
         {/* Top bar */}
         <Box sx={{ display: "flex", alignItems: "center", gap: { xs: 0.5, sm: 1 }, px: { xs: 1, sm: 1.5 }, height: 54, flexShrink: 0, backgroundColor: BAR.bg, color: "#fff" }}>
           <Button onClick={() => void close()} aria-label="Back to desk" disabled={busy === "save"} sx={{ ...chromeButton, minWidth: 0, flexShrink: 0, gap: 0.75 }}>
@@ -972,11 +1148,16 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           <Box sx={{ display: { xs: "none", sm: "contents" } }}>
             <PlatformIcon platform={platform} size={16} />
           </Box>
-          {/* The tint behind the headline carries the tag (yellow Big Breaking, red Breaking) */}
-          <Typography sx={{ display: { xs: "none", sm: "block" }, flex: 1, minWidth: 0, px: 1, py: 0.5, borderRadius: "6px", background: tagTint(item.tag, "dark", 1.4), fontSize: "0.875rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            <Box component="span" sx={srOnly}>{TAG_TINT[item.tag].label}: </Box>
+          {/* The tint behind the headline carries the tag (yellow Big Breaking, red Breaking; none for a normal live story) */}
+          <Typography sx={{ display: { xs: "none", sm: "block" }, flex: 1, minWidth: 0, px: 1, py: 0.5, borderRadius: "6px", background: headTag ? tagTint(headTag, "dark", 1.4) : "none", fontSize: "0.875rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {headTag && <Box component="span" sx={srOnly}>{TAG_TINT[headTag].label}: </Box>}
             {item.headline}
           </Typography>
+          {headCategory && (
+            <Box sx={{ display: { xs: "none", md: "flex" }, flexShrink: 1, minWidth: 0, maxWidth: 160 }}>
+              <CategoryLabel category={headCategory} onDark />
+            </Box>
+          )}
           <Box sx={{ flex: { xs: 1, sm: 0 } }} />
           {!isX && (
             <Box role="group" aria-label="Format" sx={{ display: "flex", flexShrink: 0, border: `1px solid ${BAR.border}`, borderRadius: "8px", overflow: "hidden", mr: 0.5 }}>
@@ -1017,7 +1198,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         </Box>
 
         {/* Workspace */}
-        <Box sx={{ flex: 1, minHeight: 0, display: { xs: "flex", lg: "grid" }, flexDirection: "column", gridTemplateColumns: "72px 280px minmax(0, 1fr) 340px", overflowY: { xs: "auto", lg: "hidden" } }}>
+        <Box ref={measureWorkspace} sx={{ position: "relative", flex: 1, minHeight: 0, display: { xs: "flex", lg: "grid" }, flexDirection: "column", gridTemplateColumns: workspaceColumns, overflowY: { xs: "auto", lg: "hidden" } }}>
           {/* Tool rail */}
           <Box role="tablist" aria-label="Design tools" sx={{ order: { xs: 1, lg: 0 }, flexShrink: 0, display: "flex", flexDirection: { xs: "row", lg: "column" }, gap: 0.5, p: 0.75, backgroundColor: "background.paper", borderRight: { lg: "1px solid" }, borderTop: { xs: "1px solid", lg: "none" }, borderColor: "divider" }}>
             {TOOLS.filter((t) => !t.videoOnly || isVideo).map((t) => (
@@ -1026,7 +1207,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 component="button"
                 role="tab"
                 aria-selected={panel === t.id}
-                onClick={() => setTool(t.id)}
+                aria-controls="post-editor-tool-panel"
+                onClick={() => {
+                  setTool(t.id);
+                  leftPanel.setCollapsed(false);
+                }}
                 sx={{
                   display: "flex",
                   flexDirection: "column",
@@ -1053,12 +1238,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           </Box>
 
           {/* Tool panel */}
-          <Box role="tabpanel" sx={{ order: { xs: 2, lg: 0 }, flexShrink: 0, p: 2, overflowY: { lg: "auto" }, backgroundColor: "background.paper", borderRight: { lg: "1px solid" }, borderColor: "divider" }}>
+          <Box id="post-editor-tool-panel" role="tabpanel" sx={{ order: { xs: 2, lg: 0 }, flexShrink: 0, p: 2, overflowY: { lg: "auto" }, backgroundColor: "background.paper", borderRight: { lg: "1px solid" }, borderColor: "divider", ...(leftFolded && foldedPanelSx) }}>
             {panel === "ftp" && (
               <FtpFeedPanel
                 platform={platform}
                 currentId={item.id}
-                footage={live?.draft}
                 onPick={(next) => {
                   // Keep the operator's work before switching stories
                   // A clip export in progress belongs to the current story
@@ -1066,8 +1250,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   if (live) {
                     if (!canEdit) return onSwitch?.(next);
                     void runLive("save", async () => {
-                      await flush();
+                      const cardProblem = await flushForLeave();
                       onSwitch?.(next);
+                      // After the switch has reset this editor's notice for the new story
+                      if (cardProblem) setTimeout(() => setNotice(cardProblem), 0);
                     });
                     return;
                   }
@@ -1077,7 +1263,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               />
             )}
 
-            {panel === "background" && (
+            {panel === "background" && !bgMode && (
               <>
                 <Typography sx={panelTitle}>Background</Typography>
                 <Typography sx={{ ...sectionLabel, mb: 0.75 }}>From this story&apos;s FTP folder</Typography>
@@ -1286,7 +1472,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               </>
             )}
 
-            {panel === "template" && (
+            {panel === "template" && !bgMode && (
               <TemplatePicker
                 layout={layout}
                 media={media}
@@ -1298,7 +1484,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               />
             )}
 
-            {panel === "text" && (
+            {panel === "text" && !bgMode && (
               <>
                 {/* Which text is being edited: the card headline or one of the extra boxes */}
                 <Box role="group" aria-label="Text on the card" sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mb: 1.5 }}>
@@ -1317,7 +1503,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   minRows={activeLayer ? 3 : 6}
                   maxRows={14}
                   slotProps={{ htmlInput: { maxLength: activeLayer ? 300 : CARD_TEXT_MAX, "aria-label": activeLayer ? "Text box words" : "Card text" } }}
-                  helperText={activeLayer ? "Drag the box on the card to place it." : `${layout.headline.length} / ${CARD_TEXT_MAX} characters. The text shrinks to fit the card.`}
+                  helperText={activeLayer ? "Drag the box on the card to place it; drag a handle to resize it. The words shrink to fit." : `${layout.headline.length} / ${CARD_TEXT_MAX} characters. The text shrinks to fit the card.`}
                   fullWidth
                   size="small"
                   value={textValue}
@@ -1424,6 +1610,42 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               </>
             )}
 
+            {bgMode && (panel === "text" || panel === "template" || panel === "background") && (
+              <>
+                <Typography sx={panelTitle}>{panel === "text" ? "Card headline" : panel === "template" ? "Template" : "Background"}</Typography>
+                {panel === "text" ? (
+                  <>
+                    <TextField
+                      multiline
+                      minRows={3}
+                      maxRows={10}
+                      slotProps={{ htmlInput: { maxLength: CARD_TEXT_MAX, "aria-label": "Card headline", readOnly: !canEdit } }}
+                      helperText="Drawn in yellow above the story. The story under it comes from the FTP."
+                      fullWidth
+                      size="small"
+                      value={layout.headline}
+                      onChange={(e) => patch({ headline: e.target.value.slice(0, CARD_TEXT_MAX) })}
+                      sx={{ ...fieldSx, "& textarea": { fontWeight: 600 } }}
+                    />
+                    <Button size="small" disabled={!canEdit || plainCardText(layout.headline) === item.headline} onClick={() => patch({ headline: item.headline })} startIcon={<RotateCcw size={13} />} sx={{ mt: 1, px: 0.5, color: "text.secondary", fontSize: "0.75rem" }}>
+                      Use the FTP headline
+                    </Button>
+                  </>
+                ) : (
+                  <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", lineHeight: 1.6 }}>
+                    This card is drawn on your X background from the Templates tab: today&apos;s date, the headline and the whole story.
+                  </Typography>
+                )}
+                <Alert
+                  severity="info"
+                  sx={{ mt: 2, fontSize: "0.75rem", borderRadius: "8px" }}
+                  action={canEdit ? <Button color="inherit" size="small" onClick={() => void switchToAutoCard()} disabled={!!busy} sx={{ whiteSpace: "nowrap" }}>Design here</Button> : undefined}
+                >
+                  For a template, a photo or extra text, design the card here instead of using your background.
+                </Alert>
+              </>
+            )}
+
             {panel === "story" && (
               <>
                 <Typography sx={panelTitle}>Story from FTP</Typography>
@@ -1440,6 +1662,54 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             <Box onPointerDown={(e) => e.target === e.currentTarget && setSelection(null)} sx={{ position: "absolute", inset: 0, overflow: "auto", display: "flex", p: "64px 40px 56px" }}>
               {/* Measured box: the frame is fitted to this area */}
               <Box ref={setStageEl} onPointerDown={(e) => e.target === e.currentTarget && setSelection(null)} sx={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
+                {serverView && live?.draft.card.url ? (
+                  <Box sx={{ m: "auto", display: "flex", flexDirection: "column", alignItems: "center", gap: 1.5, maxWidth: "100%" }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={apiFileUrl(live.draft.card.url)}
+                      alt={`Card already on this draft: ${live.draft.cardHeadline}`}
+                      style={{ display: "block", maxWidth: "100%", maxHeight: Math.max(160, stage.h - 72), boxShadow: "0 8px 30px rgba(0,0,0,0.22)", backgroundColor: "#111" }}
+                    />
+                    <Box sx={{ ...floatingSx, display: "flex", alignItems: "center", flexWrap: "wrap", justifyContent: "center", gap: 1, px: 1.5, py: 1, borderRadius: "10px", maxWidth: 520 }}>
+                      <Typography sx={{ fontSize: "0.75rem", flex: "1 1 220px", lineHeight: 1.5 }}>
+                        This draft already has a card made elsewhere. It posts as it is unless you change it.
+                      </Typography>
+                      {canEdit && (
+                        <Box sx={{ display: "flex", gap: 0.5 }}>
+                          {cardTemplate && (
+                            <Button size="small" onClick={() => setCardSource("background")} disabled={!!busy} sx={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>
+                              Use your X background
+                            </Button>
+                          )}
+                          <Button size="small" onClick={() => setCardSource("design")} disabled={!!busy} sx={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>
+                            Design here
+                          </Button>
+                        </Box>
+                      )}
+                    </Box>
+                  </Box>
+                ) : bgMode ? (
+                  <Box sx={{ position: "relative", width: bgFrameWidth, aspectRatio: `${bgFrame.w} / ${bgFrame.h}`, flexShrink: 0, m: "auto", boxShadow: "0 8px 30px rgba(0,0,0,0.22)", backgroundColor: "#111", lineHeight: 0 }}>
+                    {bg.card && (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img src={bg.card.url} alt={`Card on your X background: ${plainCardText(layout.headline) || item.headline}`} style={{ display: "block", width: "100%", height: "100%" }} />
+                    )}
+                    {(bg.status === "drawing" || bg.status === "error") && (
+                      <Box role={bg.status === "error" ? "alert" : "status"} sx={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", p: 2, backgroundColor: bg.card ? "rgba(0,0,0,0.25)" : "transparent", lineHeight: 1.5 }}>
+                        {bg.status === "drawing" ? (
+                          <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.25, py: 0.75, borderRadius: "8px", backgroundColor: "rgba(0,0,0,0.7)", color: "#fff" }}>
+                            <CircularProgress size={14} sx={{ color: "#fff" }} />
+                            <Typography sx={{ fontSize: "0.75rem" }}>Drawing on your X background</Typography>
+                          </Box>
+                        ) : (
+                          <Alert severity="error" sx={{ maxWidth: 360, fontSize: "0.8125rem", borderRadius: "8px" }}>
+                            {bg.error}
+                          </Alert>
+                        )}
+                      </Box>
+                    )}
+                  </Box>
+                ) : (
                 <TemplateCanvas
                   ref={canvasRef}
                   media={media}
@@ -1458,6 +1728,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   onTime={playhead.set}
                   style={{ width: frameWidth, maxWidth: "none", maxHeight: "none", flexShrink: 0, margin: "auto", boxShadow: "0 8px 30px rgba(0,0,0,0.22)" }}
                 />
+                )}
               </Box>
             </Box>
 
@@ -1545,7 +1816,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   </Button>
                 </>
               )}
-              {!selection && <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", px: 1 }}>Click any text or the picture to edit it. Double-click text to type.</Typography>}
+              {!selection && (
+                <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", px: 1 }}>
+                  {bgMode ? "Drawn on your X background. Change the headline in Text." : "Click any text or the picture to edit it. Double-click text to type."}
+                </Typography>
+              )}
             </Box>
 
             {/* View zoom */}
@@ -1602,8 +1877,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           </Box>
 
           {/* Post panel */}
-          <Box sx={{ order: { xs: 3, lg: 0 }, flexShrink: 0, p: 2, overflowY: { lg: "auto" }, display: "flex", flexDirection: "column", gap: 2.5, backgroundColor: "background.paper", borderLeft: { lg: "1px solid" }, borderColor: "divider" }}>
-            {live && (live.lease.kind !== "mine" || stale !== null || (isVideo && isX)) && (
+          <Box id="post-editor-post-panel" sx={{ order: { xs: 3, lg: 0 }, flexShrink: 0, p: 2, overflowY: { lg: "auto" }, display: "flex", flexDirection: "column", gap: 2.5, backgroundColor: "background.paper", borderLeft: { lg: "1px solid" }, borderColor: "divider", ...(rightFolded && foldedPanelSx) }}>
+            {live && (live.lease.kind !== "mine" || stale !== null || (exportsVideo && isX)) && (
               <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
                 {live.lease.kind === "held" && (
                   <Alert severity="info" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }} action={desk?.canAct ? <Button color="inherit" size="small" onClick={() => void claimAgain()} disabled={!!busy}>Try again</Button> : undefined}>
@@ -1629,7 +1904,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                     </Box>
                   </Alert>
                 )}
-                {isVideo && isX && (
+                {exportsVideo && isX && (
                   <Alert severity="info" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }}>
                     Video posting is not enabled yet. Post to {meta.short} sends the card only.
                   </Alert>
@@ -1669,8 +1944,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 <Typography sx={{ ...sectionLabel, mb: 0.5 }}>Card that will be posted</Typography>
                 <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
                   <Typography sx={{ fontSize: "0.8125rem" }}>
-                    {ownCard ? "Your design from this editor" : "The automatic card"}
-                    {busy === "card" && <CircularProgress size={12} sx={{ ml: 1, verticalAlign: "middle" }} />}
+                    {serverView ? "A card made elsewhere" : bgMode ? "Your X background card" : ownCard ? "Your design from this editor" : "The automatic card"}
+                    {(busy === "card" || (bgMode && bg.status === "drawing")) && <CircularProgress size={12} sx={{ ml: 1, verticalAlign: "middle" }} aria-label="Working" />}
                   </Typography>
                   {ownCard && canEdit && (
                     <Button size="small" onClick={() => void switchToAutoCard()} disabled={!!busy} startIcon={<RotateCcw size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.secondary", whiteSpace: "nowrap" }}>
@@ -1679,8 +1954,29 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   )}
                 </Box>
                 <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.25 }}>
-                  {ownCard ? "The frame on the left, exactly as you see it." : "Change the template, text or picture and your design posts instead."}
+                  {serverView
+                    ? "Another operator or browser put this card on the draft. It posts as it is until you change the design or use your X background."
+                    : bgMode
+                    ? `Today's date, the headline and the whole story on your background${bg.card ? `, at ${bg.card.fontPx} px` : ""}.`
+                    : ownCard
+                      ? "The frame on the left, exactly as you see it."
+                      : "Change the template, text or picture and your design posts instead."}
                 </Typography>
+                {bgMode && bg.status === "ready" && bg.card?.cut && (
+                  <Alert severity="warning" sx={{ mt: 1, py: 0, fontSize: "0.75rem", borderRadius: "8px" }}>
+                    The story is too long for the box even at the smallest size, so its end is cut. Shorten the headline, or design the card here.
+                  </Alert>
+                )}
+                {!bgMode && !serverView && cardTemplate && canEdit && (
+                  <Button size="small" onClick={() => setCardSource("background")} disabled={!!busy} startIcon={<ImageIcon size={13} />} sx={{ mt: 0.5, minHeight: 30, px: 0.5, fontSize: "0.75rem" }}>
+                    Use your X background
+                  </Button>
+                )}
+                {isX && cardTemplates?.data && !cardTemplate && (
+                  <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.75 }}>
+                    Upload your X background in Templates to have every card drawn on it.
+                  </Typography>
+                )}
               </Box>
             )}
 
@@ -1708,6 +2004,15 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               )}
             </Box>
           </Box>
+
+          {/* Panel edges: drag to resize, buttons to fold (desktop only) */}
+          {wide && (
+            <>
+              <PanelResizeHandle panel={leftPanel} offset={EDITOR_PANELS.leftFixed + leftPanel.width} label="tool panel" controls="post-editor-tool-panel" />
+              {!rightPanel.collapsed && <PanelResizeHandle panel={rightPanel} offset={rightPanel.width} label="post panel" controls="post-editor-post-panel" />}
+              <FoldedPanelStrip panel={rightPanel} label="post panel" title={isX ? "Tweet" : platform === "Facebook" ? "Post text" : "Caption"} controls="post-editor-post-panel" />
+            </>
+          )}
         </Box>
       </Box>
 
@@ -1725,7 +2030,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         <Box sx={{ p: 2.5, backgroundColor: "action.hover", overflowY: "auto" }}>
           <Box sx={{ maxWidth: isX ? 520 : 380, mx: "auto" }}>
             <PostMock platform={platform} text={finalText}>
-              {previewOpen && <TemplateCanvas media={media} format={format} handle={`@${meta.handle}`} tag={item.tag} layout={layout} style={{ width: `min(100%, calc(58vh * ${frame.w} / ${frame.h}))` }} />}
+              {previewOpen && bgMode && bg.card && (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={bg.card.url} alt="Card on your X background" style={{ display: "block", width: `min(100%, calc(58vh * ${bgFrame.w} / ${bgFrame.h}))` }} />
+              )}
+              {previewOpen && !bgMode && <TemplateCanvas media={media} format={format} handle={`@${meta.handle}`} tag={item.tag} layout={layout} style={{ width: `min(100%, calc(58vh * ${frame.w} / ${frame.h}))` }} />}
             </PostMock>
           </Box>
         </Box>

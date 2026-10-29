@@ -2,9 +2,13 @@
 
 import React from "react";
 import { Box, Typography } from "@mui/material";
-import { BreakingTag, SocialPlatform } from "@/types/newsroom";
+import { BreakingTag, FtpNewsItem, SocialPlatform } from "@/types/newsroom";
 import { CHANNEL } from "@/constants";
+import type { QueueItem, StoryPriority } from "@/lib/socia/types";
 import { BIG_BREAKING_YELLOW, BREAKING_RED } from "./TemplateCanvas";
+
+// Shared with pages outside the desk; they live in ui/controls so those pages need not load the card canvas
+export { CONTROL_HEIGHT, SegmentedControl, srOnly, type SegmentOption } from "../ui/controls";
 
 export const XIcon: React.FC<{ size?: number; color?: string }> = ({ size = 18, color = "currentColor" }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill={color} aria-hidden>
@@ -65,13 +69,64 @@ export const TAG_TINT: Record<BreakingTag, { label: string; rgb: string; light: 
   breaking: { label: "Breaking", rgb: "215, 20, 26", light: [0.2, 0.04], dark: [0.32, 0.06] },
 };
 
+/** Samvadia's priority as a desk tag: "breaking" is Big Breaking, "high" is Breaking, anything else none. */
+export const priorityTag = (priority: StoryPriority | null | undefined): BreakingTag | null =>
+  priority === "breaking" ? "big_breaking" : priority === "high" ? "breaking" : null;
+
+// Live stories carry the queue item they came from (see live/LiveDesk); read it without importing that module
+const liveOf = (item: FtpNewsItem): QueueItem | null => ("live" in item ? (item as FtpNewsItem & { live: QueueItem }).live : null);
+
+/**
+ * The story's Breaking / Big Breaking flag, or null for a normal story. Live, it comes from the server's
+ * priority (the live adapter's own `tag` is only a placeholder); in demo mode from the story's tag.
+ */
+export const storyTag = (item: FtpNewsItem): BreakingTag | null => {
+  const live = liveOf(item);
+  return live ? priorityTag(live.priority) : item.tag;
+};
+
+/** The story's category (live, from Samvadia), or null when there is none. */
+export const storyCategory = (item: FtpNewsItem): string | null => liveOf(item)?.category?.trim() || null;
+
+/** Small neutral label for a story's category. */
+export const CategoryLabel: React.FC<{ category: string; onDark?: boolean }> = ({ category, onDark }) => (
+  <Box
+    component="span"
+    title={`Category: ${category}`}
+    sx={{
+      display: "inline-block",
+      maxWidth: 160,
+      minWidth: 0,
+      px: 0.6,
+      py: "1px",
+      borderRadius: "4px",
+      border: "1px solid",
+      borderColor: onDark ? "rgba(255,255,255,0.28)" : "divider",
+      color: onDark ? "rgba(255,255,255,0.85)" : "text.secondary",
+      fontSize: "0.625rem",
+      fontWeight: 600,
+      lineHeight: 1.5,
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      verticalAlign: "middle",
+    }}
+  >
+    {category}
+  </Box>
+);
+
 /** Left-to-right fade in the tag's colour; boost strengthens it for the open or hovered story. */
 export const tagTint = (tag: BreakingTag, mode: "light" | "dark", boost = 1) => {
   const { rgb, [mode]: [from, to] } = TAG_TINT[tag];
   return `linear-gradient(90deg, rgba(${rgb}, ${Math.min(1, from * boost)}) 0%, rgba(${rgb}, ${Math.min(1, to * boost)}) 100%)`;
 };
 
-export const srOnly = { position: "absolute", width: "1px", height: "1px", overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" } as const;
+/** The toast after a reject, which points to the Rejected news page. */
+const REJECTED_NOTICE_END = "Find it in Rejected news.";
+export const rejectedNotice = (headline: string) => `Rejected "${headline}". ${REJECTED_NOTICE_END}`;
+export const isRejectedNotice = (notice: string) => notice.endsWith(REJECTED_NOTICE_END);
+
 
 export function timeAgo(iso: string): string {
   const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));

@@ -26,7 +26,7 @@ async function ingestOrNull(): Promise<IngestStatus | null> {
 const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
 /** Checks the FTP for new stories on demand; the automatic checks keep running in the background. */
-export function FtpRefresh({ onDone, size = "medium" }: { onDone?: (added: number) => void; size?: "small" | "medium" }) {
+export function FtpRefresh({ onDone }: { onDone?: (added: number) => void }) {
   const { fetchFtpNews } = useNewsroom();
   const desk = useLiveDesk();
   const [checking, setChecking] = useState(false);
@@ -55,7 +55,7 @@ export function FtpRefresh({ onDone, size = "medium" }: { onDone?: (added: numbe
       onClick={refresh}
       disabled={checking}
       startIcon={checking ? <CircularProgress size={14} color="inherit" /> : <RefreshCw size={14} />}
-      sx={{ height: size === "small" ? 32 : 36, flexShrink: 0, fontWeight: 600, fontSize: size === "small" ? "0.75rem" : undefined, borderColor: "divider", color: "text.primary", whiteSpace: "nowrap" }}
+      sx={{ height: 36, flexShrink: 0, fontWeight: 600, borderColor: "divider", color: "text.primary", whiteSpace: "nowrap" }}
     >
       {checking ? "Refreshing" : "Refresh"}
     </Button>

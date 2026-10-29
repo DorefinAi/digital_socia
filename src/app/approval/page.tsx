@@ -1,15 +1,7 @@
-"use client";
+import { redirect } from "next/navigation";
+import { REJECTED_NEWS_PATH } from "@/lib/rejectedNews";
 
-import React from "react";
-import DeskPage from "@/components/Layout/DeskPage";
-import ApprovalPortal from "@/components/Newsroom/ApprovalPortal";
-
-const ApprovalPage: React.FC = () => {
-  return (
-    <DeskPage>
-      <ApprovalPortal />
-    </DeskPage>
-  );
-};
-
-export default ApprovalPage;
+// The Approval Portal became Rejected news; old links and bookmarks land there.
+export default function ApprovalPage() {
+  redirect(REJECTED_NEWS_PATH);
+}

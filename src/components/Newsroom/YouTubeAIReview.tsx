@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { readPrefill, type TrendPrefill } from "@/lib/trendPrefill";
 import {
   Box,
   Typography,
@@ -36,7 +38,11 @@ import {
   RotateCcw,
   LayoutGrid,
   List,
+  Clapperboard,
+  Plus,
 } from "lucide-react";
+import { StudioModal, YouTubeFormatMenu, type YouTubeFormat } from "@/components/Newsroom/BreakingDesk/video/panels/StudioLauncher";
+import type { StoryMediaSource } from "@/components/Newsroom/BreakingDesk/video/projectFromStory";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { useThemeMode } from "@/providers/MuiProvider";
 import { AIContent } from "@/types/newsroom";
@@ -47,6 +53,21 @@ const YoutubeIcon: React.FC<{ size?: number; color?: string }> = ({ size = 20, c
   </svg>
 );
 
+/** The script's first line is the video title, the rest its description (one line: the topic is the title) */
+function studioText(item: AIContent): StoryMediaSource {
+  const [first, ...rest] = item.caption.trim().split(/\n+/);
+  const description = rest.join("\n").trim();
+  return description
+    ? { id: item.id, headline: first, description, media: [] }
+    : { id: item.id, headline: item.campaign, description: item.caption, media: [] };
+}
+
+/** A web trend opened from the Web Scraper's "Create draft for…", as a script to edit (YouTube posting is not live). */
+function trendScript(p: TrendPrefill): AIContent {
+  const caption = [p.headline, p.text, p.district && `District: ${p.district}`, p.source && `Source: ${p.source}`].filter(Boolean).join("\n\n");
+  return { id: `trend-${p.headline.slice(0, 40)}`, caption, imageUrl: "", platform: "YouTube", generatedAt: new Date().toISOString(), campaign: p.headline, confidenceScore: 0, status: "pending" };
+}
+
 export default function YouTubeAIReview() {
   const { aiContent, updateAIContentStatus, updateAIContentCaption, permissions, addActivity } = useNewsroom();
   const { mode } = useThemeMode();
@@ -55,10 +76,17 @@ export default function YouTubeAIReview() {
   const [viewMode, setViewMode] = useState<"cards" | "list">("cards");
   const [tab, setTab] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedContent, setSelectedContent] = useState<AIContent | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editCaption, setEditCaption] = useState("");
+  // ?prefill= from the Web Scraper opens the script editor on that trend
+  const prefill = readPrefill(useSearchParams());
+  const [selectedContent, setSelectedContent] = useState<AIContent | null>(() => (prefill ? trendScript(prefill) : null));
+  const [modalOpen, setModalOpen] = useState(() => !!prefill);
+  const [isEditing, setIsEditing] = useState(() => !!prefill);
+  const [editCaption, setEditCaption] = useState(() => (prefill ? trendScript(prefill).caption : ""));
+  const trendDraft = !!selectedContent?.id.startsWith("trend-");
+
+  // Video studio: pick a shape (landscape or Short), then edit full-screen. A new video saves under "new".
+  const [formatMenu, setFormatMenu] = useState<{ anchor: HTMLElement; item: AIContent | null } | null>(null);
+  const [studio, setStudio] = useState<{ platform: YouTubeFormat; item: AIContent | null } | null>(null);
 
   const youtubeContent = aiContent.filter((c) => c.platform === "YouTube");
 
@@ -93,6 +121,12 @@ export default function YouTubeAIReview() {
 
   const handleSaveCaption = () => {
     if (!selectedContent || !permissions.canApproveSocialContent) return;
+    if (trendDraft) {
+      // Kept on this screen only: there is no YouTube backend yet
+      setSelectedContent({ ...selectedContent, caption: editCaption });
+      setIsEditing(false);
+      return;
+    }
     updateAIContentCaption(selectedContent.id, editCaption);
     addActivity("edited", "Digital Team", `YouTube script for ${selectedContent.campaign}`, "Script updated");
     setIsEditing(false);
@@ -155,6 +189,15 @@ export default function YouTubeAIReview() {
               <Typography sx={{ fontSize: "1rem", fontWeight: 700, color: "#E65100" }}>{pendingCount}</Typography>
             </Box>
           </Box>
+
+          <Button
+            variant="contained"
+            startIcon={<Plus size={16} />}
+            onClick={(e) => setFormatMenu({ anchor: e.currentTarget, item: null })}
+            sx={{ height: 38, borderRadius: "8px", textTransform: "none", backgroundColor: "#FF0000", "&:hover": { backgroundColor: "#CC0000" } }}
+          >
+            New video
+          </Button>
 
           <ToggleButtonGroup
             value={viewMode}
@@ -335,6 +378,15 @@ export default function YouTubeAIReview() {
                   >
                     Review Script
                   </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={(e) => setFormatMenu({ anchor: e.currentTarget, item })}
+                    startIcon={<Clapperboard size={14} />}
+                    sx={{ borderRadius: "8px", textTransform: "none", fontSize: "0.75rem", borderColor: "#FFCDD2", color: "#D32F2F" }}
+                  >
+                    Edit video
+                  </Button>
                   {item.status === "pending" && permissions.canApproveSocialContent && (
                     <Button
                       size="small"
@@ -386,6 +438,7 @@ export default function YouTubeAIReview() {
                   <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                     <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
                       <Button size="small" variant="outlined" onClick={() => openPreview(item)} sx={{ borderRadius: "6px", textTransform: "none", fontSize: "0.7rem" }}>Inspect</Button>
+                      <Button size="small" variant="outlined" onClick={(e) => setFormatMenu({ anchor: e.currentTarget, item })} sx={{ borderRadius: "6px", textTransform: "none", fontSize: "0.7rem" }}>Edit video</Button>
                       {item.status === "pending" && permissions.canApproveSocialContent && (
                         <Button size="small" variant="contained" onClick={() => updateAIContentStatus(item.id, "approved")} sx={{ borderRadius: "6px", textTransform: "none", fontSize: "0.7rem", backgroundColor: "#FF0000" }}>Approve</Button>
                       )}
@@ -396,6 +449,22 @@ export default function YouTubeAIReview() {
             </TableBody>
           </Table>
         </TableContainer>
+      )}
+
+      <YouTubeFormatMenu
+        anchor={formatMenu?.anchor ?? null}
+        onClose={() => setFormatMenu(null)}
+        onPick={(platform) => setStudio({ platform, item: formatMenu?.item ?? null })}
+      />
+      {studio && (
+        <StudioModal
+          open
+          platform={studio.platform}
+          draftId={studio.item?.id ?? "new"}
+          story={studio.item ? studioText(studio.item) : null}
+          title={studio.item ? studioText(studio.item).headline : studio.platform === "Shorts" ? "New Short" : "New video"}
+          onClose={() => setStudio(null)}
+        />
       )}
 
       {/* Review Modal */}
@@ -431,9 +500,16 @@ export default function YouTubeAIReview() {
               </IconButton>
             </Box>
 
-            <Box sx={{ borderRadius: "12px", overflow: "hidden", height: 200, backgroundColor: "#000" }}>
-              <img src={selectedContent.imageUrl} alt="Preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            </Box>
+            {trendDraft && (
+              <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", p: 1.25, borderRadius: "8px", border: "1px dashed", borderColor: "divider" }}>
+                Drafted from a web trend. Draft only: YouTube posting is not live yet.
+              </Typography>
+            )}
+            {selectedContent.imageUrl && (
+              <Box sx={{ borderRadius: "12px", overflow: "hidden", height: 200, backgroundColor: "#000" }}>
+                <img src={selectedContent.imageUrl} alt="Preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              </Box>
+            )}
 
             <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
               <Typography sx={{ fontSize: "0.8125rem", fontWeight: 700, color: "text.secondary" }}>
@@ -466,7 +542,7 @@ export default function YouTubeAIReview() {
                   Edit Script
                 </Button>
               )}
-              {selectedContent.status === "pending" && permissions.canApproveSocialContent && (
+              {selectedContent.status === "pending" && permissions.canApproveSocialContent && !trendDraft && (
                 <>
                   <Button variant="outlined" color="error" size="small" onClick={handleReject} startIcon={<XCircle size={14} />} sx={{ borderRadius: "8px" }}>
                     Reject
