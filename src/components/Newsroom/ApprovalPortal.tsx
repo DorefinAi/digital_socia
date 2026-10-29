@@ -41,6 +41,7 @@ import {
   Clock,
 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
+import { usePermissions } from "@/lib/access/usePermissions";
 import { useThemeMode } from "@/providers/MuiProvider";
 import { Story, StoryStatus, StoryCategory } from "@/types/newsroom";
 
@@ -55,7 +56,8 @@ const STATUS_COLORS: Record<StoryStatus, { bg: string; text: string }> = {
 };
 
 const ApprovalPortal: React.FC = () => {
-  const { stories, updateStoryStatus, updateStory, permissions, addActivity } = useNewsroom();
+  const { stories, updateStoryStatus, updateStory, addActivity } = useNewsroom();
+  const { can } = usePermissions();
   const { mode } = useThemeMode();
   const theme = useTheme();
 
@@ -117,7 +119,7 @@ const ApprovalPortal: React.FC = () => {
   const handleApprove = (storyId?: string, title?: string) => {
     const targetId = storyId || selectedStory?.id;
     const targetTitle = title || selectedStory?.title;
-    if (!targetId || !permissions.canApproveNews) return;
+    if (!targetId || !can("draft.approve")) return;
     updateStoryStatus(targetId, "approved");
     addActivity("approved", "Editor", targetTitle || "Story", "Story approved for publication");
     if (selectedStory?.id === targetId) {
@@ -129,7 +131,7 @@ const ApprovalPortal: React.FC = () => {
   const handleReject = (storyId?: string, title?: string) => {
     const targetId = storyId || selectedStory?.id;
     const targetTitle = title || selectedStory?.title;
-    if (!targetId || !permissions.canRejectNews) return;
+    if (!targetId || !can("draft.reject")) return;
     updateStoryStatus(targetId, "rejected");
     addActivity("rejected", "Editor", targetTitle || "Story", "Story rejected from Approval Portal");
     if (selectedStory?.id === targetId) {
@@ -139,7 +141,7 @@ const ApprovalPortal: React.FC = () => {
   };
 
   const handleSave = () => {
-    if (!selectedStory || !permissions.canEditContent) return;
+    if (!selectedStory || !can("draft.edit")) return;
     updateStory(selectedStory.id, {
       title: editTitle,
       body: editBody,
@@ -390,7 +392,7 @@ const ApprovalPortal: React.FC = () => {
                   size="small"
                   variant="contained"
                   color="success"
-                  disabled={!permissions.canApproveNews || story.status === "approved"}
+                  disabled={!can("draft.approve") || story.status === "approved"}
                   onClick={() => handleApprove(story.id, story.title)}
                   startIcon={<CheckCircle size={14} />}
                   sx={{ flex: 1, borderRadius: "8px", textTransform: "none", fontSize: "0.75rem", fontWeight: 600 }}
@@ -401,7 +403,7 @@ const ApprovalPortal: React.FC = () => {
                   size="small"
                   variant="outlined"
                   color="error"
-                  disabled={!permissions.canRejectNews || story.status === "rejected"}
+                  disabled={!can("draft.reject") || story.status === "rejected"}
                   onClick={() => handleReject(story.id, story.title)}
                   startIcon={<XCircle size={14} />}
                   sx={{ borderRadius: "8px", textTransform: "none", fontSize: "0.75rem", px: 1.25 }}
@@ -472,7 +474,7 @@ const ApprovalPortal: React.FC = () => {
                         size="small"
                         variant="contained"
                         color="success"
-                        disabled={!permissions.canApproveNews || story.status === "approved"}
+                        disabled={!can("draft.approve") || story.status === "approved"}
                         onClick={() => handleApprove(story.id, story.title)}
                         startIcon={<CheckCircle size={13} />}
                         sx={{ borderRadius: "6px", textTransform: "none", fontSize: "0.7rem", py: 0.25, px: 1 }}
@@ -483,7 +485,7 @@ const ApprovalPortal: React.FC = () => {
                         size="small"
                         variant="outlined"
                         color="error"
-                        disabled={!permissions.canRejectNews || story.status === "rejected"}
+                        disabled={!can("draft.reject") || story.status === "rejected"}
                         onClick={() => handleReject(story.id, story.title)}
                         startIcon={<XCircle size={13} />}
                         sx={{ borderRadius: "6px", textTransform: "none", fontSize: "0.7rem", py: 0.25, px: 1 }}
@@ -627,18 +629,18 @@ const ApprovalPortal: React.FC = () => {
                     Save Changes
                   </Button>
                 ) : (
-                  permissions.canEditContent && (
+                  can("draft.edit") && (
                     <Button variant="outlined" onClick={() => setIsEditing(true)} startIcon={<Pencil size={16} />} sx={{ borderRadius: "8px" }}>
                       Edit
                     </Button>
                   )
                 )}
-                <Tooltip title={!permissions.canRejectNews ? "No permission to reject" : ""}>
+                <Tooltip title={!can("draft.reject") ? "No permission to reject" : ""}>
                   <span>
                     <Button
                       variant="outlined"
                       color="error"
-                      disabled={!permissions.canRejectNews || selectedStory.status === "rejected"}
+                      disabled={!can("draft.reject") || selectedStory.status === "rejected"}
                       onClick={() => handleReject(selectedStory.id, selectedStory.title)}
                       startIcon={<XCircle size={16} />}
                       sx={{ borderRadius: "8px" }}
@@ -647,12 +649,12 @@ const ApprovalPortal: React.FC = () => {
                     </Button>
                   </span>
                 </Tooltip>
-                <Tooltip title={!permissions.canApproveNews ? "No permission to approve" : ""}>
+                <Tooltip title={!can("draft.approve") ? "No permission to approve" : ""}>
                   <span>
                     <Button
                       variant="contained"
                       color="success"
-                      disabled={!permissions.canApproveNews || selectedStory.status === "approved"}
+                      disabled={!can("draft.approve") || selectedStory.status === "approved"}
                       onClick={() => handleApprove(selectedStory.id, selectedStory.title)}
                       startIcon={<CheckCircle size={16} />}
                       sx={{ borderRadius: "8px", fontWeight: 700 }}

@@ -7,7 +7,8 @@ import { Box, Button, Typography, TextField, InputAdornment, Snackbar, LinearPro
 import ResponsiveTabs from "@/components/Layout/ResponsiveTabs";
 import { Search, LayoutGrid, List } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
-import { BreakingTag, FtpNewsItem, PostPayload, ROLE_LABELS, SocialPlatform } from "@/types/newsroom";
+import { BreakingTag, FtpNewsItem, PostPayload, SocialPlatform } from "@/types/newsroom";
+import { usePermissions } from "@/lib/access/usePermissions";
 import { DAILY_CAP, draftToPayload, isLiveOn } from "@/data/socialDesk";
 import PostEditor from "./PostEditor";
 import PostedPostsList from "./PostedPostsList";
@@ -62,14 +63,20 @@ function trendToNews(p: TrendPrefill): FtpNewsItem {
 const tileSx = { backgroundColor: "background.paper", borderRadius: "12px", px: 2, py: 1.5, border: "1px solid", borderColor: "divider", boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.03)" };
 
 export default function BreakingDesk({ platform }: { platform: SocialPlatform }) {
-  const { ftpNews, socialPosts, socialDrafts, pendingPosts, rejectDraft, permissions, currentRole } = useNewsroom();
+  const { ftpNews, socialPosts, socialDrafts, pendingPosts, rejectDraft } = useNewsroom();
+  const { can, roleLabel } = usePermissions();
   // Live desk (NEXT_PUBLIC_USE_MOCKS off): the same screen on the server's drafts; null on the demo data
   const desk = useLiveDesk();
-  const canAct = desk ? desk.canAct : permissions.canApproveSocialContent;
+  // Open a story in the editor (draft.edit); reject it from the queue
+  const canAct = desk ? desk.canAct : can("draft.edit");
+  // The server lets post.publish decline a draft too (Digital Team rejects on the desk)
+  const canReject = canAct && (can("draft.reject") || can("post.publish"));
   const meta = PLATFORM_META[platform];
   const otherPlatforms = (["X (Twitter)", "Instagram", "Facebook"] as SocialPlatform[]).filter((p) => p !== platform);
 
-  const [tab, setTab] = useState<ConsoleTab>("queue");
+  // ?tab=templates opens the Templates tab (the profile page links there for card backgrounds)
+  const initialTab = useSearchParams().get("tab");
+  const [tab, setTab] = useState<ConsoleTab>(() => (initialTab === "templates" || initialTab === "published" || initialTab === "scheduled" ? initialTab : "queue"));
   const [viewMode, setViewMode] = useState<"cards" | "list">(readView);
   const changeView = (next: "cards" | "list") => {
     setViewMode(next);
@@ -98,7 +105,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const [composing, setComposing] = useState<FtpNewsItem | null>(() => {
     // Live: the editor loads the draft by id, so the link can open it before the queue has loaded
     if (desk) return canAct && composeId ? ({ id: composeId } as FtpNewsItem) : null;
-    if (!permissions.canApproveSocialContent) return null;
+    if (!can("draft.edit")) return null;
     if (prefill) return trendToNews(prefill);
     return ftpNews.find((n) => n.id === composeId) || null;
   });
@@ -225,7 +232,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       mentions: [],
       mediaKind: cover.kind,
       thumbUrl: cover.posterUrl ?? cover.url,
-      postedBy: ROLE_LABELS[currentRole],
+      postedBy: roleLabel,
     };
   };
 
@@ -244,14 +251,14 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       } else if ((key === "enter" || key === "e") && focused && canAct) {
         e.preventDefault();
         setComposing(focused);
-      } else if (key === "r" && focused && canAct && !(isLiveItem(focused) && focused.live.claim && !focused.live.claim.mine)) {
+      } else if (key === "r" && focused && canReject && !(isLiveItem(focused) && focused.live.claim && !focused.live.claim.mine)) {
         e.preventDefault();
         setRejecting(focused);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tab, composing, rejecting, visible.length, focused, canAct]);
+  }, [tab, composing, rejecting, visible.length, focused, canAct, canReject]);
 
 
   const openStory = (newsId: string) => {
@@ -406,6 +413,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
                 isSaved: (newsId: string) => (desk ? !!desk.queue.find((n) => n.id === newsId)?.live.claim?.mine : draftFor(newsId)?.status === "saved"),
                 liveElsewhere: (newsId: string) => (desk ? null : otherPlatforms.filter((p) => isLiveOn(socialPosts, newsId, p)).map((p) => PLATFORM_META[p].short).join(", ") || null),
                 canAct,
+                canReject,
                 ...(desk
                   ? {
                       savedLabel: "With you",

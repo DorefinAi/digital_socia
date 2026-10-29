@@ -6,6 +6,7 @@ import LeftNavigation from "@/components/leftNavigation/leftNavigation";
 import DashBoardCommonHeader from "@/components/Header/DashBoardCommonHeader";
 import { CONTENT_MAX_WIDTH } from "@/constants";
 import SessionGate from "./SessionGate";
+import AccessGuard from "./AccessGuard";
 
 /**
  * Shell for every signed-in page: sidebar, header and a centred content column.
@@ -38,7 +39,9 @@ export default function DeskPage({ children }: { children: React.ReactNode }) {
           }}
         >
           <DashBoardCommonHeader />
-          <Box sx={{ mx: "auto", width: "100%", maxWidth: CONTENT_MAX_WIDTH }}>{children}</Box>
+          <Box sx={{ mx: "auto", width: "100%", maxWidth: CONTENT_MAX_WIDTH }}>
+            <AccessGuard>{children}</AccessGuard>
+          </Box>
         </Box>
       </Box>
     </SessionGate>

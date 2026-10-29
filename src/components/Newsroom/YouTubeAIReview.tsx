@@ -44,6 +44,7 @@ import {
 import { StudioModal, YouTubeFormatMenu, type YouTubeFormat } from "@/components/Newsroom/BreakingDesk/video/panels/StudioLauncher";
 import type { StoryMediaSource } from "@/components/Newsroom/BreakingDesk/video/projectFromStory";
 import { useNewsroom } from "@/providers/NewsroomProvider";
+import { usePermissions } from "@/lib/access/usePermissions";
 import { useThemeMode } from "@/providers/MuiProvider";
 import { AIContent } from "@/types/newsroom";
 
@@ -69,7 +70,8 @@ function trendScript(p: TrendPrefill): AIContent {
 }
 
 export default function YouTubeAIReview() {
-  const { aiContent, updateAIContentStatus, updateAIContentCaption, permissions, addActivity } = useNewsroom();
+  const { aiContent, updateAIContentStatus, updateAIContentCaption, addActivity } = useNewsroom();
+  const { can } = usePermissions();
   const { mode } = useThemeMode();
   const theme = useTheme();
 
@@ -106,21 +108,21 @@ export default function YouTubeAIReview() {
   };
 
   const handleApprove = () => {
-    if (!selectedContent || !permissions.canApproveSocialContent) return;
+    if (!selectedContent || !can("draft.approve")) return;
     updateAIContentStatus(selectedContent.id, "approved");
     addActivity("approved", "Digital Team", `YouTube AI Video: ${selectedContent.campaign}`, "Video script and metadata approved");
     setModalOpen(false);
   };
 
   const handleReject = () => {
-    if (!selectedContent || !permissions.canApproveSocialContent) return;
+    if (!selectedContent || !can("draft.reject")) return;
     updateAIContentStatus(selectedContent.id, "rejected");
     addActivity("rejected", "Digital Team", `YouTube AI Video: ${selectedContent.campaign}`, "Video script rejected");
     setModalOpen(false);
   };
 
   const handleSaveCaption = () => {
-    if (!selectedContent || !permissions.canApproveSocialContent) return;
+    if (!selectedContent || !can("draft.edit")) return;
     if (trendDraft) {
       // Kept on this screen only: there is no YouTube backend yet
       setSelectedContent({ ...selectedContent, caption: editCaption });
@@ -387,7 +389,7 @@ export default function YouTubeAIReview() {
                   >
                     Edit video
                   </Button>
-                  {item.status === "pending" && permissions.canApproveSocialContent && (
+                  {item.status === "pending" && can("draft.approve") && (
                     <Button
                       size="small"
                       variant="contained"
@@ -439,7 +441,7 @@ export default function YouTubeAIReview() {
                     <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
                       <Button size="small" variant="outlined" onClick={() => openPreview(item)} sx={{ borderRadius: "6px", textTransform: "none", fontSize: "0.7rem" }}>Inspect</Button>
                       <Button size="small" variant="outlined" onClick={(e) => setFormatMenu({ anchor: e.currentTarget, item })} sx={{ borderRadius: "6px", textTransform: "none", fontSize: "0.7rem" }}>Edit video</Button>
-                      {item.status === "pending" && permissions.canApproveSocialContent && (
+                      {item.status === "pending" && can("draft.approve") && (
                         <Button size="small" variant="contained" onClick={() => updateAIContentStatus(item.id, "approved")} sx={{ borderRadius: "6px", textTransform: "none", fontSize: "0.7rem", backgroundColor: "#FF0000" }}>Approve</Button>
                       )}
                     </Box>
@@ -542,9 +544,9 @@ export default function YouTubeAIReview() {
                   Edit Script
                 </Button>
               )}
-              {selectedContent.status === "pending" && permissions.canApproveSocialContent && !trendDraft && (
+              {selectedContent.status === "pending" && can("draft.approve") && !trendDraft && (
                 <>
-                  <Button variant="outlined" color="error" size="small" onClick={handleReject} startIcon={<XCircle size={14} />} sx={{ borderRadius: "8px" }}>
+                  <Button variant="outlined" color="error" size="small" onClick={handleReject} disabled={!can("draft.reject")} startIcon={<XCircle size={14} />} sx={{ borderRadius: "8px" }}>
                     Reject
                   </Button>
                   <Button variant="contained" color="success" size="small" onClick={handleApprove} startIcon={<CheckCircle size={14} />} sx={{ borderRadius: "8px" }}>

@@ -12,7 +12,7 @@ import ResponsiveTabs from "@/components/Layout/ResponsiveTabs";
 import { DEMO_SCRAPER_TOPICS } from "@/data/scraperData";
 import { USE_MOCKS } from "@/lib/socia/config";
 import { usePolled } from "@/lib/socia/usePolled";
-import { useSociaSession } from "@/providers/SociaSessionProvider";
+import { usePermissions } from "@/lib/access/usePermissions";
 import { fetchTrendDistricts, fetchTrends, refreshTrends, searchTrends, type TrendItem, type TrendSource, type TrendsResponse, type TrendType, type TrendWindow } from "@/lib/socia/trends";
 import { errorText, LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
 import { CONTROL_HEIGHT, SegmentedControl } from "./ui/controls";
@@ -125,8 +125,9 @@ function demoItems(type: TrendType): TrendItem[] {
 
 export default function WebScraperPage() {
   const live = !USE_MOCKS;
-  const { me } = useSociaSession();
-  const canRunSources = me?.user.role === "editor" || me?.user.role === "admin";
+  const { can } = usePermissions();
+  // Starting a run of the sources needs trends.refresh; without it Refresh reloads what the last run found
+  const canRunSources = can("trends.refresh");
 
   const [remembered, setRemembered] = useState<Remembered>(readRemembered);
   const remember = (patch: Partial<Remembered>) => {
@@ -246,7 +247,6 @@ export default function WebScraperPage() {
       return;
     }
     setRefreshing(true);
-    // Only editors and admins may start a run of the sources; everyone else reloads what the last run found
     if (!canRunSources) {
       await trends.refresh();
       setNotice({ text: "Reloaded. The sources are checked every 15 minutes." });
@@ -267,7 +267,7 @@ export default function WebScraperPage() {
 
   // "Create draft" asks which platform (CreateDraftDialog), then opens that platform's editor on the trend
   const [drafting, setDrafting] = useState<TrendItem | null>(null);
-  const cardProps: CardActions = { onDraft: setDrafting, now, hitsOf: watch.hitsOf };
+  const cardProps: CardActions = { onDraft: can("trends.draft") ? setDrafting : null, now, hitsOf: watch.hitsOf };
   const tab = TYPE_TABS.find((t) => t.value === type)!;
   const loadError = live && !trends.data ? trends.error : null;
   const staleError = live && trends.data ? trends.error : null;
@@ -311,7 +311,7 @@ export default function WebScraperPage() {
             startIcon={refreshing ? <CircularProgress size={14} color="inherit" /> : <RefreshCw size={14} />}
             sx={{ height: CONTROL_HEIGHT, flexShrink: 0, fontWeight: 600, borderColor: "divider", color: "text.primary", whiteSpace: "nowrap" }}
           >
-            {refreshing ? "Refreshing" : "Refresh"}
+            {refreshing ? "Refreshing" : live && !canRunSources ? "Reload" : "Refresh"}
           </Button>
         </Box>
       </Box>
@@ -776,7 +776,8 @@ function Stats({ item }: { item: TrendItem }) {
 }
 
 interface CardActions {
-  onDraft: (item: TrendItem) => void;
+  /** Null when the person can't create drafts from trends (trends.draft): the button is hidden */
+  onDraft: ((item: TrendItem) => void) | null;
   now: number;
   hitsOf: (item: TrendItem) => string[];
 }
@@ -785,6 +786,7 @@ function Actions({ item, onDraft, compact }: Pick<CardActions, "onDraft"> & { it
   const btn = { minHeight: 32, px: 1.25, fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" } as const;
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap", justifyContent: compact ? "flex-end" : "flex-start" }}>
+      {onDraft && (
       <Button
         size="small"
         variant="contained"
@@ -796,6 +798,7 @@ function Actions({ item, onDraft, compact }: Pick<CardActions, "onDraft"> & { it
       >
         Create draft
       </Button>
+      )}
       {item.url && (
         <Button size="small" variant="outlined" component="a" href={item.url} target="_blank" rel="noopener noreferrer" startIcon={<ExternalLink size={13} />} sx={{ ...btn, borderColor: "divider", color: "text.primary" }}>
           Source

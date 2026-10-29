@@ -29,6 +29,7 @@ import { togglePlayback } from "./panels/playback";
 import { ASSET_DRAG_TYPE } from "./panels/catalog";
 import { S, studioTheme } from "./panels/studioTheme";
 import { useSuppressBrowserMenu } from "./ui/EditorContextMenu";
+import { usePermissions } from "@/lib/access/usePermissions";
 
 export interface VideoStudioProps {
   platform: StudioPlatform;
@@ -203,10 +204,14 @@ function StudioShell({ platform, draftId, story, aspect, title, onClose, onUseVi
 
   const togglePlay = useCallback(() => togglePlayback(engine, store), [engine, store]);
   const playing = useEnginePlaying(engine);
+  // Exporting needs video.export; the button explains why it is off
+  const { can } = usePermissions();
+  const mayExport = can("video.export");
   const openExport = useCallback(() => {
+    if (!mayExport) return;
     engine.pause();
     setExporting(true);
-  }, [engine]);
+  }, [engine, mayExport]);
   const previewRef = useRef<HTMLDivElement>(null);
   // Shell actions in the timeline's Ctrl+K palette; ids that are in the keymap also get its shortcut
   const commands = useMemo<StudioCommand[]>(
@@ -317,7 +322,8 @@ function StudioShell({ platform, draftId, story, aspect, title, onClose, onUseVi
         save={save}
         onStartOver={() => setConfirmReset(true)}
         onExport={openExport}
-        exportDisabled={!ready || empty}
+        exportDisabled={!ready || empty || !mayExport}
+        exportNote={mayExport ? undefined : "Your role can't export video"}
         onClose={onClose}
       />
 

@@ -21,9 +21,13 @@ import {
   BarChart3,
   Sparkles,
   Filter,
+  Globe,
+  UserRound,
+  ShieldCheck,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { canSeeRejectedNews, REJECTED_NEWS_LABEL, REJECTED_NEWS_PATH } from "@/lib/rejectedNews";
+import { REJECTED_NEWS_LABEL, REJECTED_NEWS_PATH, REJECTED_NEWS_PERMISSION } from "@/lib/rejectedNews";
+import { usePermissions } from "@/lib/access/usePermissions";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { useThemeMode } from "@/providers/MuiProvider";
 
@@ -45,14 +49,18 @@ const SearchModal: React.FC<SearchModalProps> = ({ open, onClose }) => {
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
   const router = useRouter();
-  const { stories, aiContent, reporters, permissions } = useNewsroom();
+  const { stories, aiContent, reporters } = useNewsroom();
+  const { can, canAny } = usePermissions();
   const { mode } = useThemeMode();
 
   const navItems = [
-    { label: "Dashboard", path: "/dashboard", icon: <LayoutDashboard size={18} />, accessible: permissions.canAccessDashboard },
-    { label: REJECTED_NEWS_LABEL, path: REJECTED_NEWS_PATH, icon: <XCircle size={18} />, accessible: canSeeRejectedNews(permissions) },
-    { label: "Digital Dashboard", path: "/digital", icon: <BarChart3 size={18} />, accessible: permissions.canAccessDigitalDashboard },
-    { label: "Post Studio", path: "/ai-content", icon: <Sparkles size={18} />, accessible: permissions.canAccessAIContentReview },
+    { label: "Dashboard", path: "/dashboard", icon: <LayoutDashboard size={18} />, accessible: can("page.dashboard") },
+    { label: REJECTED_NEWS_LABEL, path: REJECTED_NEWS_PATH, icon: <XCircle size={18} />, accessible: can(REJECTED_NEWS_PERMISSION) },
+    { label: "Digital Dashboard", path: "/digital", icon: <BarChart3 size={18} />, accessible: can("page.dashboard") },
+    { label: "Post Studio", path: "/ai-content", icon: <Sparkles size={18} />, accessible: canAny(["page.post_studio.x", "page.post_studio.instagram", "page.post_studio.facebook", "page.post_studio.youtube"]) },
+    { label: "Web Scraper", path: "/web-scraper", icon: <Globe size={18} />, accessible: can("page.web_scraper") },
+    { label: "Your profile", path: "/profile", icon: <UserRound size={18} />, accessible: true },
+    { label: "Access", path: "/settings/access", icon: <ShieldCheck size={18} />, accessible: can("page.settings") && canAny(["roles.manage", "users.manage"]) },
   ];
 
   const filterTypes = [

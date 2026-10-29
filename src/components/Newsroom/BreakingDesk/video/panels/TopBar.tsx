@@ -34,6 +34,8 @@ export interface TopBarProps {
   onStartOver: () => void;
   onExport: () => void;
   exportDisabled: boolean;
+  /** Why Export is off, shown as its tooltip (e.g. no video.export permission) */
+  exportNote?: string;
   onClose?: () => void;
 }
 
@@ -111,9 +113,13 @@ export default function TopBar(p: TopBarProps) {
         <Button color="inherit" size="small" startIcon={<RotateCcw size={15} />} onClick={p.onStartOver} sx={{ color: S.muted, mx: 0.5 }}>
           Start over
         </Button>
-        <Button variant="contained" startIcon={<Upload size={16} />} onClick={p.onExport} disabled={p.exportDisabled} sx={{ px: 2.25, height: 34 }}>
-          Export
-        </Button>
+        <Tooltip title={p.exportNote ?? ""}>
+          <span>
+            <Button variant="contained" startIcon={<Upload size={16} />} onClick={p.onExport} disabled={p.exportDisabled} sx={{ px: 2.25, height: 34 }}>
+              Export
+            </Button>
+          </span>
+        </Tooltip>
       </Box>
     </Box>
   );

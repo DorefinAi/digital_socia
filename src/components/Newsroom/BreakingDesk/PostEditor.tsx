@@ -43,7 +43,8 @@ import {
 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { Playhead, usePlayhead, usePlayheadTime } from "@/hooks/usePlayhead";
-import { CardTextLayer, CardTextStyle, FtpMedia, FtpNewsItem, MediaAdjust, PostPayload, ROLE_LABELS, RejectReason, SocialPlatform, TextMotion } from "@/types/newsroom";
+import { CardTextLayer, CardTextStyle, FtpMedia, FtpNewsItem, MediaAdjust, PostPayload, RejectReason, SocialPlatform, TextMotion } from "@/types/newsroom";
+import { usePermissions } from "@/lib/access/usePermissions";
 import TemplateCanvas, {
   BREAKING_RED,
   CanvasSelection,
@@ -238,11 +239,17 @@ function liveTags(d: DraftView) {
 }
 
 export default function PostEditor({ item, platform, onClose, onSwitch, onSaved, live }: PostEditorProps) {
-  const { publishSocialPost, saveDraft, scheduleDraft, rejectDraft, socialDrafts, socialPosts, hashtagRules, handleDirectory, permissions, currentRole } = useNewsroom();
+  const { publishSocialPost, saveDraft, scheduleDraft, rejectDraft, socialDrafts, socialPosts, hashtagRules, handleDirectory } = useNewsroom();
+  const { can, roleLabel } = usePermissions();
   const desk = useLiveDesk();
   const isX = platform === "X (Twitter)";
   // Live: changes need the claim; held, lost or read-only stories open to look at
-  const canEdit = live ? live.lease.kind === "mine" && !!desk?.canAct : permissions.canApproveSocialContent;
+  const canEdit = (live ? live.lease.kind === "mine" && !!desk?.canAct : true) && can("draft.edit");
+  // Each button also needs its own permission (access-control-contract.md §2)
+  const mayPublish = can("post.publish");
+  const mayMarkPosted = can("post.mark_posted");
+  // Reject declines the draft: draft.reject or post.publish, as on the server
+  const mayReject = can("draft.reject") || can("post.publish");
 
   // Everything that belongs to one story. Reopening a saved or scheduled story picks up where the operator left off.
   const storyStart = (story: FtpNewsItem) => {
@@ -731,7 +738,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       mentions: selectedMentions,
       mediaKind: media.kind,
       thumbUrl: canvasRef.current?.snapshot(320) ?? media.posterUrl ?? cover.posterUrl ?? cover.url,
-      postedBy: ROLE_LABELS[currentRole],
+      postedBy: roleLabel,
       format,
       mediaFile: media.fileName,
       layout,
@@ -1078,13 +1085,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   const postButton = (onDark: boolean) =>
     live ? (
-      <Tooltip title={blockedReason || `Posts the card to ${meta.short} after a 10-second undo window`}>
+      <Tooltip title={!mayPublish ? "Your role can't post to the platforms" : blockedReason || `Posts the card to ${meta.short} after a 10-second undo window`}>
         <span>
           <Button
             variant="contained"
             onClick={() => void postLive()}
             aria-label={busy === "post" ? "Posting" : `Post to ${meta.short}`}
-            disabled={!canPost}
+            disabled={!canPost || !mayPublish}
             startIcon={busy === "post" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <Send size={15} />}
             sx={{ minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", "&:hover": { backgroundColor: "#B50F14" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.7)" } }}
           >
@@ -1104,13 +1111,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           {onDark ? phoneLabel(copied ? "Copied" : "Copy") : copied ? "Copied" : "Copy"}
         </Button>
       </Tooltip>
-      <Tooltip title={blockedReason || (live ? `Downloads the ${exportsVideo ? "clip" : "card"} to post by hand, then asks for the post's link` : `Downloads the ${isVideo ? "clip" : "card"} and marks this story posted on ${meta.short}`)}>
+      <Tooltip title={!mayMarkPosted ? "Your role can't save posts as posted" : blockedReason || (live ? `Downloads the ${exportsVideo ? "clip" : "card"} to post by hand, then asks for the post's link` : `Downloads the ${isVideo ? "clip" : "card"} and marks this story posted on ${meta.short}`)}>
         <span>
           <Button
             variant={live ? (onDark ? "text" : "outlined") : "contained"}
             onClick={saveAsPosted}
             aria-label={exporting !== null ? `Saving ${Math.round(exporting * 100)}%` : alreadyPosted ? "Save again" : "Save as posted"}
-            disabled={!canPost || exporting !== null}
+            disabled={!canPost || !mayMarkPosted || exporting !== null}
             startIcon={exporting !== null ? <CircularProgress size={14} sx={{ color: live ? "inherit" : "#fff" }} variant="determinate" value={Math.max(4, exporting * 100)} /> : <Save size={15} />}
             sx={live ? (onDark ? { ...chromeButton, border: `1px solid ${BAR.border}`, whiteSpace: "nowrap", "&.Mui-disabled": { color: "rgba(255,255,255,0.4)" } } : { minHeight: 34, whiteSpace: "nowrap" }) : savePostedSx}
           >
@@ -1982,7 +1989,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
             <Box sx={{ position: { lg: "sticky" }, bottom: { lg: -16 }, mt: "auto", mx: -2, mb: -2, px: 2, py: 1.25, backgroundColor: "background.paper", borderTop: "1px solid", borderColor: "divider" }}>
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-                <Button color="error" onClick={() => setDialog("reject")} disabled={!canEdit || !!busy} startIcon={<Ban size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1 }}>
+                <Button color="error" onClick={() => setDialog("reject")} disabled={!canEdit || !mayReject || !!busy} startIcon={<Ban size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1 }}>
                   Reject
                 </Button>
                 <Box sx={{ flex: 1 }} />
@@ -1991,7 +1998,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 </Button>
                 <Tooltip title={live ? "Scheduling isn't available on the live desk yet" : blockedReason}>
                   <span>
-                    <Button variant="outlined" onClick={() => setDialog("schedule")} disabled={!canPost || !!live} startIcon={<CalendarClock size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25 }}>
+                    <Button variant="outlined" onClick={() => setDialog("schedule")} disabled={!canPost || !mayPublish || !!live} startIcon={<CalendarClock size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25 }}>
                       Schedule
                     </Button>
                   </span>

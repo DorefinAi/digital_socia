@@ -28,6 +28,7 @@ import {
   Cell,
 } from "recharts";
 import { useNewsroom } from "@/providers/NewsroomProvider";
+import { usePermissions } from "@/lib/access/usePermissions";
 import { useThemeMode } from "@/providers/MuiProvider";
 import Link from "next/link";
 import { Button } from "@mui/material";
@@ -59,7 +60,8 @@ function AnimatedCounter({ value, duration = 1200 }: { value: number; duration?:
 const PIE_COLORS = ["#FF6384", "#36A2EB", "#FFCE56", "#4BC0C0", "#9966FF", "#FF9F40", "#C9CBCF"];
 
 const NewsroomDashboard: React.FC = () => {
-  const { metrics: demoMetrics, stories, aiContent, engagement, activity, ftpNews, socialPosts, permissions } = useNewsroom();
+  const { metrics: demoMetrics, stories, aiContent, engagement, activity, ftpNews, socialPosts } = useNewsroom();
+  const { can } = usePermissions();
   // Live desk (NEXT_PUBLIC_USE_MOCKS off): the same widgets, fed from the Socia backend where they map
   const desk = useLiveDesk();
 
@@ -70,7 +72,7 @@ const NewsroomDashboard: React.FC = () => {
   // Live: the X queue; a story there is by definition not posted yet, and only X is connected
   const breakingQueue = desk ? desk.queue : ftpNews.filter((n) => DESKS.some((p) => !postedSets[p].has(n.id)));
   const isDone = (platform: SocialPlatform, id: string) => (desk ? false : postedSets[platform].has(id));
-  const canPost = (platform: SocialPlatform) => (desk ? desk.canAct && platform === "X (Twitter)" : permissions.canApproveSocialContent);
+  const canPost = (platform: SocialPlatform) => can("post.publish") && (desk ? desk.canAct && platform === "X (Twitter)" : true);
   const postedCount = desk ? (desk.posts.data?.items.length ?? 0) : socialPosts.length;
 
   // Live counts replace the social numbers; the assignment-desk numbers stay on the demo data

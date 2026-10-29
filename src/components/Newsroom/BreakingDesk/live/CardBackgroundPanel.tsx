@@ -9,6 +9,7 @@ import { ImageUp, RefreshCw, Trash2 } from "lucide-react";
 import * as socia from "@/lib/socia/api";
 import { LoadError } from "@/components/Newsroom/SociaDesk/liveShared";
 import { errorText, useLiveDesk } from "./LiveDesk";
+import { usePermissions } from "@/lib/access/usePermissions";
 import CardLayoutEditor from "./CardLayoutEditor";
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -41,6 +42,7 @@ async function checkFile(file: File): Promise<string | null> {
 
 export default function CardBackgroundPanel() {
   const desk = useLiveDesk();
+  const { can } = usePermissions();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<null | "upload" | "remove">(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +54,7 @@ export default function CardBackgroundPanel() {
 
   const polled = desk.cardTemplate;
   const template = polled.data?.template ?? null;
-  const canChange = desk.canAct;
+  const canChange = can("card_template.own");
 
   const upload = async (file: File | undefined) => {
     if (!file || busy || uploading.current) return;

@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useNewsroom } from "@/providers/NewsroomProvider";
+import { usePermissions } from "@/lib/access/usePermissions";
 import { useThemeMode } from "@/providers/MuiProvider";
 import { AIContent, Platform } from "@/types/newsroom";
 
@@ -64,7 +65,9 @@ export default function AIContentReview() {
   const router = useRouter();
   const platformParam = searchParams.get("platform");
 
-  const { aiContent, updateAIContentStatus, updateAIContentCaption, permissions, addActivity } = useNewsroom();
+  const { aiContent, updateAIContentStatus, updateAIContentCaption, addActivity } = useNewsroom();
+
+  const { can } = usePermissions();
   const { mode } = useThemeMode();
   const theme = useTheme();
 
@@ -92,21 +95,21 @@ export default function AIContentReview() {
   };
 
   const handleApprove = () => {
-    if (!selectedContent || !permissions.canApproveSocialContent) return;
+    if (!selectedContent || !can("draft.approve")) return;
     updateAIContentStatus(selectedContent.id, "approved");
     addActivity("approved", "Digital Team", `AI post for ${selectedContent.platform}`, "Content approved");
     setModalOpen(false);
   };
 
   const handleReject = () => {
-    if (!selectedContent || !permissions.canApproveSocialContent) return;
+    if (!selectedContent || !can("draft.reject")) return;
     updateAIContentStatus(selectedContent.id, "rejected");
     addActivity("rejected", "Digital Team", `AI post for ${selectedContent.platform}`, "Content rejected");
     setModalOpen(false);
   };
 
   const handleSaveCaption = () => {
-    if (!selectedContent || !permissions.canApproveSocialContent) return;
+    if (!selectedContent || !can("draft.edit")) return;
     updateAIContentCaption(selectedContent.id, editCaption);
     addActivity("edited", "Digital Team", `AI caption for ${selectedContent.platform}`, "Caption updated");
     setIsEditingCaption(false);
@@ -225,7 +228,7 @@ export default function AIContentReview() {
                   <Button size="small" variant="outlined" onClick={() => handleOpenPreview(item)} startIcon={<Eye size={14} />} sx={{ borderRadius: "8px", textTransform: "none", fontSize: "0.75rem" }}>
                     Inspect
                   </Button>
-                  {item.status === "pending" && permissions.canApproveSocialContent && (
+                  {item.status === "pending" && can("draft.approve") && (
                     <Button size="small" variant="contained" onClick={() => updateAIContentStatus(item.id, "approved")} sx={{ borderRadius: "8px", textTransform: "none", fontSize: "0.75rem" }}>
                       Approve
                     </Button>
@@ -268,7 +271,7 @@ export default function AIContentReview() {
                   <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                     <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
                       <Button size="small" variant="outlined" onClick={() => handleOpenPreview(item)} sx={{ borderRadius: "6px", textTransform: "none", fontSize: "0.7rem" }}>Inspect</Button>
-                      {item.status === "pending" && permissions.canApproveSocialContent && (
+                      {item.status === "pending" && can("draft.approve") && (
                         <Button size="small" variant="contained" onClick={() => updateAIContentStatus(item.id, "approved")} sx={{ borderRadius: "6px", textTransform: "none", fontSize: "0.7rem" }}>Approve</Button>
                       )}
                     </Box>
@@ -311,7 +314,7 @@ export default function AIContentReview() {
               {selectedContent.caption}
             </Typography>
             <Box sx={{ display: "flex", gap: 1.5, justifyContent: "flex-end" }}>
-              <Button variant="outlined" color="error" size="small" onClick={handleReject} sx={{ borderRadius: "8px" }}>Reject</Button>
+              <Button variant="outlined" color="error" size="small" onClick={handleReject} disabled={!can("draft.reject")} sx={{ borderRadius: "8px" }}>Reject</Button>
               <Button variant="contained" color="success" size="small" onClick={handleApprove} sx={{ borderRadius: "8px" }}>Approve</Button>
             </Box>
           </Box>

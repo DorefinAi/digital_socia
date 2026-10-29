@@ -8,9 +8,6 @@ import {
   ActivityItem,
   Notification,
   Reporter,
-  UserRole,
-  RolePermissions,
-  ROLE_PERMISSIONS,
   StoryStatus,
   AIContentStatus,
   ActivityAction,
@@ -33,6 +30,7 @@ import {
   resetData,
   NewsroomData,
 } from "@/data/demoData";
+import { resetMockAccess } from "@/lib/access/mockStore";
 
 interface NewsroomContextType {
   // Data
@@ -42,11 +40,6 @@ interface NewsroomContextType {
   activity: ActivityItem[];
   notifications: Notification[];
   reporters: Reporter[];
-
-  // Role
-  currentRole: UserRole;
-  setRole: (role: UserRole) => void;
-  permissions: RolePermissions;
 
   // Story actions
   updateStoryStatus: (storyId: string, status: StoryStatus) => void;
@@ -115,14 +108,11 @@ interface NewsroomContextType {
 
 const NewsroomContext = createContext<NewsroomContextType | undefined>(undefined);
 
-const ROLE_STORAGE_KEY = "newsroom_role";
-
 /** Seconds between automatic FTP checks in the demo. The spec has the backend poll every 5 seconds. */
 export const FTP_POLL_SECONDS = 20;
 
 export function NewsroomProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<NewsroomData | null>(null);
-  const [currentRole, setCurrentRole] = useState<UserRole>("admin");
   const [mounted, setMounted] = useState(false);
 
   // Initialize data
@@ -133,17 +123,7 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
     } else {
       setData(generateAndStoreData());
     }
-    const savedRole = localStorage.getItem(ROLE_STORAGE_KEY) as UserRole;
-    if (savedRole && ROLE_PERMISSIONS[savedRole]) {
-      setCurrentRole(savedRole);
-    }
     setMounted(true);
-  }, []);
-
-  // Persist role
-  const setRole = useCallback((role: UserRole) => {
-    setCurrentRole(role);
-    localStorage.setItem(ROLE_STORAGE_KEY, role);
   }, []);
 
   // Persist data whenever it changes
@@ -152,8 +132,6 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
       saveData(data);
     }
   }, [data, mounted]);
-
-  const permissions = ROLE_PERMISSIONS[currentRole];
 
   // ─── Story Actions ────────────────────────────────────────────────────────
   const updateStoryStatus = useCallback((storyId: string, status: StoryStatus) => {
@@ -427,8 +405,7 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
   // ─── Reset ────────────────────────────────────────────────────────────
   const resetDemo = useCallback(() => {
     setData(resetData());
-    setCurrentRole("admin");
-    localStorage.setItem(ROLE_STORAGE_KEY, "admin");
+    resetMockAccess();
   }, []);
 
   // ─── Metrics ─────────────────────────────────────────────────────────
@@ -465,9 +442,6 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
         activity: data.activity,
         notifications: data.notifications,
         reporters: data.reporters,
-        currentRole,
-        setRole,
-        permissions,
         updateStoryStatus,
         updateStory,
         addStory,

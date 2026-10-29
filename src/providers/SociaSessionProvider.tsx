@@ -4,8 +4,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { USE_MOCKS } from "@/lib/socia/config";
 import { fetchMe, logout } from "@/lib/socia/api";
 import { ApiError, onSignedOut } from "@/lib/socia/client";
-import type { Me, SociaRole } from "@/lib/socia/types";
-import type { UserRole } from "@/types/newsroom";
+import type { Me } from "@/lib/socia/types";
 
 type SessionStatus = "mock" | "loading" | "signed_in" | "needs_second_step" | "signed_out" | "offline";
 
@@ -20,9 +19,6 @@ interface SociaSession {
 }
 
 const SessionContext = createContext<SociaSession | null>(null);
-
-/** How a backend role shows in the desk's own role model (nav access, header label). */
-export const DESK_ROLE: Record<SociaRole, UserRole> = { admin: "admin", editor: "editor", operator: "digital_team", viewer: "viewer" };
 
 export function SociaSessionProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<SessionStatus>(USE_MOCKS ? "mock" : "loading");

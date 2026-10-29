@@ -8,6 +8,7 @@
 import React, { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import SessionGate from "@/components/Layout/SessionGate";
+import AccessGuard from "@/components/Layout/AccessGuard";
 import VideoStudio from "@/components/Newsroom/BreakingDesk/video/VideoStudio";
 import type { StudioPlatform } from "@/components/Newsroom/BreakingDesk/video/projectFromStory";
 import { LiveDeskProvider, useLiveDesk } from "@/components/Newsroom/BreakingDesk/live/LiveDesk";
@@ -45,15 +46,17 @@ function LiveStudio() {
 export default function VideoStudioPage() {
   return (
     <SessionGate>
-      <Suspense>
-        {USE_MOCKS ? (
-          <MockStudio />
-        ) : (
-          <LiveDeskProvider>
-            <LiveStudio />
-          </LiveDeskProvider>
-        )}
-      </Suspense>
+      <AccessGuard>
+        <Suspense>
+          {USE_MOCKS ? (
+            <MockStudio />
+          ) : (
+            <LiveDeskProvider>
+              <LiveStudio />
+            </LiveDeskProvider>
+          )}
+        </Suspense>
+      </AccessGuard>
     </SessionGate>
   );
 }

@@ -31,6 +31,8 @@ export interface QueueViewProps {
   /** Short name of the other platform when the story is already live there */
   liveElsewhere: (newsId: string) => string | null;
   canAct: boolean;
+  /** Reject from the queue (draft.reject); defaults to canAct */
+  canReject?: boolean;
   /** Live: the name of whoever else has the story open (never their hold's end time) */
   heldBy?: (newsId: string) => string | null;
   /** Live: what a story the operator already holds is called ("With you") */
@@ -71,10 +73,10 @@ function StatusChip({ saved, elsewhere, held, savedLabel = "Draft saved" }: { sa
   return <Chip label="New" size="small" sx={{ height: 22, fontSize: "0.6875rem", fontWeight: 600, borderRadius: "6px", backgroundColor: "#FFF8E1", color: "#F57F17" }} />;
 }
 
-function Actions({ item, saved, held, canAct, onOpen, onReject, compact, align = "end" }: { item: FtpNewsItem; saved: boolean; held?: string | null; canAct: boolean; onOpen: () => void; onReject: () => void; compact?: boolean; align?: "start" | "end" }) {
+function Actions({ item, saved, held, canAct, canReject = canAct, onOpen, onReject, compact, align = "end" }: { item: FtpNewsItem; saved: boolean; held?: string | null; canAct: boolean; canReject?: boolean; onOpen: () => void; onReject: () => void; compact?: boolean; align?: "start" | "end" }) {
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, justifyContent: align === "end" ? "flex-end" : "flex-start" }} onClick={(e) => e.stopPropagation()}>
-      {canAct && !held && (
+      {canReject && !held && (
         <Tooltip title="Reject (R)">
           <IconButton size="small" aria-label={`Reject ${item.headline}`} onClick={onReject} sx={{ width: { xs: 40, md: 32 }, height: { xs: 40, md: 32 }, borderRadius: "8px", color: "text.secondary", "&:hover": { color: "error.main" } }}>
             <Ban size={15} />
@@ -100,7 +102,7 @@ function Actions({ item, saved, held, canAct, onOpen, onReject, compact, align =
 }
 
 // ─── Cards ───────────────────────────────────────────────────────────────────
-export function QueueCards({ items, focusedId, onFocus, onOpen, onReject, isSaved, liveElsewhere, canAct, heldBy, savedLabel, highlightIds }: QueueViewProps) {
+export function QueueCards({ items, focusedId, onFocus, onOpen, onReject, isSaved, liveElsewhere, canAct, canReject, heldBy, savedLabel, highlightIds }: QueueViewProps) {
   return (
     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", lg: "repeat(3, 1fr)" }, gap: 2.5 }}>
       {items.map((item, i) => {
@@ -151,7 +153,7 @@ export function QueueCards({ items, focusedId, onFocus, onOpen, onReject, isSave
               </Box>
               <Box sx={{ mt: "auto", pt: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
                 <StatusChip saved={saved} elsewhere={elsewhere} held={held} savedLabel={savedLabel} />
-                <Actions item={item} saved={saved} held={held} canAct={canAct} onOpen={() => onOpen(item)} onReject={() => onReject(item)} />
+                <Actions item={item} saved={saved} held={held} canAct={canAct} canReject={canReject ?? canAct} onOpen={() => onOpen(item)} onReject={() => onReject(item)} />
               </Box>
             </Box>
           </Box>
@@ -165,7 +167,7 @@ export function QueueCards({ items, focusedId, onFocus, onOpen, onReject, isSave
 // Fits the column at any width: tag, area, files and time sit under the
 // headline, the thumbnail appears from sm, status gets its own column from md,
 // and on phones the actions move into the story cell.
-export function QueueTable({ items, focusedId, onFocus, onOpen, onReject, isSaved, liveElsewhere, canAct, heldBy, savedLabel, highlightIds }: QueueViewProps) {
+export function QueueTable({ items, focusedId, onFocus, onOpen, onReject, isSaved, liveElsewhere, canAct, canReject, heldBy, savedLabel, highlightIds }: QueueViewProps) {
   const { mode } = useThemeMode();
   const head = { fontWeight: 700, fontSize: "0.75rem", whiteSpace: "nowrap" as const };
   const fromSm = { display: { xs: "none", sm: "table-cell" } };
@@ -221,14 +223,14 @@ export function QueueTable({ items, focusedId, onFocus, onOpen, onReject, isSave
                   </Box>
                   <Typography sx={{ display: { xs: "none", sm: "block" }, mt: 0.5, fontSize: "0.6875rem", color: "text.disabled", fontFamily: "var(--font-mono), monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.ftpPath}</Typography>
                   <Box sx={{ display: { xs: "block", sm: "none" }, mt: 1 }}>
-                    <Actions item={item} saved={saved} held={held} canAct={canAct} onOpen={() => onOpen(item)} onReject={() => onReject(item)} align="start" />
+                    <Actions item={item} saved={saved} held={held} canAct={canAct} canReject={canReject ?? canAct} onOpen={() => onOpen(item)} onReject={() => onReject(item)} align="start" />
                   </Box>
                 </TableCell>
                 <TableCell sx={fromMd}>
                   <StatusChip saved={saved} elsewhere={elsewhere} held={held} savedLabel={savedLabel} />
                 </TableCell>
                 <TableCell align="right" sx={fromSm}>
-                  <Actions item={item} saved={saved} held={held} canAct={canAct} onOpen={() => onOpen(item)} onReject={() => onReject(item)} compact />
+                  <Actions item={item} saved={saved} held={held} canAct={canAct} canReject={canReject ?? canAct} onOpen={() => onOpen(item)} onReject={() => onReject(item)} compact />
                 </TableCell>
               </TableRow>
             );

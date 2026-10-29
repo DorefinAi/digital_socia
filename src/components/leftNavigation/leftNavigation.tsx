@@ -24,13 +24,15 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Globe,
+  ShieldCheck,
 } from "lucide-react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { canSeeRejectedNews, REJECTED_NEWS_LABEL, REJECTED_NEWS_PATH } from "@/lib/rejectedNews";
+import { REJECTED_NEWS_LABEL, REJECTED_NEWS_PATH, REJECTED_NEWS_PERMISSION } from "@/lib/rejectedNews";
 import NavigationLabel from "../Overview/NavigationLabel";
 import SociaMark from "@/components/Login/SociaMark";
 import { AI_CONTENT_PLATFORMS } from "./aiContentPlatforms";
-import { useNewsroom } from "@/providers/NewsroomProvider";
+import { usePermissions } from "@/lib/access/usePermissions";
+import { postStudioKey } from "@/lib/access/catalogue";
 import { useSociaSession } from "@/providers/SociaSessionProvider";
 
 const COLLAPSED_WIDTH = 60;
@@ -48,7 +50,7 @@ const LeftNavigation: React.FC = () => {
   const isMobile = useMediaQuery(theme.breakpoints.down("lg"));
   const [mobileOpen, setMobileOpen] = useState(false);
   const [aiSubmenuOpen, setAiSubmenuOpen] = useState(true);
-  const { permissions, currentRole } = useNewsroom();
+  const { can, canAny, roleLabel } = usePermissions();
 
   // Sidebar state: collapsed or custom width
   const [collapsed, setCollapsed] = useState(false);
@@ -146,19 +148,25 @@ const LeftNavigation: React.FC = () => {
 
   const isCollapsed = sidebarWidth < 80;
 
+  // Post Studio lists only the desks this person may open
+  const studioItems = AI_CONTENT_PLATFORMS.filter((p) => can(postStudioKey(p.platformKey))).map((p) => ({ label: p.label, icon: p.icon(16), platformKey: p.platformKey, path: p.path }));
+  const canManageAccess = can("page.settings") && canAny(["roles.manage", "users.manage"]);
+
   const navItems = [
-    { label: "Dashboard", icon: <LayoutDashboard size={20} />, path: "/dashboard", accessible: permissions.canAccessDashboard },
-    { label: REJECTED_NEWS_LABEL, icon: <XCircle size={20} />, path: REJECTED_NEWS_PATH, accessible: canSeeRejectedNews(permissions) },
-    { label: "Digital Dashboard", icon: <BarChart3 size={20} />, path: "/digital", accessible: permissions.canAccessDigitalDashboard },
-    { label: "Web Scraper", icon: <Globe size={20} />, path: "/web-scraper", accessible: permissions.canAccessWebScraper !== false },
+    { label: "Dashboard", icon: <LayoutDashboard size={20} />, path: "/dashboard", accessible: can("page.dashboard") },
+    { label: REJECTED_NEWS_LABEL, icon: <XCircle size={20} />, path: REJECTED_NEWS_PATH, accessible: can(REJECTED_NEWS_PERMISSION) },
+    { label: "Digital Dashboard", icon: <BarChart3 size={20} />, path: "/digital", accessible: can("page.dashboard") },
+    { label: "Web Scraper", icon: <Globe size={20} />, path: "/web-scraper", accessible: can("page.web_scraper") },
     {
       label: "Post Studio",
       icon: <Sparkles size={20} />,
       path: "/ai-content",
-      accessible: permissions.canAccessAIContentReview,
+      accessible: studioItems.length > 0,
       hasSubmenu: true,
-      subItems: AI_CONTENT_PLATFORMS.map((p) => ({ label: p.label, icon: p.icon(16), platformKey: p.platformKey, path: p.path })),
+      subItems: studioItems,
     },
+    // Admin-only: hidden rather than shown locked, since most people never need it
+    ...(canManageAccess ? [{ label: "Access", icon: <ShieldCheck size={20} />, path: "/settings/access", accessible: true }] : []),
   ];
 
   const handleLogoutClick = async () => {
@@ -222,13 +230,13 @@ const LeftNavigation: React.FC = () => {
       {/* Nav items */}
       <Box sx={{ display: "flex", flexDirection: "column", gap: "2px", flexGrow: 1 }}>
         {navItems.map((item) => {
-          const isParentActive = pathname === item.path;
+          const isParentActive = pathname === item.path || (item.path === "/settings/access" && pathname.startsWith("/settings"));
           const isAIReview = item.hasSubmenu;
 
           return (
             <React.Fragment key={item.label}>
               <Tooltip
-                title={isCollapsed ? item.label : (!item.accessible ? `${item.label} - Not available for ${currentRole.replace("_", " ")}` : "")}
+                title={isCollapsed ? item.label : (!item.accessible ? `${item.label}: not part of the ${roleLabel || "current"} role` : "")}
                 placement="right"
                 arrow
               >

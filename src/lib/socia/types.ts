@@ -5,12 +5,43 @@
 export type SociaRole = "operator" | "editor" | "admin" | "viewer";
 export type SignInStep = "done" | "totp" | "totp_setup";
 
+/** What /me sent before access control v1 (contract: access-control-contract.md §4) */
+export interface LegacyMePermissions {
+  platforms: string[];
+  canAct: boolean;
+  canEditLibrary: boolean;
+  canManageUsers: boolean;
+}
+
 export interface Me {
-  user: { id: string; name: string; email: string; role: SociaRole; platforms: string[] };
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    /** A built-in role (SociaRole) or a custom role's key */
+    role: SociaRole | (string & {});
+    platforms: string[];
+    /** access control v1 */
+    roleLabel?: string;
+    platformScoped?: boolean;
+    active?: boolean;
+    totpEnabled?: boolean;
+    createdAt?: string | null;
+    lastLoginAt?: string | null;
+  };
   csrfToken: string;
   verified: boolean;
   next: SignInStep;
-  permissions: { platforms: string[]; canAct: boolean; canEditLibrary: boolean; canManageUsers: boolean };
+  /** access control v1: the effective allowed keys; older servers send the legacy object */
+  permissions: string[] | LegacyMePermissions;
+  /** access control v1: the legacy object moved here (platforms the desk may act on) */
+  access?: LegacyMePermissions;
+  /** access control v1: exceptions set for this user by an admin */
+  overrides?: { permission: string; allowed: boolean }[];
+  /** access control v1: the permission catalogue */
+  catalogue?: { key: string; group: string; label: string; description: string }[];
+  /** Optional: who to ask for access, when the server says */
+  adminName?: string | null;
 }
 
 export type DraftStatus =

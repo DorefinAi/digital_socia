@@ -40,6 +40,7 @@ import {
   List,
 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
+import { usePermissions } from "@/lib/access/usePermissions";
 import { useThemeMode } from "@/providers/MuiProvider";
 import { AIContent } from "@/types/newsroom";
 
@@ -52,7 +53,8 @@ const InstagramIcon: React.FC<{ size?: number; color?: string }> = ({ size = 20,
 );
 
 export default function InstagramAIReview() {
-  const { aiContent, updateAIContentStatus, updateAIContentCaption, permissions, addActivity } = useNewsroom();
+  const { aiContent, updateAIContentStatus, updateAIContentCaption, addActivity } = useNewsroom();
+  const { can } = usePermissions();
   const { mode } = useThemeMode();
   const theme = useTheme();
 
@@ -82,21 +84,21 @@ export default function InstagramAIReview() {
   };
 
   const handleApprove = () => {
-    if (!selectedContent || !permissions.canApproveSocialContent) return;
+    if (!selectedContent || !can("draft.approve")) return;
     updateAIContentStatus(selectedContent.id, "approved");
     addActivity("approved", "Digital Team", `Instagram AI Post: ${selectedContent.campaign}`, "Post approved for Instagram feed");
     setModalOpen(false);
   };
 
   const handleReject = () => {
-    if (!selectedContent || !permissions.canApproveSocialContent) return;
+    if (!selectedContent || !can("draft.reject")) return;
     updateAIContentStatus(selectedContent.id, "rejected");
     addActivity("rejected", "Digital Team", `Instagram AI Post: ${selectedContent.campaign}`, "Post rejected");
     setModalOpen(false);
   };
 
   const handleSaveCaption = () => {
-    if (!selectedContent || !permissions.canApproveSocialContent) return;
+    if (!selectedContent || !can("draft.edit")) return;
     updateAIContentCaption(selectedContent.id, editCaption);
     addActivity("edited", "Digital Team", `Instagram caption for ${selectedContent.campaign}`, "Caption updated");
     setIsEditing(false);
@@ -334,7 +336,7 @@ export default function InstagramAIReview() {
                   >
                     Full Preview
                   </Button>
-                  {item.status === "pending" && permissions.canApproveSocialContent && (
+                  {item.status === "pending" && can("draft.approve") && (
                     <Button
                       size="small"
                       variant="contained"
@@ -385,7 +387,7 @@ export default function InstagramAIReview() {
                   <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                     <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
                       <Button size="small" variant="outlined" onClick={() => openPreview(item)} sx={{ borderRadius: "6px", textTransform: "none", fontSize: "0.7rem" }}>Inspect</Button>
-                      {item.status === "pending" && permissions.canApproveSocialContent && (
+                      {item.status === "pending" && can("draft.approve") && (
                         <Button size="small" variant="contained" onClick={() => updateAIContentStatus(item.id, "approved")} sx={{ borderRadius: "6px", textTransform: "none", fontSize: "0.7rem", backgroundColor: "#E4405F" }}>Approve</Button>
                       )}
                     </Box>
@@ -465,9 +467,9 @@ export default function InstagramAIReview() {
                   Edit Caption
                 </Button>
               )}
-              {selectedContent.status === "pending" && permissions.canApproveSocialContent && (
+              {selectedContent.status === "pending" && can("draft.approve") && (
                 <>
-                  <Button variant="outlined" color="error" size="small" onClick={handleReject} startIcon={<XCircle size={14} />} sx={{ borderRadius: "8px" }}>
+                  <Button variant="outlined" color="error" size="small" onClick={handleReject} disabled={!can("draft.reject")} startIcon={<XCircle size={14} />} sx={{ borderRadius: "8px" }}>
                     Reject
                   </Button>
                   <Button variant="contained" color="success" size="small" onClick={handleApprove} startIcon={<CheckCircle size={14} />} sx={{ borderRadius: "8px" }}>

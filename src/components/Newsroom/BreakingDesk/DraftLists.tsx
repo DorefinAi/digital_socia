@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { Box, Typography, Button } from "@mui/material";
 import { CalendarClock, Pencil, RotateCcw, Send } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
+import { usePermissions } from "@/lib/access/usePermissions";
 import { SocialDraft, SocialPlatform } from "@/types/newsroom";
 import { ScheduleDialog } from "./actionDialogs";
 import { EmptyState, ListThumb, formatStamp, listFrameSx } from "./shared";
@@ -27,7 +28,8 @@ const smallBtn = { minHeight: 30, fontSize: "0.75rem", px: 1 };
 
 // ─── Scheduled ───────────────────────────────────────────────────────────────
 export function ScheduledList({ platform, onEdit }: { platform: SocialPlatform; onEdit: (newsId: string) => void }) {
-  const { socialDrafts, rescheduleDraft, publishDraftNow, restoreDraft, permissions } = useNewsroom();
+  const { socialDrafts, rescheduleDraft, publishDraftNow, restoreDraft } = useNewsroom();
+  const { can } = usePermissions();
   const [rescheduling, setRescheduling] = useState<SocialDraft | null>(null);
   const drafts = socialDrafts
     .filter((d) => d.platform === platform && d.status === "scheduled")
@@ -50,7 +52,7 @@ export function ScheduledList({ platform, onEdit }: { platform: SocialPlatform; 
               {d.mediaKind === "video" ? "Video" : "Card"} · scheduled by {d.postedBy}
             </Typography>
           </Box>
-          {permissions.canApproveSocialContent && (
+          {can("post.publish") && (
             <Box sx={actionsSx}>
               <Button size="small" startIcon={<Pencil size={13} />} onClick={() => onEdit(d.newsId)} sx={smallBtn}>Edit</Button>
               <Button size="small" startIcon={<CalendarClock size={13} />} onClick={() => setRescheduling(d)} sx={smallBtn}>Reschedule</Button>
@@ -106,6 +108,7 @@ const SENDING_LABEL: Partial<Record<QueueItem["status"], string>> = { queued: "I
 /** Posts on their way to X, and ones that failed (with Retry). Takes the Scheduled tab's place on the live desk. */
 export function LiveSendingList() {
   const desk = useLiveDesk();
+  const { can } = usePermissions();
   const { busyId, error, run } = useRowAction();
   if (!desk) return null;
   const { sending, failed } = desk;
@@ -128,7 +131,7 @@ export function LiveSendingList() {
                 <Typography sx={{ fontSize: "0.75rem", fontWeight: 700, color: isFailed ? "error.main" : "text.secondary" }}>{SENDING_LABEL[d.status] ?? d.status}</Typography>
                 <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, mt: 0.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.headline}</Typography>
               </Box>
-              {desk.canAct && d.status === "failed" && (
+              {can("post.publish") && d.status === "failed" && (
                 <Box sx={actionsSx}>
                   <Button size="small" startIcon={<RotateCcw size={13} />} disabled={busyId === d.id} onClick={() => void run(d.id, () => desk.retry(d.id))} sx={smallBtn}>
                     Retry

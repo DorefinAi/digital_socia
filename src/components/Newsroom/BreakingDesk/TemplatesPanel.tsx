@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { Box, Typography, Button, IconButton, Dialog, TextField, Tooltip } from "@mui/material";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
+import { usePermissions } from "@/lib/access/usePermissions";
 import { HandleEntry, HashtagRule } from "@/types/newsroom";
 import { normaliseTag } from "./socialText";
 import { formatStamp, listFrameSx } from "./shared";
@@ -78,10 +79,11 @@ function HandleEditor({ entry, onClose }: { entry: Partial<HandleEntry>; onClose
 }
 
 export default function TemplatesPanel() {
-  const { hashtagRules, handleDirectory, deleteHashtagRule, deleteHandle, permissions } = useNewsroom();
+  const { hashtagRules, handleDirectory, deleteHashtagRule, deleteHandle } = useNewsroom();
+  const { can } = usePermissions();
   const [rule, setRule] = useState<Partial<HashtagRule> | null>(null);
   const [handle, setHandle] = useState<Partial<HandleEntry> | null>(null);
-  const canEdit = permissions.canApproveSocialContent;
+  const canEdit = can("draft.edit");
 
   const iconBtn = { width: 30, height: 30, borderRadius: "6px" };
 

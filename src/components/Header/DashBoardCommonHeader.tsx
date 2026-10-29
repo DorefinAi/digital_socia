@@ -35,12 +35,17 @@ import {
   ClipboardList,
   Send,
   Clock,
+  CircleUserRound,
+  ShieldCheck,
 } from "lucide-react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import SearchModal from "./SearchModal";
 import { useThemeMode } from "@/providers/MuiProvider";
 import { useNewsroom } from "@/providers/NewsroomProvider";
-import { UserRole, ROLE_LABELS } from "@/types/newsroom";
+import { usePermissions } from "@/lib/access/usePermissions";
+import { mockAccess } from "@/lib/access/mockStore";
+import { useMockRoles } from "@/lib/access/useMockRoles";
 import { useSociaSession } from "@/providers/SociaSessionProvider";
 import { CONTENT_MAX_WIDTH } from "@/constants";
 import { useHeaderCollapsed } from "./useHeaderCollapsed";
@@ -101,12 +106,15 @@ const DashBoardCommonHeader: React.FC = () => {
   const pathname = usePathname();
   const [searchOpen, setSearchOpen] = useState(false);
   const { mode, toggleTheme } = useThemeMode();
-  const { currentRole, setRole, notifications, markNotificationRead, markAllNotificationsRead, unreadCount, activity } = useNewsroom();
+  const { notifications, markNotificationRead, markAllNotificationsRead, unreadCount, activity } = useNewsroom();
   const [roleAnchorEl, setRoleAnchorEl] = useState<null | HTMLElement>(null);
   // On the live backend the role comes from the account; the switcher is a demo-only control
-  const { me, live } = useSociaSession();
-  const greetName = me?.user.name.split(" ")[0] ?? "Admin";
-  const fullName = me?.user.name ?? greetName;
+  const { live } = useSociaSession();
+  const { user, roleKey, roleLabel, can, canAny } = usePermissions();
+  const demoRoles = useMockRoles();
+  const greetName = user?.name.split(" ")[0] ?? "there";
+  const fullName = user?.name ?? "Your account";
+  const canManageAccess = can("page.settings") && canAny(["roles.manage", "users.manage"]);
   const [notifAnchorEl, setNotifAnchorEl] = useState<null | HTMLElement>(null);
   const [activityAnchorEl, setActivityAnchorEl] = useState<null | HTMLElement>(null);
   const theme = useTheme();
@@ -130,6 +138,8 @@ const DashBoardCommonHeader: React.FC = () => {
       digital: "Digital Dashboard",
       "ai-content": "Post Studio",
       "web-scraper": "Web Scraper",
+      profile: "Your profile",
+      access: "Access",
     };
     return titles[lastPart] || lastPart.charAt(0).toUpperCase() + lastPart.slice(1);
   };
@@ -208,7 +218,7 @@ const DashBoardCommonHeader: React.FC = () => {
           >
             {/* Account and role */}
             <HeaderAction
-              label={`${fullName}, ${ROLE_LABELS[currentRole]}`}
+              label={roleLabel ? `${fullName}, ${roleLabel}` : fullName}
               aria-haspopup="menu"
               aria-expanded={roleAnchorEl ? "true" : "false"}
               onClick={(e) => setRoleAnchorEl(e.currentTarget)}
@@ -235,8 +245,17 @@ const DashBoardCommonHeader: React.FC = () => {
             >
               <Box sx={{ px: 2, pt: 1, pb: 1.25 }}>
                 <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>{fullName}</Typography>
-                <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>{ROLE_LABELS[currentRole]}</Typography>
+                <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>{roleLabel}</Typography>
               </Box>
+              <Divider />
+              <MenuItem component={Link} href="/profile" onClick={() => setRoleAnchorEl(null)} sx={{ gap: 1.25, fontSize: "0.8125rem", mt: 0.5 }}>
+                <CircleUserRound size={16} aria-hidden /> Your profile
+              </MenuItem>
+              {canManageAccess && (
+                <MenuItem component={Link} href="/settings/access" onClick={() => setRoleAnchorEl(null)} sx={{ gap: 1.25, fontSize: "0.8125rem" }}>
+                  <ShieldCheck size={16} aria-hidden /> Access and roles
+                </MenuItem>
+              )}
               {!live && <Divider />}
               {!live && (
                 <Typography sx={{ px: 2, pt: 1, pb: 0.5, fontSize: "0.75rem", color: "text.secondary" }}>
@@ -244,14 +263,14 @@ const DashBoardCommonHeader: React.FC = () => {
                 </Typography>
               )}
               {!live &&
-                (Object.keys(ROLE_LABELS) as UserRole[]).map((role) => (
+                demoRoles.map((role) => (
                   <MenuItem
-                    key={role}
-                    selected={currentRole === role}
-                    onClick={() => { setRole(role); setRoleAnchorEl(null); }}
-                    sx={{ fontWeight: currentRole === role ? 600 : 400, fontSize: "0.8125rem" }}
+                    key={role.key}
+                    selected={roleKey === role.key}
+                    onClick={() => { mockAccess.setSelfRole(role.key); setRoleAnchorEl(null); }}
+                    sx={{ fontWeight: roleKey === role.key ? 600 : 400, fontSize: "0.8125rem" }}
                   >
-                    {ROLE_LABELS[role]}
+                    {role.label}
                   </MenuItem>
                 ))}
             </Menu>

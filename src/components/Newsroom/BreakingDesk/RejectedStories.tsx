@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { Box, Button, Chip, CircularProgress, Dialog, IconButton, InputAdornment, Snackbar, TextField, Tooltip, Typography } from "@mui/material";
 import { LayoutGrid, List, MapPin, Pencil, RefreshCw, Search, Trash2, Undo2 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
+import { usePermissions } from "@/lib/access/usePermissions";
 import { FtpNewsItem, REJECT_REASONS, SocialPlatform } from "@/types/newsroom";
 import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
 import { CONTROL_HEIGHT, EmptyState, formatStamp, listFrameSx, PLATFORM_META, PlatformIcon, SegmentedControl, storyCategory, timeAgo } from "./shared";
@@ -45,12 +46,14 @@ function readView(): "cards" | "list" {
 }
 
 export default function RejectedStories({ platform }: { platform: SocialPlatform }) {
-  const { socialDrafts, ftpNews, restoreDraft, deleteDraft, permissions } = useNewsroom();
+  const { socialDrafts, ftpNews, restoreDraft, deleteDraft } = useNewsroom();
+  const { can } = usePermissions();
   // Live: just the rejected list and the counts (not the whole desk provider)
   const desk = useRejectedLive(!USE_MOCKS);
   const router = useRouter();
   const meta = PLATFORM_META[platform];
-  const canAct = desk ? desk.canAct : permissions.canApproveSocialContent;
+  // Take in (and Take in & edit) needs story.take_in
+  const canAct = can("story.take_in");
 
   const [view, setView] = useState<"cards" | "list">(readView);
   const changeView = (next: "cards" | "list") => {

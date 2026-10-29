@@ -17,7 +17,7 @@ import React, {
 import * as socia from "@/lib/socia/api";
 import { SOCIA_API_URL, POLL_MS } from "@/lib/socia/config";
 import { usePolled, type Polled } from "@/lib/socia/usePolled";
-import { useSociaSession } from "@/providers/SociaSessionProvider";
+import { usePermissions } from "@/lib/access/usePermissions";
 import {
   errorCode,
   errorText,
@@ -204,8 +204,9 @@ const tryAction = async (fn: () => Promise<unknown>) => {
 };
 
 export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
-  const { me } = useSociaSession();
-  const canAct = !!me?.permissions.canAct;
+  // Opening a story to work on it needs draft.edit; the finer actions check their own permission
+  const { can } = usePermissions();
+  const canAct = can("draft.edit");
 
   const inbox = usePolled(
     () => socia.fetchQueue("inbox", 200),

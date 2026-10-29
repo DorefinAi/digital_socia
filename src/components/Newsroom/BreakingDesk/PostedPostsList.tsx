@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { Box, Typography, IconButton, Tooltip, Link as MuiLink, Chip, Button } from "@mui/material";
 import { Check, Copy, ExternalLink, Film, Undo2 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
+import { usePermissions } from "@/lib/access/usePermissions";
 import { SocialPlatform, SocialPost } from "@/types/newsroom";
 import { RecallDialog } from "./actionDialogs";
 import { PLATFORM_META, PlatformIcon, timeAgo } from "./shared";
@@ -21,7 +22,8 @@ interface PostedPostsListProps {
 }
 
 export default function PostedPostsList({ platform, limit, emptyHint, bare, allowRecall }: PostedPostsListProps) {
-  const { socialPosts, recallPost, permissions } = useNewsroom();
+  const { socialPosts, recallPost } = useNewsroom();
+  const { can } = usePermissions();
   const desk = useLiveDesk();
   const [recalling, setRecalling] = useState<SocialPost | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -29,7 +31,7 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare, allo
 
   // Live: the real X posts from the server
   const source = desk ? (desk.posts.data?.items ?? []).map(postToSocial) : socialPosts;
-  const canRecall = desk ? desk.canAct : permissions.canApproveSocialContent;
+  const canRecall = can("post.undo");
   const posts = source.filter((p) => !platform || p.platform === platform).slice(0, limit);
 
   if (desk && !desk.posts.data) {
