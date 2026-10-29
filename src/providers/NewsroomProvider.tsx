@@ -11,7 +11,6 @@ import {
   StoryStatus,
   AIContentStatus,
   ActivityAction,
-  NotificationType,
   FtpNewsItem,
   SocialPost,
   SocialDraft,
@@ -31,6 +30,13 @@ import {
   NewsroomData,
 } from "@/data/demoData";
 import { resetMockAccess } from "@/lib/access/mockStore";
+import { USE_MOCKS } from "@/lib/socia/config";
+
+// Live mode: the header's notifications and recent activity are not made up. The generated demo
+// lists stay in the demo only; the live API has no notifications feed, so the header shows an
+// empty state (recent activity reads the access history itself when the person may see it).
+const NO_NOTIFICATIONS: Notification[] = [];
+const NO_ACTIVITY: ActivityItem[] = [];
 
 interface NewsroomContextType {
   // Data
@@ -119,6 +125,8 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const stored = loadData();
     if (stored) {
+      // Read after mount on purpose: the demo data lives in localStorage, which the server can't see
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setData(stored);
     } else {
       setData(generateAndStoreData());
@@ -384,7 +392,7 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const unreadCount = data?.notifications.filter((n) => !n.read).length ?? 0;
+  const unreadCount = USE_MOCKS ? (data?.notifications.filter((n) => !n.read).length ?? 0) : 0;
 
   // ─── Activity ──────────────────────────────────────────────────────────
   const addActivity = useCallback((action: ActivityAction, actor: string, target: string, details?: string) => {
@@ -439,8 +447,8 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
         stories: data.stories,
         aiContent: data.aiContent,
         engagement: data.engagement,
-        activity: data.activity,
-        notifications: data.notifications,
+        activity: USE_MOCKS ? data.activity : NO_ACTIVITY,
+        notifications: USE_MOCKS ? data.notifications : NO_NOTIFICATIONS,
         reporters: data.reporters,
         updateStoryStatus,
         updateStory,

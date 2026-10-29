@@ -298,6 +298,8 @@ export interface CardTextLayer {
   size: number;
   style: CardTextStyle;
   motion?: TextMotion;
+  /** Hidden from the card (and the posted image) but kept, so it can be shown again */
+  hidden?: boolean;
 }
 
 export interface ClipSegment {

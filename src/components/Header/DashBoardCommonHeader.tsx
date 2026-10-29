@@ -49,6 +49,7 @@ import { useMockRoles } from "@/lib/access/useMockRoles";
 import { useSociaSession } from "@/providers/SociaSessionProvider";
 import { CONTENT_MAX_WIDTH } from "@/constants";
 import { useHeaderCollapsed } from "./useHeaderCollapsed";
+import LiveActivity, { HeaderEmpty } from "./LiveActivity";
 
 const HEADER_HEIGHT = 56;
 const FOLD_MS = 220;
@@ -305,6 +306,9 @@ const DashBoardCommonHeader: React.FC = () => {
                 <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>Recent Activity</Typography>
               </Box>
               <Divider />
+              {live && <LiveActivity formatTime={formatTime} onNavigate={() => setActivityAnchorEl(null)} />}
+              {!live && !activity.length && <HeaderEmpty title="No recent activity" text="Approvals, edits and posts will show here." />}
+              {!live && (
               <List sx={{ py: 0, maxHeight: 360, overflowY: "auto" }}>
                 {activity.slice(0, 10).map((item) => (
                   <ListItem key={item.id} sx={{ py: 1, alignItems: "flex-start" }}>
@@ -331,6 +335,7 @@ const DashBoardCommonHeader: React.FC = () => {
                   </ListItem>
                 ))}
               </List>
+              )}
             </Popover>
 
             {/* Notifications */}
@@ -373,6 +378,12 @@ const DashBoardCommonHeader: React.FC = () => {
                 )}
               </Box>
               <Divider />
+              {!notifications.length && (
+                <HeaderEmpty
+                  title="No notifications"
+                  text={live ? "You're all caught up. New stories show in the Post Studio queue." : "You're all caught up."}
+                />
+              )}
               <List sx={{ py: 0, maxHeight: 360, overflowY: "auto" }}>
                 {notifications.map((notif) => (
                   <ListItem

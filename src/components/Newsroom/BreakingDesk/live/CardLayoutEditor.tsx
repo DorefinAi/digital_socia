@@ -5,13 +5,15 @@
 // saved with PATCH /me/card-template. The editor redraws every card with the saved places.
 
 import React, { useEffect, useRef, useState } from "react";
-import { Alert, Box, Button, CircularProgress, Skeleton, ToggleButton, ToggleButtonGroup, Typography } from "@mui/material";
-import { RotateCcw, Save, Undo2 } from "lucide-react";
+import { Alert, Box, Button, CircularProgress, IconButton, Skeleton, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from "@mui/material";
+import { MoreHorizontal, Move, Redo2, RotateCcw, Save, Scaling, Undo2 } from "lucide-react";
 import * as socia from "@/lib/socia/api";
 import type { CardSlot, CardTemplateLayout, UserCardTemplate } from "@/lib/socia/types";
 import { BoxGesture, FrameBox, ResizeFrame, resizeBox, useBoxGesture } from "../ResizeFrame";
 import { apiFileUrl, errorText } from "./LiveDesk";
 import { type CardWords, fontsReady, loadImage, paintCardText } from "./backgroundCard";
+import { NUDGE, editorKeyFor, editorShortcut, swallowNextContextMenu, withEditorShortcut } from "../editorKeys";
+import { type MenuEntry, useEditorMenu } from "../video/ui/EditorContextMenu";
 
 /** The First India places (contract §2); colours, date format and font sizes are not edited here */
 const DEFAULT_PLACES: Pick<CardTemplateLayout, "date" | "box"> = {
@@ -89,6 +91,20 @@ export default function CardLayoutEditor({ template, editable, onSaved }: Props)
   const [justSaved, setJustSaved] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const startGesture = useBoxGesture();
+  // Undo and redo: the places before each drag, key press or reset (null = the saved places)
+  const [past, setPast] = useState<(CardTemplateLayout | null)[]>([]);
+  const [future, setFuture] = useState<(CardTemplateLayout | null)[]>([]);
+  const menu = useEditorMenu("Layout options");
+  // The last arrow press, so a run of presses on one place is a single undo step
+  const [arrowRun, setArrowRun] = useState<{ slot: Slot; at: number } | null>(null);
+  // A new background (or a saved layout) starts a fresh history
+  const historyKey = `${template.backgroundUrl}|${template.updatedAt}`;
+  const [historyFor, setHistoryFor] = useState(historyKey);
+  if (historyFor !== historyKey) {
+    setHistoryFor(historyKey);
+    setPast([]);
+    setFuture([]);
+  }
 
   const W = image?.naturalWidth || template.width;
   const H = image?.naturalHeight || template.height;
@@ -145,6 +161,29 @@ export default function CardLayoutEditor({ template, editable, onSaved }: Props)
   const fromBox = (b: FrameBox): CardSlot => ({ x: b.x / W, y: b.y / H, w: b.w / W, h: b.h / H });
   const limits = (slot: Slot) => ({ W, H, minW: MIN[slot].w * W, minH: MIN[slot].h * H });
 
+  const near = (a: number, b: number) => Math.abs(a - b) < 1e-4;
+
+  /** Keeps the places as they are now, so the change about to happen can be undone */
+  const remember = () => {
+    setArrowRun(null);
+    setPast((p) => [...p.slice(-49), draft]);
+    setFuture([]);
+  };
+  const undo = () => {
+    if (!past.length) return;
+    setFuture((f) => [draft, ...f]);
+    setPast((p) => p.slice(0, -1));
+    setDraft(past[past.length - 1]);
+    setJustSaved(false);
+  };
+  const redo = () => {
+    if (!future.length) return;
+    setPast((p) => [...p, draft]);
+    setFuture((f) => f.slice(1));
+    setDraft(future[0]);
+    setJustSaved(false);
+  };
+
   const place = (slot: Slot, next: CardSlot) => {
     setJustSaved(false);
     setDraft((d) => {
@@ -156,17 +195,42 @@ export default function CardLayoutEditor({ template, editable, onSaved }: Props)
   const begin = (slot: Slot, gesture: BoxGesture, e: React.PointerEvent, frame: HTMLElement) => {
     if (!editable) return;
     setSelected(slot);
-    startGesture(e, { frame, gesture, start: toBox(layout[slot]), limits: limits(slot), onChange: (b) => place(slot, fromBox(b)) });
+    // A right-click only selects; the menu opens from the frame
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    // Undo steps only for drags that moved something
+    const before = draft;
+    const onEnd = (moved: boolean) => {
+      if (!moved) return;
+      setPast((p) => [...p.slice(-49), before]);
+      setFuture([]);
+    };
+    startGesture(e, { frame, gesture, start: toBox(layout[slot]), limits: limits(slot), onChange: (b) => place(slot, fromBox(b)), onEnd });
   };
 
-  /** Arrows move the selected place; Alt+arrows resize it from the bottom-right corner; Shift takes bigger steps. */
-  const onKey = (slot: Slot, e: React.KeyboardEvent) => {
-    if (!editable || !e.key.startsWith("Arrow")) return;
+  /**
+   * Arrows move the selected place by 1% (Shift 5%); Alt+arrows resize it from the bottom-right corner.
+   * Shift+F10 or the Menu key opens its options. A run of presses is one undo step; a move the edge stops is none.
+   */
+  const onKey = (slot: Slot, e: React.KeyboardEvent<HTMLElement>) => {
+    if (!editable) return;
+    if (editorKeyFor(e.nativeEvent)?.id === "box.menu") {
+      e.preventDefault();
+      swallowNextContextMenu();
+      openMenuAt(e.currentTarget, slot);
+      return;
+    }
+    if (!e.key.startsWith("Arrow") || e.ctrlKey || e.metaKey) return;
     e.preventDefault();
-    const step = e.shiftKey ? 0.02 : 0.005;
+    const step = e.shiftKey ? NUDGE.big : NUDGE.small;
     const dx = (e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0) * W;
     const dy = (e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0) * H;
-    place(slot, fromBox(resizeBox(toBox(layout[slot]), e.altKey ? "se" : "move", dx, dy, limits(slot))));
+    const now = layout[slot];
+    const next = fromBox(resizeBox(toBox(now), e.altKey ? "se" : "move", dx, dy, limits(slot)));
+    if (near(next.x, now.x) && near(next.y, now.y) && near(next.w, now.w) && near(next.h, now.h)) return;
+    const stamp = e.timeStamp;
+    if (!e.repeat && (!arrowRun || arrowRun.slot !== slot || stamp - arrowRun.at > 1000)) remember();
+    setArrowRun({ slot, at: stamp });
+    place(slot, next);
   };
 
   const save = async () => {
@@ -177,6 +241,8 @@ export default function CardLayoutEditor({ template, editable, onSaved }: Props)
       await socia.saveCardTemplateLayout(cleanLayout(draft), "x");
       await onSaved();
       setDraft(null);
+      setPast([]);
+      setFuture([]);
       setJustSaved(true);
     } catch (err) {
       setError(errorText(err));
@@ -186,6 +252,7 @@ export default function CardLayoutEditor({ template, editable, onSaved }: Props)
   };
 
   const reset = () => {
+    remember();
     setJustSaved(false);
     setDraft((d) => {
       const base = d ?? saved;
@@ -195,9 +262,66 @@ export default function CardLayoutEditor({ template, editable, onSaved }: Props)
   const geometry = (s: CardSlot) => JSON.stringify(cleanSlot(s));
   const atDefault = geometry(layout.date) === geometry(DEFAULT_PLACES.date) && geometry(layout.box) === geometry(DEFAULT_PLACES.box);
 
+  /** Undo and redo while the focus is in this editor (a place, or its buttons); the desk's other tabs keep the keys */
+  const onEditorKey = (e: React.KeyboardEvent) => {
+    if (!editable) return;
+    const cmd = editorKeyFor(e.nativeEvent);
+    if (cmd?.id === "edit.undo") {
+      e.preventDefault();
+      undo();
+    } else if (cmd?.id === "edit.redo") {
+      e.preventDefault();
+      redo();
+    }
+  };
+
+  // ── Right-click: reset one place's position or size (the date tag and the text box are both needed, so neither hides) ──
+  const resetPlace = (slot: Slot, part: "position" | "size") => {
+    remember();
+    const now = layout[slot];
+    const home = DEFAULT_PLACES[slot];
+    const w = part === "size" ? home.w : now.w;
+    const h = part === "size" ? home.h : now.h;
+    const x = part === "position" ? home.x : now.x;
+    const y = part === "position" ? home.y : now.y;
+    // Never past the right or bottom edge
+    place(slot, { x: Math.min(x, 1 - w), y: Math.min(y, 1 - h), w, h });
+  };
+  const menuFor = (slot: Slot | null): MenuEntry[] => {
+    const general: MenuEntry[] = [
+      { label: "Undo", icon: <Undo2 size={14} />, hint: editorShortcut("edit.undo"), disabled: !past.length, onSelect: undo },
+      { label: "Redo", icon: <Redo2 size={14} />, hint: editorShortcut("edit.redo"), disabled: !future.length, onSelect: redo },
+      { kind: "divider" },
+      { label: "Reset both to default", icon: <RotateCcw size={14} />, disabled: saving || atDefault, onSelect: reset },
+    ];
+    if (!slot) return general;
+    const s = layout[slot];
+    const home = DEFAULT_PLACES[slot];
+    return [
+      { kind: "header", label: SLOT_NAME[slot] },
+      { label: "Reset position", icon: <Move size={14} />, disabled: near(s.x, home.x) && near(s.y, home.y), onSelect: () => resetPlace(slot, "position") },
+      { label: "Reset size", icon: <Scaling size={14} />, disabled: near(s.w, home.w) && near(s.h, home.h), onSelect: () => resetPlace(slot, "size") },
+      { kind: "divider" },
+      ...general,
+    ];
+  };
+  /** The same menu from the keyboard or the Options button, at the element */
+  const openMenuAt = (el: HTMLElement, slot: Slot | null) => {
+    const r = el.getBoundingClientRect();
+    if (slot) setSelected(slot);
+    menu.openAt({ x: r.left, y: r.bottom + 4 }, () => menuFor(slot));
+  };
+  /** Right-click on a place (its options) or elsewhere on the sample card (the general ones) */
+  const openMenu = (e: React.MouseEvent, slot: Slot | null) => {
+    if (!editable || !image) return;
+    if (slot && menu.open(e, () => menuFor(slot))) setSelected(slot);
+    else if (!slot) menu.open(e, () => menuFor(null));
+  };
+
   return (
-    <Box>
+    <Box onKeyDown={onEditorKey}>
       <Box
+        onContextMenu={(e: React.MouseEvent) => openMenu(e, null)}
         sx={{ position: "relative", width: "100%", aspectRatio: `${W} / ${H}`, borderRadius: "10px", backgroundColor: "#111", border: "1px solid", borderColor: "divider", userSelect: "none" }}
       >
         <canvas
@@ -225,6 +349,7 @@ export default function CardLayoutEditor({ template, editable, onSaved }: Props)
               onSelect={() => setSelected(slot)}
               onBegin={(gesture, e, frame) => begin(slot, gesture, e, frame)}
               onKey={(e) => onKey(slot, e)}
+              onMenu={(e) => openMenu(e, slot)}
             />
           ))}
       </Box>
@@ -251,7 +376,7 @@ export default function CardLayoutEditor({ template, editable, onSaved }: Props)
       {editable && (
         <>
           <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 1.25, lineHeight: 1.6 }}>
-            Drag the date tag or the text box to move it. Drag a handle to resize; hold Shift on a corner to keep the shape.
+            Drag the date tag or the text box to move it. Drag a handle to resize; hold Shift on a corner to keep the shape. Arrow keys move the selected one by 1% (Shift: 5%); right-click it to reset its position or size.
           </Typography>
           {error && (
             <Alert severity="error" onClose={() => setError(null)} sx={{ mt: 1.5, borderRadius: "10px", fontSize: "0.8125rem" }}>
@@ -263,13 +388,40 @@ export default function CardLayoutEditor({ template, editable, onSaved }: Props)
               {saving ? "Saving" : "Save layout"}
             </Button>
             {dirty && (
-              <Button onClick={() => setDraft(null)} disabled={saving} startIcon={<Undo2 size={15} />} sx={{ color: "text.secondary" }}>
+              <Button
+                onClick={() => {
+                  remember();
+                  setDraft(null);
+                }}
+                disabled={saving}
+                sx={{ color: "text.secondary" }}
+              >
                 Discard
               </Button>
             )}
+            <Box sx={{ display: "flex" }}>
+              <Button onClick={undo} disabled={!past.length} aria-label={withEditorShortcut("Undo", "edit.undo")} title={withEditorShortcut("Undo", "edit.undo")} sx={{ minWidth: 0, px: 1, color: "text.secondary" }}>
+                <Undo2 size={16} />
+              </Button>
+              <Button onClick={redo} disabled={!future.length} aria-label={withEditorShortcut("Redo", "edit.redo")} title={withEditorShortcut("Redo", "edit.redo")} sx={{ minWidth: 0, px: 1, color: "text.secondary" }}>
+                <Redo2 size={16} />
+              </Button>
+            </Box>
             <Button onClick={reset} disabled={saving || atDefault} startIcon={<RotateCcw size={15} />} sx={{ color: "text.secondary" }}>
               Reset to default
             </Button>
+            <Tooltip title={`Options for the ${SLOT_NAME[selected].toLowerCase()} (${editorShortcut("box.menu")})`}>
+              <IconButton
+                size="small"
+                aria-label={`Options for the ${SLOT_NAME[selected].toLowerCase()}`}
+                aria-haspopup="menu"
+                onClick={(e) => openMenuAt(e.currentTarget, selected)}
+                disabled={!image}
+                sx={{ color: "text.secondary" }}
+              >
+                <MoreHorizontal size={16} />
+              </IconButton>
+            </Tooltip>
             <Box role="status" aria-live="polite" sx={{ display: "flex", alignItems: "center", gap: 0.75, ml: { sm: "auto" }, fontSize: "0.75rem", fontWeight: 600, color: dirty ? "warning.main" : "text.secondary" }}>
               {dirty ? (
                 <>
@@ -283,6 +435,7 @@ export default function CardLayoutEditor({ template, editable, onSaved }: Props)
           </Box>
         </>
       )}
+      {menu.element}
     </Box>
   );
 }
@@ -298,11 +451,13 @@ interface SlotBoxProps {
   onSelect: () => void;
   /** `frame` is the picture the place sits on */
   onBegin: (gesture: BoxGesture, e: React.PointerEvent, frame: HTMLElement) => void;
-  onKey: (e: React.KeyboardEvent) => void;
+  onKey: (e: React.KeyboardEvent<HTMLElement>) => void;
+  /** Right-click on this place */
+  onMenu: (e: React.MouseEvent) => void;
 }
 
 /** One place on the background: a dashed outline when idle, the eight handles when selected. Focusable, so arrows work too. */
-function SlotBox({ slot, place: s, editable, selected, onSelect, onBegin, onKey }: SlotBoxProps) {
+function SlotBox({ slot, place: s, editable, selected, onSelect, onBegin, onKey, onMenu }: SlotBoxProps) {
   const ref = useRef<HTMLDivElement>(null);
   const begin = (gesture: BoxGesture, e: React.PointerEvent) => {
     const el = ref.current;
@@ -318,11 +473,16 @@ function SlotBox({ slot, place: s, editable, selected, onSelect, onBegin, onKey 
         ref={ref}
         role={editable ? "button" : "img"}
         tabIndex={editable ? 0 : undefined}
-        aria-label={`${SLOT_NAME[slot]}: ${percent(s.x)} from the left, ${percent(s.y)} from the top, ${percent(s.w)} wide, ${percent(s.h)} high.${editable ? " Arrow keys move it, Alt and arrow keys resize it." : ""}`}
+        aria-label={`${SLOT_NAME[slot]}: ${percent(s.x)} from the left, ${percent(s.y)} from the top, ${percent(s.w)} wide, ${percent(s.h)} high.${editable ? " Arrow keys move it, Alt and arrow keys resize it, Shift+F10 opens its options." : ""}`}
         aria-pressed={editable ? selected : undefined}
         aria-roledescription={editable ? "movable area" : undefined}
         onFocus={() => editable && onSelect()}
         onKeyDown={onKey}
+        onContextMenu={(e: React.MouseEvent) => {
+          // This place's menu, not the card's
+          e.stopPropagation();
+          onMenu(e);
+        }}
         onPointerDown={(e: React.PointerEvent) => begin("move", e)}
         sx={{
           position: "absolute",

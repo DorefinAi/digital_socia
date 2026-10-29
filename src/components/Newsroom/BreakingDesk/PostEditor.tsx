@@ -40,6 +40,11 @@ import {
   FlipHorizontal2,
   Volume2,
   VolumeX,
+  EyeOff,
+  Keyboard,
+  Move,
+  Scaling,
+  MoreHorizontal,
 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { Playhead, usePlayhead, usePlayheadTime } from "@/hooks/usePlayhead";
@@ -74,8 +79,22 @@ import type { LiveEditing } from "./live/LiveEditor";
 import { apiFileUrl, errorCode, errorText, useLiveDesk } from "./live/LiveDesk";
 import { keyHash, useBackgroundCard } from "./live/useBackgroundCard";
 import { PostedLinkDialog } from "./actionDialogs";
+import { NUDGE, editorKeyFor, editorShortcut, isCanvasKeyTarget, isEditorTypingTarget, isTextEntryTarget, swallowNextContextMenu, withEditorShortcut } from "./editorKeys";
+import { ConfirmPostDialog, EditorShortcutsSheet, LeaveEditorDialog } from "./EditorShortcutsSheet";
+import RewriteNotice from "./RewriteNotice";
+import { type MenuEntry, useEditorMenu } from "./video/ui/EditorContextMenu";
 
 type Tool = "ftp" | "template" | "background" | "text" | "video" | "story";
+
+/** One step of undo history: everything the operator changes by hand, as it was */
+type Snapshot = {
+  layout: TemplateLayout;
+  text: string;
+  hashtags: TagOption[];
+  mentions: TagOption[];
+  mediaIndex: number;
+  cardSource: "background" | "design" | null;
+};
 
 const TOOLS: { id: Tool; label: string; icon: React.ReactNode; videoOnly?: boolean }[] = [
   { id: "ftp", label: "FTP feed", icon: <Radio size={19} /> },
@@ -316,7 +335,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   const [layout, setLayout] = useState<TemplateLayout>(start.layout);
   // Card versions for undo and redo; a version is kept once the card has been still for a moment
-  const [history, setHistory] = useState({ stack: [start.layout], index: 0 });
+  // Card design and post text versions for undo and redo; a version is kept once both have been still for a moment
+  const [history, setHistory] = useState<{ stack: Snapshot[]; index: number }>({
+    stack: [{ layout: start.layout, text: start.text, hashtags: start.hashtags, mentions: start.mentions, mediaIndex: start.mediaIndex, cardSource: null }],
+    index: 0,
+  });
   const [tool, setTool] = useState<Tool>("ftp");
   const { measure: measureWorkspace, columns: workspaceColumns, left: leftPanel, right: rightPanel } = useResizablePanels(EDITOR_PANELS);
   // Below lg the columns stack and the panels keep their natural size
@@ -355,6 +378,19 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const [cardSource, setCardSource] = useState<"background" | "design" | null>(null);
   // The background card last uploaded as this draft's card, by draft and drawing
   const [bgUploaded, setBgUploaded] = useState<{ id: string; key: string } | null>(null);
+  // ── Keyboard and right-click ──
+  const [sheetOpen, setSheetOpen] = useState(false);
+  // Esc with unsaved work asks before closing
+  const [leaving, setLeaving] = useState(false);
+  // Posting that needs a second look: a too-close rewording, or demo Ctrl+Enter (no undo window)
+  const [confirmPost, setConfirmPost] = useState<null | "tooClose" | "demo">(null);
+  // Demo desk: what Save draft last stored, so Esc knows whether anything is unsaved
+  const [mockSaved, setMockSaved] = useState<{ text: string; layout: TemplateLayout; hashtags: TagOption[]; mentions: TagOption[] } | null>(null);
+  const cardMenu = useEditorMenu("Card options");
+  // What the canvas found under the pointer on right-click; read by the stage's menu handler
+  const menuTarget = useRef<Exclude<CanvasSelection, null> | null>(null);
+  // The scroll area around the card: keys from inside it act on the card
+  const stageAreaRef = useRef<HTMLDivElement>(null);
 
   // Switching stories swaps the story's state in place. The editor stays mounted, so the
   // screen does not flash and the feed, tool panel and zoom stay where the operator left them.
@@ -365,7 +401,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     setMediaIndex(next.mediaIndex);
     setIgFormat(next.igFormat);
     setLayout(next.layout);
-    setHistory({ stack: [next.layout], index: 0 });
+    setHistory({ stack: [{ layout: next.layout, text: next.text, hashtags: next.hashtags, mentions: next.mentions, mediaIndex: next.mediaIndex, cardSource: null }], index: 0 });
     setText(next.text);
     setHashtags(next.hashtags);
     setMentions(next.mentions);
@@ -388,6 +424,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     setCardSource(null);
     setBgUploaded(null);
     setBusy(null);
+    setLeaving(false);
+    setMockSaved(null);
+    setConfirmPost(null);
   }
 
   // Any change from how the story opened, so switching stories only saves real work
@@ -467,34 +506,54 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   const patch = (changes: Partial<TemplateLayout>) => setLayout((l) => ({ ...l, ...changes }));
 
-  // ── Undo and redo ──
+  // ── Undo and redo: the card design, post text, hashtags, mentions, photo and card source together ──
+  // A version is kept once nothing has changed for a moment, so a run of arrow presses is one step
+  const sameAs = (a: Snapshot) =>
+    a.layout === layout && a.text === text && a.hashtags === hashtags && a.mentions === mentions && a.mediaIndex === mediaIndex && a.cardSource === cardSource;
   useEffect(() => {
     const timer = setTimeout(() => {
       setHistory((h) => {
-        if (h.stack[h.index] === layout) return h;
-        const stack = [...h.stack.slice(0, h.index + 1), layout].slice(-80);
+        const top = h.stack[h.index];
+        if (top.layout === layout && top.text === text && top.hashtags === hashtags && top.mentions === mentions && top.mediaIndex === mediaIndex && top.cardSource === cardSource) return h;
+        const stack = [...h.stack.slice(0, h.index + 1), { layout, text, hashtags, mentions, mediaIndex, cardSource }].slice(-80);
         return { stack, index: stack.length - 1 };
       });
     }, 400);
     return () => clearTimeout(timer);
-  }, [layout]);
-  const pendingChange = layout !== history.stack[history.index];
+  }, [layout, text, hashtags, mentions, mediaIndex, cardSource]);
+  const current = history.stack[history.index];
+  const pendingChange = !sameAs(current);
   const canUndo = pendingChange || history.index > 0;
   const canRedo = !pendingChange && history.index < history.stack.length - 1;
+  const restore = (snap: Snapshot) => {
+    setLayout(snap.layout);
+    setText(snap.text);
+    setHashtags(snap.hashtags);
+    setMentions(snap.mentions);
+    setCardSource(snap.cardSource);
+    if (snap.mediaIndex !== mediaIndex) {
+      // As choosing the photo: the new file reports its own length
+      setMediaIndex(snap.mediaIndex);
+      setDuration(0);
+      setSegments([]);
+      setSelectedClip(null);
+      playhead.set(0);
+    }
+  };
   const undo = () => {
     if (pendingChange) {
-      // Keep the unsaved change so redo can bring it back
-      setHistory((h) => ({ stack: [...h.stack.slice(0, h.index + 1), layout], index: h.index }));
-      setLayout(history.stack[history.index]);
+      // Keep the change not yet recorded so redo can bring it back
+      setHistory((h) => ({ stack: [...h.stack.slice(0, h.index + 1), { layout, text, hashtags, mentions, mediaIndex, cardSource }], index: h.index }));
+      restore(current);
     } else if (history.index > 0) {
       setHistory((h) => ({ ...h, index: h.index - 1 }));
-      setLayout(history.stack[history.index - 1]);
+      restore(history.stack[history.index - 1]);
     }
   };
   const redo = () => {
     if (!canRedo) return;
     setHistory((h) => ({ ...h, index: h.index + 1 }));
-    setLayout(history.stack[history.index + 1]);
+    restore(history.stack[history.index + 1]);
   };
 
   // ── Text: the headline or one of the extra text boxes ──
@@ -636,37 +695,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const adjusted = !!layout.flipX || (!!adjust.filter && adjust.filter !== "none") || ADJUSTMENTS.some((a) => adjust[a.key]);
   const lookThumb = media.posterUrl ?? (media.kind === "image" ? media.url : undefined);
 
-  // Shortcuts on the canvas: undo, redo, delete a text box, nudge with the arrow keys
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (dialog || previewOpen) return;
-      const typing = (e.target as HTMLElement).closest("input, textarea, select, [contenteditable='true']");
-      if (typing) return;
-      const key = e.key.toLowerCase();
-      if ((e.metaKey || e.ctrlKey) && key === "z") {
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
-      } else if ((e.metaKey || e.ctrlKey) && key === "y") {
-        e.preventDefault();
-        redo();
-      } else if (layerId && (key === "delete" || key === "backspace")) {
-        e.preventDefault();
-        removeLayer(layerId);
-      } else if (key.startsWith("arrow") && (layerId || selection === "headline")) {
-        e.preventDefault();
-        const step = e.shiftKey ? 0.02 : 0.005;
-        const dx = key === "arrowleft" ? -step : key === "arrowright" ? step : 0;
-        const dy = key === "arrowup" ? -step : key === "arrowdown" ? step : 0;
-        if (activeLayer) patchLayer(activeLayer.id, { x: Math.max(0, Math.min(1, activeLayer.x + dx)), y: Math.max(0, Math.min(1, activeLayer.y + dy)) });
-        // A headline box sized by hand moves both ways; one that follows its text only up and down
-        else if (layout.textHeight !== undefined) patch(dx ? { textX: Math.max(0, Math.min(1, (layout.textX ?? 0.5) + dx)) } : { textY: Math.max(0, Math.min(1, layout.textY + dy)) });
-        else patch({ textY: Math.max(0.05, Math.min(0.95, layout.textY + dy)) });
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
+  /** Moves the selected text box by a share of the card; a headline that follows its text moves only up and down */
+  const nudgeSelected = (dx: number, dy: number) => {
+    const clamp = (v: number) => Math.max(0, Math.min(1, v));
+    if (activeLayer) patchLayer(activeLayer.id, { x: clamp(activeLayer.x + dx), y: clamp(activeLayer.y + dy) });
+    else if (layout.textHeight !== undefined) patch(dx ? { textX: clamp((layout.textX ?? 0.5) + dx) } : { textY: clamp(layout.textY + dy) });
+    else if (dy) patch({ textY: Math.max(0.05, Math.min(0.95, layout.textY + dy)) });
+  };
 
   const chooseMedia = (index: number) => {
     setMediaIndex(index);
@@ -773,7 +808,15 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   };
 
   const saveAsPosted = async () => {
-    if (!canPost) return;
+    if (!canPost || inFlight.current) return;
+    inFlight.current = "posted";
+    try {
+      await saveAsPostedNow();
+    } finally {
+      inFlight.current = null;
+    }
+  };
+  const saveAsPostedNow = async () => {
     // Live: the operator posts the downloaded card by hand, then gives the desk the post's link
     if (live) {
       const ok = exportsVideo ? await exportVideo() : bgMode ? await downloadBackgroundCard() : canvasRef.current?.download(`${item.id}-${format}.png`) ?? false;
@@ -795,6 +838,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const stamp = () => setSavedAt(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }));
 
   const save = () => {
+    if (inFlight.current) return;
     if (live) {
       void runLive("save", async () => {
         await flush();
@@ -803,6 +847,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       return;
     }
     saveDraft(buildPayload());
+    setMockSaved({ text, layout, hashtags, mentions });
     stamp();
   };
 
@@ -919,13 +964,18 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     }
   };
 
+  // The call running now, read synchronously: a held key or a double press can fire twice before `busy` renders
+  const inFlight = useRef<string | null>(null);
   const runLive = async (kind: NonNullable<typeof busy>, fn: () => Promise<void>) => {
+    if (inFlight.current) return;
+    inFlight.current = kind;
     setBusy(kind);
     try {
       await fn();
     } catch (err) {
       liveFail(err);
     } finally {
+      inFlight.current = null;
       setBusy(null);
     }
   };
@@ -940,17 +990,6 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   // The card drawn on the X background is not uploaded on its own: opening or reading a story changes
   // nothing on the server. It goes up with Post, Save draft or Save as posted, or on leaving after an edit.
-
-  // Ctrl+S saves the draft, even while typing, instead of the browser's "save page"
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "s") return;
-      e.preventDefault();
-      if (!dialog && !previewOpen && canEdit && !busy) save();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
 
   /** Approve: the server holds the post for its 10-second undo window, then the worker posts it. */
   const postLive = () =>
@@ -1029,7 +1068,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       setUploads([]);
       setMediaIndex(0);
       setLayout(fresh);
-      setHistory({ stack: [fresh], index: 0 });
+      setHistory({ stack: [{ layout: fresh, text, hashtags, mentions, mediaIndex: 0, cardSource: "design" }], index: 0 });
       setUploaded(null);
     });
 
@@ -1073,6 +1112,232 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     onClose();
   };
 
+  // ── Esc: close, asking first when something isn't saved ──
+  const mockUnsaved = !live && edited && !(mockSaved && mockSaved.text === text && mockSaved.layout === layout && mockSaved.hashtags === hashtags && mockSaved.mentions === mentions);
+  const unsaved = canEdit && (live ? textDirty || cardUnsent : mockUnsaved);
+  const requestClose = () => {
+    if (busy) return;
+    if (unsaved) setLeaving(true);
+    else void close();
+  };
+  const saveAndLeave = async () => {
+    if (live) {
+      // close() saves first, and stays open with the reason when the text didn't save
+      await close();
+      setLeaving(false);
+      return;
+    }
+    saveDraft(buildPayload());
+    onSaved?.(`Draft saved. "${item.headline}" is waiting in the queue.`);
+    onClose();
+  };
+  const discardAndLeave = () => {
+    setLeaving(false);
+    onClose();
+  };
+
+  /**
+   * Esc on the editor (MUI hands it over as the dialog's escapeKeyDown, after any dialog or menu on top has
+   * taken its own). In a text box it only leaves the box, so the next Esc or an arrow reaches the editor.
+   */
+  const onEscape = (e: object) => {
+    const event = e as Partial<KeyboardEvent>;
+    event.preventDefault?.();
+    const target = event.target ?? null;
+    if (isTextEntryTarget(target)) {
+      (target as HTMLElement).blur();
+      return;
+    }
+    if (isEditorTypingTarget(target) || leaving || sheetOpen) return;
+    requestClose();
+  };
+
+  // ── Posting that needs a second look asks first ──
+  const tooClose = !!live?.draft.rewrite?.tooClose;
+  const postNow = () => {
+    setConfirmPost(null);
+    // Live: approve, which holds the post for its 10-second undo window. Demo: Save as posted, the demo's post action.
+    if (live) void postLive();
+    else void saveAsPosted();
+  };
+  /** The Post button and Ctrl+Enter: a too-close rewording asks first; demo Ctrl+Enter (no undo window) always asks. */
+  const requestPost = (via: "button" | "key") => {
+    if (inFlight.current) return;
+    if (tooClose) setConfirmPost("tooClose");
+    else if (!live && via === "key") setConfirmPost("demo");
+    else postNow();
+  };
+
+  // ── Ctrl+Enter: the Post button, with the same checks ──
+  const approveByKey = () => {
+    if (busy || exporting !== null) return;
+    if (!mayPublish || (!live && !mayMarkPosted)) {
+      setNotice("Your role can't post to the platforms.");
+      return;
+    }
+    if (!canPost) {
+      setNotice(blockedReason ? `Not posted: ${blockedReason}.` : "This post can't go out right now.");
+      return;
+    }
+    requestPost("key");
+  };
+
+  // ── Right-click on the card: options for what is under the pointer ──
+  const hiddenLayers = (layout.layers ?? []).filter((l) => l.hidden);
+  const showHidden: MenuEntry[] = hiddenLayers.length
+    ? [{ label: `Show hidden text boxes (${hiddenLayers.length})`, icon: <Eye size={14} />, onSelect: () => setLayout((l) => ({ ...l, layers: (l.layers ?? []).map((x) => (x.hidden ? { ...x, hidden: undefined } : x)) })) }]
+    : [];
+  const generalEntries = (): MenuEntry[] => [
+    { kind: "divider" },
+    { label: "Undo", icon: <Undo2 size={14} />, hint: editorShortcut("edit.undo"), disabled: !canUndo, onSelect: undo },
+    { label: "Redo", icon: <Redo2 size={14} />, hint: editorShortcut("edit.redo"), disabled: !canRedo, onSelect: redo },
+    { kind: "divider" },
+    { label: "Keyboard shortcuts", icon: <Keyboard size={14} />, hint: "?", onSelect: () => setSheetOpen(true) },
+  ];
+  const menuFor = (target: Exclude<CanvasSelection, null> | "stage"): MenuEntry[] => {
+    if (serverView) {
+      const entries: MenuEntry[] = [];
+      if (canEdit && cardTemplate) entries.push({ label: "Use your X background", icon: <ImageIcon size={14} />, onSelect: () => setCardSource("background") });
+      if (canEdit) entries.push({ label: "Design the card here", icon: <Pencil size={14} />, onSelect: () => setCardSource("design") });
+      return [...entries, ...generalEntries()];
+    }
+    if (bgMode) {
+      const entries: MenuEntry[] = [{ label: "Change the headline", icon: <Type size={14} />, onSelect: () => setTool("text") }];
+      if (canEdit) entries.push({ label: "Design the card here instead", icon: <Pencil size={14} />, disabled: !!busy, onSelect: () => void switchToAutoCard() });
+      return [...entries, ...generalEntries()];
+    }
+    if (target.startsWith("layer:")) {
+      const id = target.slice(6);
+      const layers = layout.layers ?? [];
+      const index = layers.findIndex((l) => l.id === id);
+      const layer = layers[index];
+      if (!layer) return menuFor("stage");
+      const width = LAYER_PRESETS.find((p) => p.size === layer.size)?.width ?? 0.7;
+      return [
+        { label: "Edit text", icon: <Pencil size={14} />, hint: "Double-click", onSelect: () => editText(`layer:${id}`) },
+        { kind: "divider" },
+        { label: "Bring forward", icon: <ArrowUpToLine size={14} />, disabled: index >= layers.length - 1, onSelect: () => restack(id, 1) },
+        { label: "Send backward", icon: <ArrowDownToLine size={14} />, disabled: index <= 0, onSelect: () => restack(id, -1) },
+        { kind: "divider" },
+        { label: "Reset position", icon: <Move size={14} />, disabled: layer.x === 0.5 && layer.y === 0.5, onSelect: () => patchLayer(id, { x: 0.5, y: 0.5 }) },
+        { label: "Reset size", icon: <Scaling size={14} />, disabled: layer.height === undefined && layer.width === width, onSelect: () => patchLayer(id, { width, height: undefined }) },
+        {
+          label: "Hide text box",
+          icon: <EyeOff size={14} />,
+          onSelect: () => {
+            patchLayer(id, { hidden: true });
+            setSelection(null);
+          },
+        },
+        { label: "Duplicate", icon: <CopyPlus size={14} />, onSelect: () => duplicateLayer(id) },
+        { label: "Delete text box", icon: <Trash2 size={14} />, hint: "Del", danger: true, onSelect: () => removeLayer(id) },
+        ...generalEntries(),
+      ];
+    }
+    if (target === "headline") {
+      const home = templatePatch(templateById(layout.template), format).textY ?? DEFAULT_TEXT_Y[format];
+      const sizedByHand = layout.textHeight !== undefined || layout.textWidth !== undefined;
+      return [
+        { label: "Edit text", icon: <Pencil size={14} />, hint: "Double-click", onSelect: () => editText("headline") },
+        { kind: "divider" },
+        { label: "Reset position", icon: <Move size={14} />, disabled: layout.textY === home && layout.textX === undefined, onSelect: () => patch({ textY: home, textX: undefined }) },
+        { label: "Reset size", icon: <Scaling size={14} />, disabled: !sizedByHand, onSelect: () => patch({ textWidth: undefined, textHeight: undefined, textX: undefined }) },
+        ...generalEntries(),
+      ];
+    }
+    if (target === "background") {
+      const entries: MenuEntry[] = [
+        { label: "Reset position", icon: <Move size={14} />, disabled: layout.bgZoom === 1 && !layout.bgX && !layout.bgY, onSelect: () => patch({ bgZoom: 1, bgX: 0, bgY: 0 }) },
+        { label: layout.fit === "cover" ? "Show all of the picture" : "Fill the frame", icon: <Maximize size={14} />, onSelect: () => patch({ fit: layout.fit === "cover" ? "contain" : "cover", bgX: 0, bgY: 0 }) },
+        { label: "Replace picture or video", icon: <Upload size={14} />, onSelect: () => fileInputRef.current?.click() },
+      ];
+      if (showHidden.length) entries.push({ kind: "divider" }, ...showHidden);
+      return [...entries, ...generalEntries()];
+    }
+    // The space around the card
+    return [{ label: "Fit to screen", icon: <Maximize size={14} />, disabled: zoom === 1, onSelect: () => setZoom(1) }, ...showHidden, ...generalEntries()];
+  };
+  /** Shift+F10, the Menu key or the More button: the same menu, at the selected box (or the card) */
+  const openCardMenuFromKeys = (from?: HTMLElement) => {
+    const stage = stageAreaRef.current;
+    const handle = stage?.querySelector<HTMLElement>('[data-handle="se"]');
+    const frameEl = stage?.querySelector<HTMLElement>('[role="group"], img, canvas');
+    const r = (from ?? handle ?? frameEl ?? stage)?.getBoundingClientRect();
+    if (!r) return;
+    const target: Exclude<CanvasSelection, null> | "stage" = bgMode || serverView ? "stage" : (selection ?? "stage");
+    cardMenu.openAt(from ? { x: r.left, y: r.bottom + 4 } : handle ? { x: r.left, y: r.top } : { x: r.left + r.width / 2, y: r.top + r.height / 2 }, () => menuFor(target));
+  };
+  /** The stage's right-click: the canvas has already said what is under the pointer, else it is the space around the card */
+  const openCardMenu = (e: React.MouseEvent) => {
+    const target = menuTarget.current ?? "stage";
+    menuTarget.current = null;
+    cardMenu.open(e, () => menuFor(target));
+  };
+
+  // ── Keyboard: one handler for every shortcut in editorKeys.ts ──
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing) return;
+      const cmd = editorKeyFor(e);
+      if (!cmd) return;
+      // Another dialog, the preview or a menu on top owns the keyboard (MUI closes those with Esc itself)
+      const covered = dialog !== null || linkOpen || sheetOpen || leaving || confirmPost !== null || previewOpen || cardMenu.isOpen;
+      if (cmd.id === "post.save") {
+        // Even while typing, and never the browser's "Save page"; a held key saves once
+        e.preventDefault();
+        if (!e.repeat && !covered && canEdit && !busy) save();
+        return;
+      }
+      if (cmd.id === "post.approve") {
+        e.preventDefault();
+        if (!e.repeat && !covered) approveByKey();
+        return;
+      }
+      if (isEditorTypingTarget(e.target) || covered) return;
+      // Delete, Backspace and the arrows act on the card only from the stage or from no control at all
+      const onCanvas = !bgMode && !serverView && isCanvasKeyTarget(e.target, stageAreaRef.current);
+      switch (cmd.id) {
+        case "editor.close":
+          // Focus outside the dialog (on the page body after a text box was left): MUI never saw this Esc
+          onEscape(e);
+          return;
+        case "edit.undo":
+          e.preventDefault();
+          undo();
+          return;
+        case "edit.redo":
+          e.preventDefault();
+          redo();
+          return;
+        case "help.keys":
+          e.preventDefault();
+          setSheetOpen(true);
+          return;
+        case "box.delete":
+          if (!onCanvas || !layerId) return;
+          e.preventDefault();
+          removeLayer(layerId);
+          return;
+        case "box.menu":
+          e.preventDefault();
+          swallowNextContextMenu();
+          openCardMenuFromKeys();
+          return;
+        case "box.nudge":
+        case "box.nudgeBig": {
+          if (!onCanvas || !(activeLayer || selection === "headline")) return;
+          e.preventDefault();
+          const step = cmd.id === "box.nudgeBig" ? NUDGE.big : NUDGE.small;
+          const key = e.key.toLowerCase();
+          nudgeSelected(key === "arrowleft" ? -step : key === "arrowright" ? step : 0, key === "arrowup" ? -step : key === "arrowdown" ? step : 0);
+          return;
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   // Below md the top bar is crowded (Instagram adds the format switch), so Copy
   // is icon-only and Save is shortened; full labels return from 900px
   const iconOnlyOnPhone = { flexShrink: 0, minWidth: { xs: 0, md: 64 }, "& .MuiButton-startIcon": { mr: { xs: 0, md: 1 }, ml: { xs: 0, md: -0.5 } } };
@@ -1085,12 +1350,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   const postButton = (onDark: boolean) =>
     live ? (
-      <Tooltip title={!mayPublish ? "Your role can't post to the platforms" : blockedReason || `Posts the card to ${meta.short} after a 10-second undo window`}>
+      <Tooltip title={!mayPublish ? "Your role can't post to the platforms" : blockedReason || `Posts the card to ${meta.short} after a 10-second undo window (${editorShortcut("post.approve")})`}>
         <span>
           <Button
             variant="contained"
-            onClick={() => void postLive()}
+            onClick={() => requestPost("button")}
             aria-label={busy === "post" ? "Posting" : `Post to ${meta.short}`}
+            aria-keyshortcuts="Control+Enter Meta+Enter"
             disabled={!canPost || !mayPublish}
             startIcon={busy === "post" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <Send size={15} />}
             sx={{ minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", "&:hover": { backgroundColor: "#B50F14" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.7)" } }}
@@ -1140,12 +1406,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const headCategory = live?.draft.story.category?.trim() || null;
 
   return (
-    <Dialog open fullScreen onClose={() => void close()} transitionDuration={150} slotProps={{ paper: { sx: { borderRadius: 0, backgroundImage: "none", backgroundColor: "background.default", overflow: "hidden" } } }}>
+    <Dialog open fullScreen onClose={(e, reason) => (reason === "escapeKeyDown" ? onEscape(e) : requestClose())} transitionDuration={150} slotProps={{ paper: { sx: { borderRadius: 0, backgroundImage: "none", backgroundColor: "background.default", overflow: "hidden" } } }}>
       {/* Exactly one viewport tall; the columns scroll on their own and the dialog itself never scrolls */}
       <Box sx={{ position: "relative", display: "flex", flexDirection: "column", height: "100dvh", overflow: "hidden" }}>
         {/* Top bar */}
         <Box sx={{ display: "flex", alignItems: "center", gap: { xs: 0.5, sm: 1 }, px: { xs: 1, sm: 1.5 }, height: 54, flexShrink: 0, backgroundColor: BAR.bg, color: "#fff" }}>
-          <Button onClick={() => void close()} aria-label="Back to desk" disabled={busy === "save"} sx={{ ...chromeButton, minWidth: 0, flexShrink: 0, gap: 0.75 }}>
+          <Button onClick={requestClose} aria-label="Back to desk" disabled={busy === "save"} sx={{ ...chromeButton, minWidth: 0, flexShrink: 0, gap: 0.75 }}>
             {busy === "save" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <ArrowLeft size={16} />}
             <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
               Desk
@@ -1495,7 +1761,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               <>
                 {/* Which text is being edited: the card headline or one of the extra boxes */}
                 <Box role="group" aria-label="Text on the card" sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mb: 1.5 }}>
-                  {[{ key: "headline" as CanvasSelection, label: "Card text" }, ...(layout.layers ?? []).map((l, i) => ({ key: `layer:${l.id}` as CanvasSelection, label: l.text.trim().slice(0, 14) || `Text ${i + 1}` }))].map(({ key, label }) => {
+                  {[{ key: "headline" as CanvasSelection, label: "Card text" }, ...(layout.layers ?? []).map((l, i) => ({ key: `layer:${l.id}` as CanvasSelection, label: `${l.text.trim().slice(0, 14) || `Text ${i + 1}`}${l.hidden ? " (hidden)" : ""}` }))].map(({ key, label }) => {
                     const on = key === "headline" ? !activeLayer : selection === key;
                     return (
                       <Box key={key} component="button" aria-pressed={on} onClick={() => select(key)} sx={{ px: 1.1, py: 0.5, borderRadius: "999px", border: "1px solid", borderColor: on ? "text.primary" : "divider", backgroundColor: on ? "text.primary" : "transparent", color: on ? "background.paper" : "text.primary", fontFamily: "inherit", fontSize: "0.75rem", fontWeight: 600, cursor: "pointer", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -1666,7 +1932,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           {/* Stage */}
           <Box sx={{ order: 0, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, flexShrink: 0 }}>
           <Box sx={{ position: "relative", flex: 1, minHeight: { xs: "52vh", lg: 0 }, backgroundColor: (t) => (t.palette.mode === "light" ? "#E9E9E6" : "#09090B") }}>
-            <Box onPointerDown={(e) => e.target === e.currentTarget && setSelection(null)} sx={{ position: "absolute", inset: 0, overflow: "auto", display: "flex", p: "64px 40px 56px" }}>
+            <Box ref={stageAreaRef} onPointerDown={(e) => e.target === e.currentTarget && setSelection(null)} onContextMenu={openCardMenu} sx={{ position: "absolute", inset: 0, overflow: "auto", display: "flex", p: "64px 40px 56px" }}>
               {/* Measured box: the frame is fitted to this area */}
               <Box ref={setStageEl} onPointerDown={(e) => e.target === e.currentTarget && setSelection(null)} sx={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
                 {serverView && live?.draft.card.url ? (
@@ -1728,6 +1994,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   selection={selection}
                   onSelect={select}
                   onEditText={editText}
+                  onContextTarget={(target) => {
+                    menuTarget.current = target;
+                  }}
                   paused={videoPaused}
                   sound={sound}
                   segments={segments.length ? segments : undefined}
@@ -1789,12 +2058,17 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                           <ArrowDownToLine size={15} />
                         </IconButton>
                       </Tooltip>
+                      <Tooltip title={activeLayer.hidden ? "Show on the card" : "Hide from the card"}>
+                        <IconButton sx={{ ...toolbarIcon, backgroundColor: activeLayer.hidden ? "action.selected" : "transparent" }} aria-label={activeLayer.hidden ? "Show text box" : "Hide text box"} aria-pressed={!!activeLayer.hidden} onClick={() => patchLayer(activeLayer.id, { hidden: activeLayer.hidden ? undefined : true })}>
+                          {activeLayer.hidden ? <Eye size={15} /> : <EyeOff size={15} />}
+                        </IconButton>
+                      </Tooltip>
                       <Tooltip title="Duplicate">
                         <IconButton sx={toolbarIcon} aria-label="Duplicate text box" onClick={() => duplicateLayer(activeLayer.id)}>
                           <CopyPlus size={15} />
                         </IconButton>
                       </Tooltip>
-                      <Tooltip title="Delete (Del)">
+                      <Tooltip title="Delete (Del) or right-click for more">
                         <IconButton sx={{ ...toolbarIcon, color: "error.main" }} aria-label="Delete text box" onClick={() => removeLayer(activeLayer.id)}>
                           <Trash2 size={15} />
                         </IconButton>
@@ -1805,6 +2079,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   <Button size="small" onClick={() => editText(selection)} startIcon={<Pencil size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.primary" }}>
                     Edit text
                   </Button>
+                  <Tooltip title={`More options (${editorShortcut("box.menu")})`}>
+                    <IconButton sx={toolbarIcon} aria-label="More options for the selected text" aria-haspopup="menu" aria-keyshortcuts="Shift+F10" onClick={(e) => openCardMenuFromKeys(e.currentTarget)}>
+                      <MoreHorizontal size={15} />
+                    </IconButton>
+                  </Tooltip>
                 </>
               )}
               {selection === "background" && (
@@ -1821,6 +2100,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   <Button size="small" onClick={() => patch({ fit: layout.fit === "cover" ? "contain" : "cover", bgX: 0, bgY: 0 })} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.primary" }}>
                     {layout.fit === "cover" ? "Show all" : "Fill frame"}
                   </Button>
+                  <Tooltip title={`More options (${editorShortcut("box.menu")})`}>
+                    <IconButton sx={toolbarIcon} aria-label="More options for the picture" aria-haspopup="menu" aria-keyshortcuts="Shift+F10" onClick={(e) => openCardMenuFromKeys(e.currentTarget)}>
+                      <MoreHorizontal size={15} />
+                    </IconButton>
+                  </Tooltip>
                 </>
               )}
               {!selection && (
@@ -1832,14 +2116,14 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
             {/* View zoom */}
             <Box sx={{ ...floatingSx, position: "absolute", right: 12, bottom: 12, display: "flex", alignItems: "center", px: 0.5, height: 36, borderRadius: "8px" }}>
-              <Tooltip title="Undo (Ctrl+Z)">
+              <Tooltip title={withEditorShortcut("Undo", "edit.undo")}>
                 <span>
                   <IconButton sx={toolbarIcon} aria-label="Undo" disabled={!canUndo} onClick={undo}>
                     <Undo2 size={14} />
                   </IconButton>
                 </span>
               </Tooltip>
-              <Tooltip title="Redo (Ctrl+Shift+Z)">
+              <Tooltip title={withEditorShortcut("Redo", "edit.redo")}>
                 <span>
                   <IconButton sx={toolbarIcon} aria-label="Redo" disabled={!canRedo} onClick={redo}>
                     <Redo2 size={14} />
@@ -1857,6 +2141,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               <Tooltip title="Fit to screen">
                 <IconButton sx={toolbarIcon} aria-label="Fit to screen" onClick={() => setZoom(1)}>
                   <Maximize size={14} />
+                </IconButton>
+              </Tooltip>
+              {toolbarDivider}
+              <Tooltip title="Keyboard shortcuts (?)">
+                <IconButton sx={toolbarIcon} aria-label="Keyboard shortcuts" aria-keyshortcuts="Shift+?" onClick={() => setSheetOpen(true)}>
+                  <Keyboard size={14} />
                 </IconButton>
               </Tooltip>
             </Box>
@@ -1930,6 +2220,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   </Button>
                 </Box>
               </Box>
+              {live?.draft.rewrite && <RewriteNotice rewrite={live.draft.rewrite} />}
               <TextField multiline minRows={isX ? 4 : 5} maxRows={10} fullWidth size="small" value={text} onChange={(e) => setText(e.target.value)} slotProps={{ htmlInput: { "aria-label": `${isX ? "Tweet" : platform === "Facebook" ? "Post" : "Caption"} text`, readOnly: !!live && !canEdit } }} sx={fieldSx} />
               <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, mt: 0.75 }}>
                 <LinearProgress variant="determinate" value={Math.min(100, (used / limits.text) * 100)} color={overLimit ? "error" : "inherit"} sx={{ flex: 1, height: 4, borderRadius: 2 }} />
@@ -1993,7 +2284,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   Reject
                 </Button>
                 <Box sx={{ flex: 1 }} />
-                <Button variant="outlined" onClick={save} disabled={!canEdit || !!busy} startIcon={busy === "save" ? <CircularProgress size={13} color="inherit" /> : <Save size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25, whiteSpace: "nowrap" }}>
+                <Button variant="outlined" onClick={save} disabled={!canEdit || !!busy} aria-keyshortcuts="Control+S Meta+S" startIcon={busy === "save" ? <CircularProgress size={13} color="inherit" /> : <Save size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25, whiteSpace: "nowrap" }}>
                   Save draft
                 </Button>
                 <Tooltip title={live ? "Scheduling isn't available on the live desk yet" : blockedReason}>
@@ -2079,6 +2370,22 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           }}
         />
       )}
+
+      {cardMenu.element}
+      <EditorShortcutsSheet open={sheetOpen} onClose={() => setSheetOpen(false)} />
+      <ConfirmPostDialog
+        open={confirmPost !== null}
+        title={confirmPost === "demo" ? "Save this story as posted?" : "This text is too close to the source. Post anyway?"}
+        text={
+          confirmPost === "demo"
+            ? `This downloads the ${isVideo ? "clip" : "card"} and marks the story posted on ${meta.short}. There is no undo.`
+            : `The reworded text still repeats much of what the publishers wrote. Reword it before posting, or post it to ${meta.short} as it is.`
+        }
+        confirmLabel={confirmPost === "demo" ? "Save as posted" : "Post anyway"}
+        onConfirm={postNow}
+        onCancel={() => setConfirmPost(null)}
+      />
+      <LeaveEditorDialog open={leaving} busy={busy === "save"} onSave={() => void saveAndLeave()} onDiscard={discardAndLeave} onStay={() => setLeaving(false)} />
 
       {linkOpen && <PostedLinkDialog open headline={item.headline} platformName={meta.short} busy={busy === "posted"} onClose={() => setLinkOpen(false)} onConfirm={markPostedLive} />}
 

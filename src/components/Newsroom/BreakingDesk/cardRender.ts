@@ -861,6 +861,8 @@ export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, 
 
   const layers: Record<string, Rect> = {};
   for (const layer of layout.layers ?? []) {
+    // A hidden box is not drawn, has no rect and so can't be picked on the canvas
+    if (layer.hidden) continue;
     const motion = motionAt(layer.motion, frame);
     if (motion === null) continue;
     const style = resolveLayerStyle(layer);

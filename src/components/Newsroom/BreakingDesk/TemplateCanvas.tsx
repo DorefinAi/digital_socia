@@ -5,6 +5,7 @@ import { BreakingTag, CardLayout, ClipSegment, FtpMedia } from "@/types/newsroom
 import { CHANNEL } from "@/constants";
 import { CardRects, FrameTime, MIN_BOX, Rect, TEMPLATE_FORMATS, TemplateFormat, drawCard, fittedSize, fontsFor, mediaRectFor } from "./cardRender";
 import { BoxHandle, FrameBox, ResizeFrame, resizeBox, useBoxGesture } from "./ResizeFrame";
+import { NUDGE, isMac } from "./editorKeys";
 
 export { BIG_BREAKING_YELLOW, BREAKING_RED, DEFAULT_TEXT_Y, TEMPLATE_FORMATS } from "./cardRender";
 export type { TemplateFormat } from "./cardRender";
@@ -52,6 +53,8 @@ interface TemplateCanvasProps {
   onSelect?: (selection: CanvasSelection) => void;
   /** Double-click on the headline or a text box */
   onEditText?: (selection: CanvasSelection) => void;
+  /** Right-click: what is under the pointer (the editor opens its menu from the stage around the card) */
+  onContextTarget?: (target: Exclude<CanvasSelection, null>) => void;
   /** Draws at a fraction of full size; for thumbnails */
   renderScale?: number;
   paused?: boolean;
@@ -72,7 +75,7 @@ type Drag = { target: Exclude<CanvasSelection, null>; x: number; y: number; layo
 /** How close, in canvas px at 1080, a dragged box's centre snaps to the frame's centre lines */
 const SNAP = 14;
 
-export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHandle}`, tag, layout, onLayoutChange, selection, onSelect, onEditText, renderScale = 1, paused, segments, onDuration, onTime, sound = false, ref, style }: TemplateCanvasProps) {
+export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHandle}`, tag, layout, onLayoutChange, selection, onSelect, onEditText, onContextTarget, renderScale = 1, paused, segments, onDuration, onTime, sound = false, ref, style }: TemplateCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const startGesture = useBoxGesture();
@@ -475,6 +478,9 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     const target = hitTest(p);
     const r = rectOf(target);
     onSelect?.(target);
+    // Right and middle buttons select what is under the pointer but never drag it
+    // (Ctrl+click on a Mac is a right-click too)
+    if (e.pointerType === "mouse" && (e.button !== 0 || (e.ctrlKey && isMac()))) return;
     dragRef.current = { target, x: p.x, y: p.y, layout, dx: r ? p.x - (r.x + r.w / 2) : 0, dy: r ? p.y - (r.y + r.h / 2) : 0, box: r ? { ...r } : null };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
@@ -563,7 +569,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     e.preventDefault();
     // Keeps the editor's own arrow handling (which moves the box) out of it
     e.stopPropagation();
-    const step = (e.shiftKey ? 0.02 : 0.005) * Math.min(size.w, size.h);
+    const step = (e.shiftKey ? NUDGE.big : NUDGE.small) * Math.min(size.w, size.h);
     const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
     const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
     const box = resizeBox({ ...start }, "se", dx, dy, { W: size.w, H: size.h, minW: MIN_BOX.w * u, minH: MIN_BOX.h * u });
@@ -582,12 +588,19 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
       ref={frameRef}
       tabIndex={editable ? 0 : undefined}
       role={editable ? "group" : undefined}
-      aria-label={editable ? "Card designer. Click a text to select it. Arrow keys move the selected text; Alt and arrow keys resize it." : undefined}
+      aria-label={editable ? "Card designer. Click a text to select it. Arrow keys move the selected text; Alt and arrow keys resize it. Right-click for options." : undefined}
       onKeyDown={onKeyDown}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
+      onContextMenu={(e) => {
+        if (!editable || !onContextTarget) return;
+        // Tell the editor what is under the pointer; its menu opens from the stage around the card
+        const target = hitTest(toCanvas(e));
+        onSelect?.(target);
+        onContextTarget(target);
+      }}
       onDoubleClick={(e) => {
         if (!editable) return;
         const target = hitTest(toCanvas(e));

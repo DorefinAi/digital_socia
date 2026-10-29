@@ -5,6 +5,7 @@ import ReduxProvider from "@/providers/ReduxProvider";
 import MuiProvider from "@/providers/MuiProvider";
 import { NewsroomProvider } from "@/providers/NewsroomProvider";
 import { SociaSessionProvider } from "@/providers/SociaSessionProvider";
+import AgentAssistant from "@/components/Chat/Chatbot";
 
 export const metadata: Metadata = {
   title: "Socia - Digital Automation Platform",
@@ -26,6 +27,8 @@ export default function RootLayout({
               <NewsroomProvider>
                 {children}
               </NewsroomProvider>
+              {/* Inside the session so it can greet the signed-in person by name */}
+              <AgentAssistant />
             </SociaSessionProvider>
           </MuiProvider>
         </ReduxProvider>

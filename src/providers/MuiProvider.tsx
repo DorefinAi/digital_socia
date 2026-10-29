@@ -2,7 +2,6 @@
 
 import React, { createContext, useContext, useState, useMemo, useEffect, ReactNode } from "react";
 import { ThemeProvider, createTheme, CssBaseline } from "@mui/material";
-import AgentAssistant from "@/components/Chat/Chatbot";
 
 type ThemeMode = "light" | "dark";
 
@@ -24,6 +23,8 @@ export default function MuiProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const savedMode = localStorage.getItem("themeMode") as ThemeMode;
     if (savedMode) {
+      // Read after mount on purpose: the server can't see localStorage, so the first render must match it
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMode(savedMode);
     }
   }, []);
@@ -134,7 +135,6 @@ export default function MuiProvider({ children }: { children: ReactNode }) {
       <ThemeProvider theme={theme}>
         <CssBaseline />
         {children}
-        <AgentAssistant />
       </ThemeProvider>
     </ThemeContext.Provider>
   );

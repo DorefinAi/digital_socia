@@ -18,7 +18,7 @@ const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object"
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
 /** One plain sentence per change. Unknown actions fall back to their key, so nothing is hidden. */
-function describe(e: AuditEntry, roleName: (key: string) => string, userName: (id: string) => string, catalogue: Permission[]): string {
+export function describe(e: AuditEntry, roleName: (key: string) => string, userName: (id: string) => string, catalogue: Permission[]): string {
   const who = e.entityType === "role" ? roleName(e.entityId) : (e.entityLabel ?? userName(e.entityId));
   const before = obj(e.before);
   const after = obj(e.after);

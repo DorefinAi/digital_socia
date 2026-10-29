@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import {
   Box,
@@ -17,6 +17,7 @@ import {
 import SendIcon from "@mui/icons-material/Send";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
 import CloseIcon from "@mui/icons-material/Close";
+import { usePermissions } from "@/lib/access/usePermissions";
 
 interface Message {
   text: string;
@@ -34,24 +35,24 @@ const lightTheme = createTheme({
   shape: { borderRadius: 12 },
 });
 
+const subscribeNothing = () => () => {};
+
 export default function AgentAssistant() {
-  const [mounted, setMounted] = useState(false);
+  // Client only: the assistant never renders on the server
+  const mounted = useSyncExternalStore(subscribeNothing, () => true, () => false);
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => [
+    {
+      text: "Good day! I'm your Personal Property Assistant. I've analyzed your latest dashboard data—is there anything specific you'd like me to look into for you?",
+      isBot: true,
+      timestamp: new Date(),
+    },
+  ]);
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
   const pathname = usePathname();
-
-  useEffect(() => {
-    setMounted(true);
-    setMessages([
-      {
-        text: "Good day! I'm your Personal Property Assistant. I've analyzed your latest dashboard data—is there anything specific you'd like me to look into for you?",
-        isBot: true,
-        timestamp: new Date(),
-      },
-    ]);
-  }, []);
+  // The signed-in person's first name; a neutral prompt until /me has answered
+  const firstName = usePermissions().user?.name.trim().split(/\s+/)[0] ?? "";
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -179,7 +180,7 @@ export default function AgentAssistant() {
             <TextField
               fullWidth
               size="small"
-              placeholder="How can I help you, Vansh?"
+              placeholder={firstName ? `How can I help you, ${firstName}?` : "How can I help you?"}
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyPress={(e) => e.key === "Enter" && handleSend()}

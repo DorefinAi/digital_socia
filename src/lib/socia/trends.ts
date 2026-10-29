@@ -2,6 +2,7 @@
 
 import { api } from "./client";
 import type { ScraperItem } from "@/types/newsroom";
+import type { DraftRewrite } from "./types";
 
 export type TrendType = "topics" | "articles" | "hashtags";
 export type TrendWindow = "12h" | "24h" | "7d";
@@ -120,4 +121,4 @@ export const searchTrends = (q: string) => api<{ items: TrendItem[] }>("POST", "
 /** Queues an immediate run of the sources (editor/admin); the results arrive with the next poll */
 export const refreshTrends = () => api<unknown>("POST", "/trends/refresh");
 /** Makes a story and a draft from a trend (X only on the backend for now); it then appears in that queue */
-export const draftFromTrend = (id: string, platform: "x" = "x") => api<{ draftId: string }>("POST", `/trends/${enc(id)}/draft`, { platform });
+export const draftFromTrend = (id: string, platform: "x" = "x") => api<{ draftId: string; created?: boolean; rewrite?: DraftRewrite | null }>("POST", `/trends/${enc(id)}/draft`, { platform });

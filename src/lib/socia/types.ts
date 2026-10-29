@@ -191,6 +191,23 @@ export interface DraftView {
   };
   /** new */
   media?: DraftMedia[];
+  /**
+   * Web Scraper drafts: how the publishers' words were reworded (web-scraper-contract.md "Draft rewording").
+   * null for drafts not made from the Web Scraper, and absent on older servers.
+   */
+  rewrite?: DraftRewrite | null;
+}
+
+/** How a Web Scraper draft was reworded and how close it still is to its sources */
+export interface DraftRewrite {
+  /** The REWRITE_MODE that made it */
+  mode: "rules" | (string & {});
+  /** 0..1 against the closest source */
+  similarity: number;
+  /** Over the copy limit after the retries: reword by hand before posting */
+  tooClose: boolean;
+  /** Publishers used, the drafted item's first */
+  sources: { name: string; url: string }[];
 }
 
 export interface DraftPatch {
