@@ -2,63 +2,41 @@
 
 import React, { useMemo, useRef, useState } from "react";
 import ResponsiveTabs from "@/components/Layout/ResponsiveTabs";
-import { Box, Typography, Button, ToggleButtonGroup, ToggleButton, CircularProgress, Snackbar, Chip, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, Link as MuiLink } from "@mui/material";
-import { Download, ExternalLink, LayoutGrid } from "lucide-react";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Box, Typography, Button, CircularProgress, Snackbar, Chip } from "@mui/material";
+import { Download, LayoutGrid } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { useThemeMode } from "@/providers/MuiProvider";
 import {
   ANALYTICS_PLATFORMS,
   AnalyticsPlatform,
   METRICS,
-  PLATFORM_COLOR,
-  RANGES,
   REACH_KEY,
   RangeKey,
   bucketRows,
+  customPeriod,
+  isoDay,
+  parseIsoDay,
   periodRows,
+  periodText,
   postingHeatmap,
+  presetPeriod,
   sumMetric,
   topPosts,
 } from "@/data/analyticsData";
-import { InstagramIcon, XIcon } from "./BreakingDesk/shared";
-import { KpiTile, PostingHeatmap, cardSx } from "./Analytics/AnalyticsParts";
-import { exportElementToPdf, formatIndian } from "./Analytics/exportPdf";
-
-type View = "all" | AnalyticsPlatform;
-type MetricKey = "reach" | "engagements" | "rate" | "followers" | "posts";
-
-const YoutubeIcon: React.FC<{ size?: number }> = ({ size = 16 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="#FF0000" aria-hidden>
-    <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
-  </svg>
-);
-
-const PLATFORM_ICON: Record<AnalyticsPlatform, React.ReactNode> = {
-  X: <XIcon size={14} />,
-  YouTube: <YoutubeIcon size={16} />,
-  Instagram: <InstagramIcon size={15} color="#D62976" />,
-};
+import { CardHeading, KpiTile, PostingHeatmap, cardSx } from "./Analytics/AnalyticsParts";
+import { exportElementToPdf, formatIndian, slug } from "./Analytics/exportPdf";
+import { KPIS, MetricKey, View, bucketValue, display, metricHelp, metricLabel, tone, valueOf } from "./Analytics/metrics";
+import { PLATFORM_ICON } from "./Analytics/platformIcons";
+import TrendChart, { TrendPoint } from "./Analytics/TrendChart";
+import TopPostsCard from "./Analytics/TopPostsCard";
+import PlatformTable from "./Analytics/PlatformTable";
+import RangePicker, { RangeChoice } from "./Analytics/RangePicker";
 
 const ALL_COLOR = "#3B82F6";
 const BREAKDOWN_COLORS = ["#3B82F6", "#F59E0B", "#10B981", "#8B5CF6", "#EF4444"];
 
-function metricLabel(view: View, key: MetricKey) {
-  const reach = view === "all" ? "Total reach" : METRICS[view].find((m) => m.key === REACH_KEY[view])!.label;
-  return { reach, engagements: "Engagements", rate: "Engagement rate", followers: view === "YouTube" ? "Subscriber growth" : "Follower growth", posts: "Posts published" }[key];
-}
-
-/** Value of a metric for one platform over a set of day rows (or a chart bucket). */
-function valueOf(platform: AnalyticsPlatform, rows: Parameters<typeof sumMetric>[0], key: MetricKey) {
-  const reach = sumMetric(rows, REACH_KEY[platform]);
-  if (key === "reach") return reach;
-  if (key === "engagements") return sumMetric(rows, "engagements");
-  if (key === "rate") return reach ? (sumMetric(rows, "engagements") / reach) * 100 : 0;
-  if (key === "followers") return sumMetric(rows, "followers");
-  return sumMetric(rows, "posts");
-}
-
-const display = (key: MetricKey, v: number) => (key === "rate" ? `${v.toFixed(2)}%` : formatIndian(v));
+const pdfDay = (d: Date) => d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 
 export default function DigitalDashboard() {
   const { socialPosts } = useNewsroom();
@@ -66,22 +44,33 @@ export default function DigitalDashboard() {
   const reportRef = useRef<HTMLDivElement>(null);
 
   const [view, setView] = useState<View>("all");
-  const [range, setRange] = useState<RangeKey>("7d");
+  const [range, setRange] = useState<RangeChoice>("7d");
+  const [custom, setCustom] = useState<{ from: string; to: string } | null>(null);
   const [metric, setMetric] = useState<MetricKey>("reach");
   const [hidden, setHidden] = useState<AnalyticsPlatform[]>([]);
+  const [showPrev, setShowPrev] = useState(true);
   const [heatPlatform, setHeatPlatform] = useState<AnalyticsPlatform>("X");
-  const [sort, setSort] = useState<{ by: "reach" | "engagements" | "rate" | "postedAt"; dir: "asc" | "desc" }>({ by: "reach", dir: "desc" });
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState("");
-  // The page reads the clock once; ranges are measured back from when it opened
-  const [openedAt] = useState(() => Date.now());
+
+  const period = useMemo(() => {
+    const from = custom && parseIsoDay(custom.from);
+    const to = custom && parseIsoDay(custom.to);
+    return range === "custom" && from && to ? customPeriod(from, to) : presetPeriod(range === "custom" ? "7d" : range);
+  }, [range, custom]);
 
   const platforms = view === "all" ? ANALYTICS_PLATFORMS : [view];
-  const bucket = RANGES[range].bucket;
+  const bucket = period.bucket;
   const grid = mode === "light" ? "#EEEEEE" : "#2C2C2C";
-  const color = view === "all" ? ALL_COLOR : PLATFORM_COLOR[view];
+  const color = view === "all" ? ALL_COLOR : tone(view, mode);
+  const viewLabel = view === "all" ? "All platforms" : view;
+  const dates = periodText(period);
 
-  const periods = useMemo(() => Object.fromEntries(ANALYTICS_PLATFORMS.map((p) => [p, periodRows(p, range)])) as Record<AnalyticsPlatform, ReturnType<typeof periodRows>>, [range]);
+  const periods = useMemo(() => Object.fromEntries(ANALYTICS_PLATFORMS.map((p) => [p, periodRows(p, period)])) as Record<AnalyticsPlatform, ReturnType<typeof periodRows>>, [period]);
+  const buckets = useMemo(
+    () => Object.fromEntries(ANALYTICS_PLATFORMS.map((p) => [p, { cur: bucketRows(periods[p].current, bucket), prev: bucketRows(periods[p].previous, bucket) }])) as Record<AnalyticsPlatform, { cur: ReturnType<typeof bucketRows>; prev: ReturnType<typeof bucketRows> }>,
+    [periods, bucket]
+  );
 
   // Totals for the KPI row, summed across the platforms in view
   const total = (key: MetricKey, which: "current" | "previous") => {
@@ -93,86 +82,71 @@ export default function DigitalDashboard() {
     return platforms.reduce((s, p) => s + valueOf(p, periods[p][which], key), 0);
   };
 
-  // Chart points: one entry per day or week, with a value per platform and the previous period for comparison
-  const series = (() => {
-    const per = Object.fromEntries(
-      ANALYTICS_PLATFORMS.map((p) => {
-        const cur = bucketRows(periods[p].current, bucket);
-        const prev = bucketRows(periods[p].previous, bucket);
-        return [p, { cur, prev }];
-      })
-    ) as Record<AnalyticsPlatform, { cur: ReturnType<typeof bucketRows>; prev: ReturnType<typeof bucketRows> }>;
-    const bucketValue = (p: AnalyticsPlatform, b: ReturnType<typeof bucketRows>[number], key: MetricKey) => {
-      const reach = b.values[REACH_KEY[p]] ?? 0;
-      if (key === "reach") return reach;
-      if (key === "engagements") return b.engagements;
-      if (key === "rate") return reach ? (b.engagements / reach) * 100 : 0;
-      if (key === "followers") return b.values.followers ?? 0;
-      return b.posts;
-    };
-    return per.X.cur.map((b, i) => {
-      const point: Record<string, number | string> = { label: b.label };
-      let sum = 0;
-      let prevSum = 0;
-      for (const p of platforms) {
-        const v = bucketValue(p, per[p].cur[i], metric);
-        point[p] = +v.toFixed(2);
-        sum += v;
-        prevSum += per[p].prev[i] ? bucketValue(p, per[p].prev[i], metric) : 0;
-      }
-      point.value = +(metric === "rate" ? sum / platforms.length : sum).toFixed(2);
-      point.previous = +(metric === "rate" ? prevSum / platforms.length : prevSum).toFixed(2);
-      return point;
-    });
-  })();
+  /** The metric at one chart point over the platforms in view; rates are recomputed from the sums, not averaged. */
+  const combined = (key: MetricKey, which: "cur" | "prev", i: number) => {
+    const present = platforms.filter((p) => buckets[p][which][i]);
+    if (key === "rate") {
+      const reach = present.reduce((s, p) => s + bucketValue(p, buckets[p][which][i], "reach"), 0);
+      const eng = present.reduce((s, p) => s + bucketValue(p, buckets[p][which][i], "engagements"), 0);
+      return reach ? (eng / reach) * 100 : 0;
+    }
+    return present.reduce((s, p) => s + bucketValue(p, buckets[p][which][i], key), 0);
+  };
 
-  const sparkFor = (key: MetricKey) =>
-    bucketRows(periods[platforms[0]].current, bucket).map((_, i) =>
-      platforms.reduce((s, p) => {
-        const b = bucketRows(periods[p].current, bucket)[i];
-        const reach = b.values[REACH_KEY[p]] ?? 0;
-        const v = key === "reach" ? reach : key === "engagements" ? b.engagements : key === "rate" ? (reach ? (b.engagements / reach) * 100 : 0) : key === "followers" ? b.values.followers ?? 0 : b.posts;
-        return s + v;
-      }, 0)
-    );
+  const points: TrendPoint[] = buckets.X.cur.map((b, i) => {
+    const pt: TrendPoint = { label: b.label, fullLabel: b.fullLabel, prevLabel: buckets.X.prev[i]?.fullLabel ?? "" };
+    for (const p of ANALYTICS_PLATFORMS) {
+      pt[`cur_${p}`] = +bucketValue(p, buckets[p].cur[i], metric).toFixed(2);
+      if (buckets[p].prev[i]) pt[`prev_${p}`] = +bucketValue(p, buckets[p].prev[i], metric).toFixed(2);
+    }
+    pt.cur_total = +combined(metric, "cur", i).toFixed(2);
+    if (buckets.X.prev[i]) pt.prev_total = +combined(metric, "prev", i).toFixed(2);
+    return pt;
+  });
+
+  // Sparklines: one tinted band per platform in view (stacked for sums)
+  const sparkFor = (key: MetricKey) => buckets.X.cur.map((_, i) => Object.fromEntries(platforms.map((p) => [p, bucketValue(p, buckets[p].cur[i], key)])));
+  const sparkSeries = platforms.map((p) => ({ key: p, color: tone(p, mode) }));
 
   // Engagement breakdown: by platform in the overall view, by signal inside a platform
   const breakdown =
     view === "all"
-      ? ANALYTICS_PLATFORMS.map((p) => ({ name: p, value: valueOf(p, periods[p].current, "engagements"), color: PLATFORM_COLOR[p] }))
+      ? ANALYTICS_PLATFORMS.map((p) => ({ name: p, value: valueOf(p, periods[p].current, "engagements"), color: tone(p, mode) }))
       : METRICS[view]
           .filter((m) => m.key !== REACH_KEY[view] && m.key !== "followers" && m.key !== "watchHours")
           .map((m, i) => ({ name: m.label, value: sumMetric(periods[view].current, m.key), color: BREAKDOWN_COLORS[i % BREAKDOWN_COLORS.length] }));
 
-  const comparison = ANALYTICS_PLATFORMS.map((p) => ({
-    name: p,
-    rate: +valueOf(p, periods[p].current, "rate").toFixed(2),
-    followers: valueOf(p, periods[p].current, "followers"),
-    color: PLATFORM_COLOR[p],
-  }));
+  const comparison = ANALYTICS_PLATFORMS.map((p) => ({ name: p, rate: +valueOf(p, periods[p].current, "rate").toFixed(2), followers: valueOf(p, periods[p].current, "followers") }));
 
-  const since = openedAt - RANGES[range].days * 86400000;
-  const posts = topPosts(socialPosts)
-    .filter((p) => (view === "all" || p.platform === view) && new Date(p.postedAt).getTime() >= since)
-    .sort((a, b) => {
-      const av = sort.by === "postedAt" ? new Date(a.postedAt).getTime() : a[sort.by];
-      const bv = sort.by === "postedAt" ? new Date(b.postedAt).getTime() : b[sort.by];
-      return sort.dir === "desc" ? bv - av : av - bv;
-    })
-    .slice(0, 10);
+  // Posts published inside the period (the end day counts in full)
+  const from = period.start.getTime();
+  const to = period.end.getTime() + 86400000;
+  const posts = topPosts(socialPosts).filter((p) => {
+    const t = new Date(p.postedAt).getTime();
+    return (view === "all" || p.platform === view) && t >= from && t < to;
+  });
 
-  const kpis: MetricKey[] = ["reach", "engagements", "rate", "followers", "posts"];
-  const viewLabel = view === "all" ? "All platforms" : view;
+  const segmentSx = {
+    "& .MuiToggleButton-root": {
+      px: 1.25,
+      textTransform: "none",
+      fontSize: "0.75rem",
+      fontWeight: 600,
+      borderColor: "divider",
+      "&.Mui-selected": { backgroundColor: mode === "light" ? "#000" : "#fff", color: mode === "light" ? "#fff" : "#000", "&:hover": { backgroundColor: mode === "light" ? "#000" : "#fff" } },
+    },
+  };
 
   const downloadPdf = async () => {
     if (!reportRef.current) return;
     setExporting(true);
     try {
-      const stamp = new Date().toISOString().slice(0, 10);
+      const datesPdf = `${pdfDay(period.start)} to ${pdfDay(period.end)}`;
       await exportElementToPdf(reportRef.current, {
-        fileName: `socia-digital-report-${view.toLowerCase()}-${range}-${stamp}.pdf`,
-        title: `Socia · Digital report · ${viewLabel}`,
-        subtitle: `${RANGES[range].label}, compared with the period before · generated ${new Date().toLocaleString("en-IN", { hour12: false })}`,
+        // e.g. socia-digital-report_facebook_last-7-days_2026-10-23_to_2026-10-29.pdf
+        fileName: `socia-digital-report_${slug(viewLabel)}_${slug(period.label)}_${isoDay(period.start)}_to_${isoDay(period.end)}.pdf`,
+        title: `Digital report · ${viewLabel} · ${datesPdf}`,
+        subtitle: `${period.label} (${period.days} days), compared with the ${period.days} days before. Demo data. Generated ${new Date().toLocaleString("en-IN", { hour12: false })}`,
         background: mode === "light" ? "#f8f9fa" : "#121212",
       });
     } catch {
@@ -181,37 +155,38 @@ export default function DigitalDashboard() {
     setExporting(false);
   };
 
-  const sortHeader = (by: typeof sort.by, label: React.ReactNode) => (
-    <TableSortLabel active={sort.by === by} direction={sort.by === by ? sort.dir : "desc"} onClick={() => setSort((s) => ({ by, dir: s.by === by && s.dir === "desc" ? "asc" : "desc" }))}>
-      {label}
-    </TableSortLabel>
-  );
-
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5, mt: 2 }}>
+    // Right gutter from tablet up keeps the floating assistant button off the cards' right edge
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5, mt: 2, pr: { md: "72px" }, minWidth: 0 }}>
       {/* Header + controls */}
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 2, flexWrap: "wrap" }}>
-        <Box>
-          <Typography component="h1" sx={{ fontWeight: 600, fontSize: "1.125rem" }}>
-            Digital Dashboard
-          </Typography>
+        <Box sx={{ minWidth: 0 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+            <Typography component="h1" sx={{ fontWeight: 600, fontSize: "1.125rem" }}>
+              Digital Dashboard
+            </Typography>
+            <Chip
+              label="Demo data"
+              size="small"
+              title="Sample figures until the platform APIs are connected"
+              sx={{ height: 22, fontSize: "0.6875rem", fontWeight: 700, borderRadius: "6px", backgroundColor: "#FFF4D6", color: "#7A5300", border: "1px solid #F2D58A" }}
+            />
+          </Box>
           <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary" }}>
-            {RANGES[range].label}, compared with the {RANGES[range].days} days before. Demo figures until the platform APIs are connected.
+            {period.label}, {dates}, compared with the {period.days} days before.
           </Typography>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-          <ToggleButtonGroup
+          <RangePicker
             value={range}
-            exclusive
-            size="small"
-            onChange={(_, v) => v && setRange(v)}
-            aria-label="Date range"
-            sx={{ height: 36, "& .MuiToggleButton-root": { px: 1.5, textTransform: "none", fontSize: "0.75rem", fontWeight: 600, borderColor: "divider", "&.Mui-selected": { backgroundColor: mode === "light" ? "#000" : "#fff", color: mode === "light" ? "#fff" : "#000", "&:hover": { backgroundColor: mode === "light" ? "#000" : "#fff" } } } }}
-          >
-            <ToggleButton value="7d">7 days</ToggleButton>
-            <ToggleButton value="4w">4 weeks</ToggleButton>
-            <ToggleButton value="1m">1 month</ToggleButton>
-          </ToggleButtonGroup>
+            custom={custom}
+            onPreset={(k: RangeKey) => setRange(k)}
+            onCustom={(f, t) => {
+              setCustom({ from: f, to: t });
+              setRange("custom");
+            }}
+            segmentSx={segmentSx}
+          />
           <Button variant="contained" onClick={downloadPdf} disabled={exporting} startIcon={exporting ? <CircularProgress size={14} color="inherit" /> : <Download size={15} />} sx={{ height: 36, borderRadius: "8px", fontWeight: 600 }}>
             {exporting ? "Creating PDF" : "Download PDF"}
           </Button>
@@ -234,73 +209,75 @@ export default function DigitalDashboard() {
       />
 
       {/* Everything inside this box goes into the PDF */}
-      <Box ref={reportRef} sx={{ display: "flex", flexDirection: "column", gap: 2.5, backgroundColor: "background.default", p: 0.5, m: -0.5 }}>
-        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr 1fr", md: "repeat(5, 1fr)" }, gap: 1.5 }}>
-          {kpis.map((k) => (
-            <KpiTile key={k} label={metricLabel(view, k)} value={total(k, "current")} previous={total(k, "previous")} display={display(k, total(k, "current"))} spark={sparkFor(k)} color={color} active={metric === k} onClick={() => setMetric(k)} />
-          ))}
+      <Box ref={reportRef} sx={{ display: "flex", flexDirection: "column", gap: 2.5, backgroundColor: "background.default", p: 0.5, m: -0.5, minWidth: 0 }}>
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", md: "repeat(5, minmax(0, 1fr))" }, gap: 1.5, "& > :last-child": { gridColumn: { xs: "1 / -1", md: "auto" } } }}>
+          {KPIS.map((k) => {
+            const cur = total(k, "current");
+            const prev = total(k, "previous");
+            return (
+              <KpiTile
+                key={k}
+                label={metricLabel(view, k)}
+                value={cur}
+                previous={prev}
+                display={display(k, cur)}
+                compare={`vs previous ${period.days} days: ${display(k, prev)}`}
+                help={metricHelp(view, k, { reach: total("reach", "current"), engagements: total("engagements", "current") })}
+                spark={sparkFor(k)}
+                series={sparkSeries}
+                stacked={k !== "rate"}
+                color={color}
+                active={metric === k}
+                onClick={() => setMetric(k)}
+              />
+            );
+          })}
         </Box>
 
         {/* Trend */}
         <Box sx={cardSx}>
-          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1, flexWrap: "wrap", mb: 1.5 }}>
-            <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>
-              {metricLabel(view, metric)} {bucket === "week" ? "by week" : "by day"}
-            </Typography>
+          <CardHeading title={`${metricLabel(view, metric)} by ${bucket}`} hint={dates}>
             <Box data-pdf-hide="true" sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
-              {kpis.map((k) => (
-                <Chip key={k} label={metricLabel(view, k)} size="small" onClick={() => setMetric(k)} variant={metric === k ? "filled" : "outlined"} sx={{ height: 24, fontSize: "0.6875rem", fontWeight: 600, borderRadius: "6px", ...(metric === k && { backgroundColor: color, color: "#fff" }) }} />
+              {KPIS.map((k) => (
+                <Chip key={k} label={metricLabel(view, k)} size="small" onClick={() => setMetric(k)} variant={metric === k ? "filled" : "outlined"} sx={{ height: 26, fontSize: "0.6875rem", fontWeight: 600, borderRadius: "6px", ...(metric === k && { backgroundColor: color, color: view === "X" && mode === "dark" ? "#000" : "#fff" }) }} />
               ))}
             </Box>
-          </Box>
-          <Box sx={{ height: 280 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              {view === "all" ? (
-                <LineChart data={series} margin={{ top: 5, right: 16, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={grid} />
-                  <XAxis dataKey="label" axisLine={false} tickLine={false} fontSize={10} minTickGap={16} />
-                  <YAxis axisLine={false} tickLine={false} fontSize={10} tickFormatter={(v) => display(metric, v)} width={56} />
-                  <Tooltip formatter={(v, name) => [display(metric, Number(v)), name]} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
-                  <Legend
-                    onClick={(e) => {
-                      const p = e.dataKey as AnalyticsPlatform;
-                      setHidden((h) => (h.includes(p) ? h.filter((x) => x !== p) : [...h, p]));
-                    }}
-                    formatter={(value) => <span style={{ fontSize: 12, cursor: "pointer", opacity: hidden.includes(value as AnalyticsPlatform) ? 0.4 : 1 }}>{value}</span>}
-                    iconType="circle"
-                    iconSize={8}
-                  />
-                  {ANALYTICS_PLATFORMS.map((p) => (
-                    <Line key={p} type="monotone" dataKey={p} stroke={PLATFORM_COLOR[p]} strokeWidth={2} dot={bucket === "week"} hide={hidden.includes(p)} isAnimationActive={false} />
-                  ))}
-                </LineChart>
-              ) : (
-                <AreaChart data={series} margin={{ top: 5, right: 16, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={color} stopOpacity={0.25} />
-                      <stop offset="95%" stopColor={color} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={grid} />
-                  <XAxis dataKey="label" axisLine={false} tickLine={false} fontSize={10} minTickGap={16} />
-                  <YAxis axisLine={false} tickLine={false} fontSize={10} tickFormatter={(v) => display(metric, v)} width={56} />
-                  <Tooltip formatter={(v, name) => [display(metric, Number(v)), name === "previous" ? "Previous period" : "This period"]} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
-                  <Legend formatter={(value) => <span style={{ fontSize: 12 }}>{value === "previous" ? "Previous period" : "This period"}</span>} iconType="circle" iconSize={8} />
-                  <Area type="monotone" dataKey="previous" stroke={mode === "light" ? "#9CA3AF" : "#6B7280"} strokeDasharray="5 4" fill="none" strokeWidth={1.5} isAnimationActive={false} />
-                  <Area type="monotone" dataKey="value" stroke={color === "#111111" && mode === "dark" ? "#E5E7EB" : color} fill="url(#trendFill)" strokeWidth={2} isAnimationActive={false} />
-                </AreaChart>
-              )}
-            </ResponsiveContainer>
-          </Box>
-          {view === "all" && <Typography data-pdf-hide="true" sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.5 }}>Click a platform in the legend to hide or show it.</Typography>}
+          </CardHeading>
+          <TrendChart
+            points={points}
+            view={view}
+            metric={metric}
+            bucket={bucket}
+            mode={mode}
+            hidden={hidden}
+            onToggle={(p) => setHidden((h) => (h.includes(p) ? h.filter((x) => x !== p) : [...h, p]))}
+            showPrev={showPrev}
+            onTogglePrev={() => setShowPrev((s) => !s)}
+          />
         </Box>
 
-        {/* Breakdown + comparison */}
+        <TopPostsCard posts={posts} scope={viewLabel} segmentSx={segmentSx} />
+
+        {/* Best time to post */}
+        <Box sx={cardSx}>
+          <CardHeading title={`Best time to post · ${heatPlatform}`} hint="Average engagement rate by day and hour, from the last 12 weeks of posts. Darker is better.">
+            {view === "all" && (
+              <Box data-pdf-hide="true" sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }} role="group" aria-label="Platform for best time to post">
+                {ANALYTICS_PLATFORMS.map((p) => (
+                  <Chip key={p} label={p} size="small" onClick={() => setHeatPlatform(p)} aria-pressed={heatPlatform === p} variant={heatPlatform === p ? "filled" : "outlined"} sx={{ height: 26, fontSize: "0.6875rem", fontWeight: 600, borderRadius: "6px" }} />
+                ))}
+              </Box>
+            )}
+          </CardHeading>
+          <PostingHeatmap grid={postingHeatmap(heatPlatform)} color={tone(heatPlatform, mode)} />
+        </Box>
+
+        <PlatformTable periods={periods} view={view} days={period.days} mode={mode} />
+
+        {/* Breakdown + posting volume */}
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", lg: "1fr 1.4fr" }, gap: 2 }}>
           <Box sx={cardSx}>
-            <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>{view === "all" ? "Engagements by platform" : "What people engaged with"}</Typography>
-            <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mb: 1 }}>{view === "all" ? "Click a slice to open that platform." : RANGES[range].label}</Typography>
+            <CardHeading title={view === "all" ? "Engagements by platform" : "What people engaged with"} hint={view === "all" ? "Click a slice to open that platform." : dates} />
             <Box sx={{ height: 240 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -316,7 +293,7 @@ export default function DigitalDashboard() {
                     style={{ cursor: view === "all" ? "pointer" : "default" }}
                   >
                     {breakdown.map((b) => (
-                      <Cell key={b.name} fill={b.color === "#111111" && mode === "dark" ? "#E5E7EB" : b.color} />
+                      <Cell key={b.name} fill={b.color} />
                     ))}
                   </Pie>
                   <Tooltip formatter={(v, name) => [formatIndian(Number(v)), name]} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
@@ -327,8 +304,10 @@ export default function DigitalDashboard() {
           </Box>
 
           <Box sx={cardSx}>
-            <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>{view === "all" ? "Platforms side by side" : "Posts published"}</Typography>
-            <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mb: 1 }}>{view === "all" ? "Engagement rate (%) and follower growth" : `${bucket === "week" ? "Per week" : "Per day"}, ${RANGES[range].label.toLowerCase()}`}</Typography>
+            <CardHeading
+              title={view === "all" ? "Platforms side by side" : "Posts published"}
+              hint={view === "all" ? "Engagement rate (%, left axis) and follower growth (right axis)" : `Per ${bucket}, ${dates}`}
+            />
             <Box sx={{ height: 240 }}>
               <ResponsiveContainer width="100%" height="100%">
                 {view === "all" ? (
@@ -343,106 +322,17 @@ export default function DigitalDashboard() {
                     <Bar yAxisId="followers" dataKey="followers" name="Follower growth" fill="#10B981" radius={[4, 4, 0, 0]} isAnimationActive={false} />
                   </BarChart>
                 ) : (
-                  <BarChart data={bucketRows(periods[view].current, bucket).map((b) => ({ label: b.label, posts: b.posts }))} margin={{ top: 5, right: 8, left: 0, bottom: 0 }}>
+                  <BarChart data={buckets[view].cur.map((b) => ({ label: b.label, posts: b.posts }))} margin={{ top: 5, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={grid} />
                     <XAxis dataKey="label" axisLine={false} tickLine={false} fontSize={10} minTickGap={16} />
                     <YAxis axisLine={false} tickLine={false} fontSize={10} width={40} />
                     <Tooltip formatter={(v) => [Number(v).toLocaleString("en-IN"), "Posts"]} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
-                    <Bar dataKey="posts" fill={color === "#111111" && mode === "dark" ? "#E5E7EB" : color} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                    <Bar dataKey="posts" fill={color} radius={[4, 4, 0, 0]} isAnimationActive={false} />
                   </BarChart>
                 )}
               </ResponsiveContainer>
             </Box>
           </Box>
-        </Box>
-
-        {/* Best time to post */}
-        <Box sx={cardSx}>
-          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1, flexWrap: "wrap", mb: 1.5 }}>
-            <Box>
-              <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>Best time to post · {heatPlatform}</Typography>
-              <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>Average engagement rate by day and hour. Hover a cell for the figure.</Typography>
-            </Box>
-            {view === "all" && (
-              <Box data-pdf-hide="true" sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
-                {ANALYTICS_PLATFORMS.map((p) => (
-                  <Chip key={p} label={p} size="small" onClick={() => setHeatPlatform(p)} variant={heatPlatform === p ? "filled" : "outlined"} sx={{ height: 24, fontSize: "0.6875rem", fontWeight: 600, borderRadius: "6px" }} />
-                ))}
-              </Box>
-            )}
-          </Box>
-          <PostingHeatmap grid={postingHeatmap(heatPlatform)} color={PLATFORM_COLOR[heatPlatform] === "#111111" && mode === "dark" ? "#E5E7EB" : PLATFORM_COLOR[heatPlatform]} />
-        </Box>
-
-        {/* Top posts */}
-        <Box sx={{ ...cardSx, p: 0, overflow: "hidden" }}>
-          <Box sx={{ p: 2, pb: 1 }}>
-            <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>Top posts · {viewLabel}</Typography>
-            <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>{RANGES[range].label}. Click a column to sort.</Typography>
-          </Box>
-          {/* Fixed layout so long titles wrap instead of widening the table;
-              date, engagements and rate fold under the title on small screens */}
-          <TableContainer>
-            <Table size="small" sx={{ tableLayout: "fixed", width: "100%" }}>
-              <TableHead>
-                <TableRow sx={{ backgroundColor: mode === "light" ? "#f9fafb" : "#1a1a1a" }}>
-                  <TableCell sx={{ fontWeight: 700, fontSize: "0.75rem" }}>Post</TableCell>
-                  <TableCell sx={{ fontWeight: 700, fontSize: "0.75rem", width: 132, display: { xs: "none", md: "table-cell" } }}>{sortHeader("postedAt", "Published")}</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700, fontSize: "0.75rem", width: { xs: 84, sm: 120 } }}>{sortHeader(
-                    "reach",
-                    <>
-                      Reach<Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}> / views</Box>
-                    </>
-                  )}</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700, fontSize: "0.75rem", width: 128, display: { xs: "none", md: "table-cell" } }}>{sortHeader("engagements", "Engagements")}</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700, fontSize: "0.75rem", width: 84, display: { xs: "none", sm: "table-cell" } }}>{sortHeader("rate", "Rate")}</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700, fontSize: "0.75rem", width: 52 }}>
-                    <Box component="span" sx={{ position: "absolute", width: "1px", height: "1px", overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}>Link</Box>
-                  </TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {posts.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={6} sx={{ py: 4, textAlign: "center", color: "text.secondary" }}>
-                      No posts in this range. Try a wider range.
-                    </TableCell>
-                  </TableRow>
-                )}
-                {posts.map((p) => (
-                  <TableRow key={p.id} hover>
-                    <TableCell>
-                      <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1.25 }}>
-                        <Box sx={{ width: 56, height: 36, flexShrink: 0, borderRadius: "4px", overflow: "hidden", backgroundColor: "#111", display: { xs: "none", sm: "block" } }}>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          {p.thumbUrl && <img src={p.thumbUrl} alt="" crossOrigin="anonymous" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
-                        </Box>
-                        <Box sx={{ minWidth: 0 }}>
-                          <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5 }}>
-                            <Box sx={{ display: "flex", pt: "2px", flexShrink: 0 }}>{PLATFORM_ICON[p.platform]}</Box>
-                            <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", overflowWrap: "anywhere" }}>{p.title}</Typography>
-                          </Box>
-                          <Typography sx={{ display: { xs: "block", md: "none" }, fontSize: "0.6875rem", color: "text.secondary", mt: 0.25, fontVariantNumeric: "tabular-nums" }}>
-                            {new Date(p.postedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false })} · {formatIndian(p.engagements)} engagements
-                            <Box component="span" sx={{ display: { sm: "none" } }}> · {p.rate.toFixed(2)}%</Box>
-                          </Typography>
-                        </Box>
-                      </Box>
-                    </TableCell>
-                    <TableCell sx={{ fontSize: "0.75rem", whiteSpace: "nowrap", display: { xs: "none", md: "table-cell" } }}>{new Date(p.postedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false })}</TableCell>
-                    <TableCell align="right" sx={{ fontSize: "0.8125rem", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{formatIndian(p.reach)}</TableCell>
-                    <TableCell align="right" sx={{ fontSize: "0.8125rem", fontVariantNumeric: "tabular-nums", display: { xs: "none", md: "table-cell" } }}>{formatIndian(p.engagements)}</TableCell>
-                    <TableCell align="right" sx={{ fontSize: "0.8125rem", fontVariantNumeric: "tabular-nums", display: { xs: "none", sm: "table-cell" } }}>{p.rate.toFixed(2)}%</TableCell>
-                    <TableCell align="right">
-                      <MuiLink href={p.url} target="_blank" rel="noopener noreferrer" aria-label={`Open post: ${p.title}`} sx={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, color: "text.secondary" }}>
-                        <ExternalLink size={15} />
-                      </MuiLink>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
         </Box>
       </Box>
 

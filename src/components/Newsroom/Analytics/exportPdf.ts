@@ -55,3 +55,23 @@ export function formatIndian(n: number): string {
   if (abs >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
   return Math.round(n).toLocaleString("en-IN");
 }
+
+/** The same scale spelled out ("12.43 lakh", "2.12 crore", "34.5 thousand") for tooltips and captions. */
+export function formatIndianWords(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 1e7) return `${(n / 1e7).toFixed(2)} crore`;
+  if (abs >= 1e5) return `${(n / 1e5).toFixed(2)} lakh`;
+  if (abs >= 1e3) return `${(n / 1e3).toFixed(1)} thousand`;
+  return Math.round(n).toLocaleString("en-IN");
+}
+
+/** One unit for a whole chart axis, so every tick reads on the same scale. */
+export function indianAxisUnit(max: number): { divisor: number; word: string; note: string } {
+  if (max >= 1e7) return { divisor: 1e7, word: "crore", note: "1 crore = 1,00,00,000" };
+  if (max >= 1e5) return { divisor: 1e5, word: "lakh", note: "1 lakh = 1,00,000" };
+  if (max >= 1e4) return { divisor: 1e3, word: "thousand", note: "" };
+  return { divisor: 1, word: "", note: "" };
+}
+
+/** File-name-safe slug: "All platforms" -> "all-platforms". */
+export const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
