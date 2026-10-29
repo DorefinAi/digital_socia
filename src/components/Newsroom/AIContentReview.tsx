@@ -119,7 +119,7 @@ export default function AIContentReview() {
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Sparkles size={20} color="#9b59b6" />
           <Typography sx={{ fontWeight: 600, fontSize: "1.125rem" }}>
-            AI Content Review Overview
+            Post Studio Overview
           </Typography>
           <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", ml: 1 }}>
             {filteredContent.length} items

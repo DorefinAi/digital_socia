@@ -52,14 +52,14 @@ const SearchModal: React.FC<SearchModalProps> = ({ open, onClose }) => {
     { label: "Dashboard", path: "/dashboard", icon: <LayoutDashboard size={18} />, accessible: permissions.canAccessDashboard },
     { label: REJECTED_NEWS_LABEL, path: REJECTED_NEWS_PATH, icon: <XCircle size={18} />, accessible: canSeeRejectedNews(permissions) },
     { label: "Digital Dashboard", path: "/digital", icon: <BarChart3 size={18} />, accessible: permissions.canAccessDigitalDashboard },
-    { label: "AI Content Review", path: "/ai-content", icon: <Sparkles size={18} />, accessible: permissions.canAccessAIContentReview },
+    { label: "Post Studio", path: "/ai-content", icon: <Sparkles size={18} />, accessible: permissions.canAccessAIContentReview },
   ];
 
   const filterTypes = [
     { key: "all", label: "All" },
     { key: "stories", label: "Stories" },
     { key: "reporters", label: "Reporters" },
-    { key: "ai", label: "AI Content" },
+    { key: "ai", label: "Post Studio" },
   ];
 
   type SearchResult = { label: string; path: string; type: "story" | "reporter" | "ai" | "nav"; icon?: React.ReactNode };

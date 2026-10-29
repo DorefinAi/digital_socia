@@ -152,7 +152,7 @@ const LeftNavigation: React.FC = () => {
     { label: "Digital Dashboard", icon: <BarChart3 size={20} />, path: "/digital", accessible: permissions.canAccessDigitalDashboard },
     { label: "Web Scraper", icon: <Globe size={20} />, path: "/web-scraper", accessible: permissions.canAccessWebScraper !== false },
     {
-      label: "AI Content Review",
+      label: "Post Studio",
       icon: <Sparkles size={20} />,
       path: "/ai-content",
       accessible: permissions.canAccessAIContentReview,
