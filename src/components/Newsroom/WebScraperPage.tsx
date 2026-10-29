@@ -13,7 +13,7 @@ import { DEMO_SCRAPER_TOPICS } from "@/data/scraperData";
 import { USE_MOCKS } from "@/lib/socia/config";
 import { usePolled } from "@/lib/socia/usePolled";
 import { useSociaSession } from "@/providers/SociaSessionProvider";
-import { fetchTrends, refreshTrends, searchTrends, type TrendItem, type TrendSource, type TrendsResponse, type TrendType, type TrendWindow } from "@/lib/socia/trends";
+import { fetchTrendDistricts, fetchTrends, refreshTrends, searchTrends, type TrendItem, type TrendSource, type TrendsResponse, type TrendType, type TrendWindow } from "@/lib/socia/trends";
 import { errorText, LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
 import { CONTROL_HEIGHT, SegmentedControl } from "./ui/controls";
 import { FilterChips, type FilterChip, FilterEmpty, FilterOption, FiltersButton, FilterSection, toggleValue } from "./ui/FilterKit";
@@ -21,6 +21,9 @@ import NewStoriesPill, { freshHighlightSx } from "./BreakingDesk/NewStoriesPill"
 import { apiFileUrl } from "./BreakingDesk/live/LiveDesk";
 import CreateDraftDialog from "./CreateDraftDialog";
 import type { ScraperItem } from "@/types/newsroom";
+import { DEMO_CHANNEL, DEMO_DISTRICT, demoSources } from "@/data/scraperDemoExtras";
+import { KeywordWatchButton, NewMatchesBadge, useTrendWatches, WatchHits } from "./WebScraper/KeywordWatch";
+import { ClusterSources, sourceCountOf } from "./WebScraper/ClusterSources";
 
 const POLL_MS = 60_000;
 const STORE_KEY = "socia_trends_view_v1";
@@ -31,6 +34,8 @@ interface TrendFilters {
   sources: string[];
   categories: string[];
   districts: string[];
+  /** Only items that match one of the user's watch keywords */
+  watched: boolean;
   sort: SortValue;
 }
 interface Remembered {
@@ -39,7 +44,7 @@ interface Remembered {
   view: "cards" | "list";
   filters: TrendFilters;
 }
-const EMPTY_FILTERS: TrendFilters = { sources: [], categories: [], districts: [], sort: "rank" };
+const EMPTY_FILTERS: TrendFilters = { sources: [], categories: [], districts: [], watched: false, sort: "rank" };
 const DEFAULTS: Remembered = { type: "topics", window: "24h", view: "cards", filters: EMPTY_FILTERS };
 
 function readRemembered(): Remembered {
@@ -52,7 +57,7 @@ function readRemembered(): Remembered {
       type: (["topics", "articles", "hashtags"] as const).find((t) => t === raw.type) ?? "topics",
       window: (["12h", "24h", "7d"] as const).find((w) => w === raw.window) ?? "24h",
       view: raw.view === "list" ? "list" : "cards",
-      filters: { sources: list(f.sources).filter(isGroup), categories: list(f.categories), districts: list(f.districts), sort: (["rank", "newest", "growth"] as const).find((s) => s === f.sort) ?? "rank" },
+      filters: { sources: list(f.sources).filter(isGroup), categories: list(f.categories), districts: list(f.districts), watched: f.watched === true, sort: (["rank", "newest", "growth"] as const).find((s) => s === f.sort) ?? "rank" },
     };
   } catch {
     return DEFAULTS;
@@ -99,9 +104,19 @@ const ago = (iso: string, now: number) => {
   return h < 24 ? `${h} h ago` : new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 };
 
-/** Demo mode: the demo topics, plus article and hashtag versions of them. */
+/** Demo mode: the demo topics, plus article and hashtag versions of them, with districts, same-story groups and channel names. */
 function demoItems(type: TrendType): TrendItem[] {
-  return DEMO_SCRAPER_TOPICS.map((item) => {
+  let channel = 0;
+  return DEMO_SCRAPER_TOPICS.map((base): TrendItem => {
+    const sources = demoSources(base.id);
+    const item: TrendItem = {
+      ...base,
+      district: DEMO_DISTRICT[base.id] ?? null,
+      sourceName: base.platform === "YouTube" ? DEMO_CHANNEL[channel++ % DEMO_CHANNEL.length] : undefined,
+      clusterId: sources.length ? `demo-cluster-${base.id}` : null,
+      sourceCount: Math.max(1, sources.length),
+      sources,
+    };
     if (type === "articles") return { ...item, id: `${item.id}-a`, type, title: `${item.title}: the latest coverage` };
     if (type === "hashtags") return { ...item, id: `${item.id}-h`, type, title: "#" + item.subTag.replace(/[^\p{L}\p{M}\p{N}]+/gu, "") };
     return item;
@@ -158,6 +173,15 @@ export default function WebScraperPage() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
+  // ─── Keyword watch ─────────────────────────────────────────────────────────
+  const watch = useTrendWatches(live, live ? [] : demoItems("topics"), () => void trends.refresh());
+  const showWatched = () => {
+    watch.markSeen();
+    setFilters({ ...filters, watched: true });
+  };
+  // Districts of the last 24 h with counts (live), to order the District filter by how busy each is
+  const districtCounts = usePolled(fetchTrendDistricts, POLL_MS, "trend-districts", live);
+
   // ─── Search and filters ────────────────────────────────────────────────────
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
@@ -167,7 +191,8 @@ export default function WebScraperPage() {
     (!q || [i.title, i.reasonWhy, i.superTag, i.subTag, i.sourceName ?? "", i.district ?? ""].some((f) => f.toLowerCase().includes(q))) &&
     (!filters.sources.length || filters.sources.includes(itemGroup(i, groupByName))) &&
     (!filters.categories.length || filters.categories.includes(i.superTag)) &&
-    (!filters.districts.length || filters.districts.includes(i.district ?? ""));
+    (!filters.districts.length || filters.districts.includes(i.district ?? "")) &&
+    (!filters.watched || watch.hitsOf(i).length > 0);
   const sortItems = (items: TrendItem[]) =>
     [...items].sort((a, b) =>
       filters.sort === "newest" ? new Date(b.scrapedAt).getTime() - new Date(a.scrapedAt).getTime() : filters.sort === "growth" ? growthOf(b) - growthOf(a) || a.rank - b.rank : a.rank - b.rank,
@@ -178,8 +203,12 @@ export default function WebScraperPage() {
   const groupsPresent = new Set((all ?? []).map((i) => itemGroup(i, groupByName)));
   const sources = SOURCE_GROUPS.filter((g) => groupsPresent.has(g));
   const categories = facets((i) => i.superTag);
-  const districts = facets((i) => i.district);
-  const activeCount = filters.sources.length + filters.categories.length + filters.districts.length;
+  // District options with how many loaded items name each; busiest first (the last 24 h live, else this list)
+  const districtCount = new Map<string, number>();
+  for (const i of all ?? []) if (i.district) districtCount.set(i.district, (districtCount.get(i.district) ?? 0) + 1);
+  const recent = new Map((districtCounts.data?.districts ?? []).map((d) => [d.name, d.count]));
+  const districts = [...districtCount.keys()].sort((a, b) => (recent.get(b) ?? 0) - (recent.get(a) ?? 0) || districtCount.get(b)! - districtCount.get(a)! || a.localeCompare(b));
+  const activeCount = filters.sources.length + filters.categories.length + filters.districts.length + (filters.watched ? 1 : 0);
 
   const mergeWaiting = () => {
     if (!all) return;
@@ -238,12 +267,13 @@ export default function WebScraperPage() {
 
   // "Create draft" asks which platform (CreateDraftDialog), then opens that platform's editor on the trend
   const [drafting, setDrafting] = useState<TrendItem | null>(null);
-  const cardProps = { onDraft: setDrafting };
+  const cardProps: CardActions = { onDraft: setDrafting, now, hitsOf: watch.hitsOf };
   const tab = TYPE_TABS.find((t) => t.value === type)!;
   const loadError = live && !trends.data ? trends.error : null;
   const staleError = live && trends.data ? trends.error : null;
 
   const chips: FilterChip[] = [
+    ...(filters.watched ? [{ key: "watched", label: "Watched keywords", onRemove: () => setFilters({ ...filters, watched: false }) }] : []),
     ...filters.sources.map((s) => ({ key: `s-${s}`, label: isGroup(s) ? GROUP_TITLE[s] : s, onRemove: () => setFilters({ ...filters, sources: filters.sources.filter((x) => x !== s) }) })),
     ...filters.categories.map((c) => ({ key: `c-${c}`, label: c, onRemove: () => setFilters({ ...filters, categories: filters.categories.filter((x) => x !== c) }) })),
     ...filters.districts.map((d) => ({ key: `d-${d}`, label: d, onRemove: () => setFilters({ ...filters, districts: filters.districts.filter((x) => x !== d) }) })),
@@ -260,6 +290,7 @@ export default function WebScraperPage() {
               Web Scraper
             </Typography>
             <SourceStatus live={live} data={trends.data} fetchedAt={fetchedAt} now={now} onRetry={() => void refresh()} retrying={refreshing} />
+            <NewMatchesBadge count={watch.newCount} onShow={showWatched} />
           </Box>
           <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.25 }}>What&apos;s trending in Rajasthan and India — Google News, Google Trends, GDELT and publishers&apos; feeds.</Typography>
         </Box>
@@ -330,6 +361,7 @@ export default function WebScraperPage() {
             }}
             sx={{ order: { xs: -1, sm: 0 }, flex: { xs: "1 1 100%", sm: "none" }, minWidth: 0, width: { sm: 270 }, "& .MuiOutlinedInput-root": { borderRadius: "8px", fontSize: "0.8125rem", height: CONTROL_HEIGHT } }}
           />
+          <KeywordWatchButton watch={watch} />
           <FiltersButton activeCount={activeCount} onClearAll={() => setFilters({ ...EMPTY_FILTERS, sort: filters.sort })}>
             <FilterSection title="Sort">
               <SegmentedControl<SortValue>
@@ -342,6 +374,15 @@ export default function WebScraperPage() {
                   { value: "growth", label: "Growth" },
                 ]}
               />
+            </FilterSection>
+            <FilterSection title="Watched">
+              {watch.keywords.length ? (
+                <FilterOption on={filters.watched} onClick={() => setFilters({ ...filters, watched: !filters.watched })}>
+                  Only items with my keywords
+                </FilterOption>
+              ) : (
+                <FilterEmpty>Add keywords under Keyword watch to use this.</FilterEmpty>
+              )}
             </FilterSection>
             <FilterSection title="Source">
               {sources.length ? sources.map((s) => (
@@ -361,6 +402,9 @@ export default function WebScraperPage() {
               {districts.length ? districts.map((d) => (
                 <FilterOption key={d} on={filters.districts.includes(d)} onClick={() => setFilters({ ...filters, districts: toggleValue(filters.districts, d) })}>
                   {d}
+                  <Box component="span" sx={{ ml: 0.6, opacity: 0.7, fontVariantNumeric: "tabular-nums" }}>
+                    {districtCount.get(d)}
+                  </Box>
                 </FilterOption>
               )) : <FilterEmpty>No item here is tagged with a district.</FilterEmpty>}
             </FilterSection>
@@ -415,7 +459,7 @@ export default function WebScraperPage() {
         ) : !all.length ? (
           <EmptyBox title={`No trending ${tab.label.toLowerCase()} yet`} hint={live ? "The sources are checked every 15 minutes. Refresh to check now." : "Pick a longer time window."} />
         ) : !visible.length ? (
-          <EmptyBox title={`No ${tab.label.toLowerCase()} match`} hint={live && q ? "Clear the search or the filters, or press Enter to search Google News." : "Clear the search or the filters to see more."} />
+          <EmptyBox title={`No ${tab.label.toLowerCase()} match`} hint={filters.watched && !q ? "Nothing here names your keywords. Add more under Keyword watch, or turn off the Watched filter." : live && q ? "Clear the search or the filters, or press Enter to search Google News." : "Clear the search or the filters to see more."} />
         ) : view === "cards" ? (
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", lg: "repeat(3, 1fr)" }, gap: 2.5 }}>
             {visible.map((i) => (
@@ -692,7 +736,20 @@ function SourceLine({ item }: { item: TrendItem }) {
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.6, flexWrap: "wrap", fontSize: "0.6875rem", color: "text.secondary", minWidth: 0 }}>
       <SourceIcon platform={item.platform} />
-      <span>{item.sourceName && item.sourceName !== item.platform ? `${item.sourceName}, via ${item.platform}` : item.platform}</span>
+      <span>
+        {item.platform === "YouTube" && item.sourceName ? (
+          <>
+            <Box component="span" sx={{ fontWeight: 700, color: "text.primary" }}>
+              {item.sourceName}
+            </Box>{" "}
+            on YouTube
+          </>
+        ) : item.sourceName && item.sourceName !== item.platform ? (
+          `${item.sourceName}, via ${item.platform}`
+        ) : (
+          item.platform
+        )}
+      </span>
       {item.district && (
         <Box component="span" sx={{ px: 0.6, borderRadius: "4px", border: "1px solid", borderColor: "divider", fontWeight: 600 }}>
           {item.district}
@@ -720,9 +777,11 @@ function Stats({ item }: { item: TrendItem }) {
 
 interface CardActions {
   onDraft: (item: TrendItem) => void;
+  now: number;
+  hitsOf: (item: TrendItem) => string[];
 }
 
-function Actions({ item, onDraft, compact }: CardActions & { item: TrendItem; compact?: boolean }) {
+function Actions({ item, onDraft, compact }: Pick<CardActions, "onDraft"> & { item: TrendItem; compact?: boolean }) {
   const btn = { minHeight: 32, px: 1.25, fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" } as const;
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap", justifyContent: compact ? "flex-end" : "flex-start" }}>
@@ -759,7 +818,7 @@ function WhyTrending({ text: raw, clamp }: { text: string; clamp?: number }) {
   );
 }
 
-function TrendCard({ item, fresh, ...actions }: CardActions & { item: TrendItem; fresh: boolean }) {
+function TrendCard({ item, fresh, now, hitsOf, ...actions }: CardActions & { item: TrendItem; fresh: boolean }) {
   return (
     <Box
       component="article"
@@ -792,8 +851,10 @@ function TrendCard({ item, fresh, ...actions }: CardActions & { item: TrendItem;
           {item.superTag && <Chip label={item.superTag} size="small" sx={{ height: 22, fontSize: "0.6875rem", fontWeight: 600, borderRadius: "6px" }} />}
           {item.subTag && item.subTag !== item.superTag && <Chip label={item.subTag} size="small" variant="outlined" sx={{ height: 22, fontSize: "0.6875rem", borderRadius: "6px", maxWidth: 200 }} />}
         </Box>
+        <WatchHits hits={hitsOf(item)} />
         <WhyTrending text={item.reasonWhy} clamp={3} />
         <Stats item={item} />
+        <ClusterSources item={item} now={now} />
         <Box sx={{ mt: "auto", pt: 1 }}>
           <Actions item={item} {...actions} />
         </Box>
@@ -802,7 +863,7 @@ function TrendCard({ item, fresh, ...actions }: CardActions & { item: TrendItem;
   );
 }
 
-function TrendList({ items, highlight, ...actions }: CardActions & { items: TrendItem[]; highlight?: ReadonlySet<string> }) {
+function TrendList({ items, highlight, now, hitsOf, ...actions }: CardActions & { items: TrendItem[]; highlight?: ReadonlySet<string> }) {
   return (
     <Box sx={{ backgroundColor: "background.paper", border: "1px solid", borderColor: "divider", borderRadius: "12px", overflow: "hidden" }}>
       {items.map((item, i) => (
@@ -838,6 +899,8 @@ function TrendList({ items, highlight, ...actions }: CardActions & { items: Tren
               {item.superTag && <Chip label={item.superTag} size="small" sx={{ height: 20, fontSize: "0.625rem", fontWeight: 600, borderRadius: "6px" }} />}
               <Stats item={item} />
             </Box>
+            <WatchHits hits={hitsOf(item)} />
+            {sourceCountOf(item) > 1 && <ClusterSources item={item} now={now} />}
             <Box sx={{ display: { xs: "block", md: "none" } }}>
               <WhyTrending text={item.reasonWhy} clamp={2} />
             </Box>
