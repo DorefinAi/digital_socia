@@ -194,7 +194,8 @@ export interface PublishedPost {
   publishedAt: string;
   publishedBy: string | null;
   recalled: { at: string; reason: string } | null;
-  metrics: PostMetrics | null;
+  /** No longer sent by the API (post analytics removed); kept optional for older responses */
+  metrics?: PostMetrics | null;
   /** new */
   cardUrl?: string | null;
   /** new */
