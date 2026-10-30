@@ -4,7 +4,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { USE_MOCKS } from "@/lib/socia/config";
 import { fetchMe, logout } from "@/lib/socia/api";
 import { ApiError, onSignedOut } from "@/lib/socia/client";
-import type { Me } from "@/lib/socia/types";
+import type { Me, SociaFeatures, SociaPhase } from "@/lib/socia/types";
 
 type SessionStatus = "mock" | "loading" | "signed_in" | "needs_second_step" | "signed_out" | "offline";
 
@@ -16,6 +16,11 @@ interface SociaSession {
   signOut: () => Promise<void>;
   /** The live backend is in use (not the demo data) */
   live: boolean;
+  /**
+   * The server's phase switch from the last /me that answered (phase1-contract.md §0); null until one has.
+   * Kept through a failed refresh, so a network blip never flips the desk back to phase 2.
+   */
+  phase: { phase: SociaPhase; features: SociaFeatures | null } | null;
 }
 
 const SessionContext = createContext<SociaSession | null>(null);
@@ -23,9 +28,11 @@ const SessionContext = createContext<SociaSession | null>(null);
 export function SociaSessionProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<SessionStatus>(USE_MOCKS ? "mock" : "loading");
   const [me, setMe] = useState<Me | null>(null);
+  const [phase, setPhase] = useState<SociaSession["phase"]>(null);
 
   const apply = useCallback((next: Me) => {
     setMe(next);
+    setPhase({ phase: next.phase === 1 ? 1 : 2, features: next.features ?? null });
     setStatus(next.verified ? "signed_in" : "needs_second_step");
     return next;
   }, []);
@@ -61,7 +68,7 @@ export function SociaSessionProvider({ children }: { children: React.ReactNode }
     });
   }, [apply, applyError]);
 
-  const value = useMemo(() => ({ status, me, refresh, signOut, live: !USE_MOCKS }), [status, me, refresh, signOut]);
+  const value = useMemo(() => ({ status, me, refresh, signOut, live: !USE_MOCKS, phase }), [status, me, refresh, signOut, phase]);
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 

@@ -2,7 +2,7 @@
 
 import { ApiError, api, setCsrfToken } from "./client";
 import type {
-  CardTemplateLayout, Counts, DraftPatch, DraftView, IngestStatus, Me, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, UserCardTemplate,
+  CardTemplateLayout, CopyPostedResult, Counts, DraftPatch, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, UserCardTemplate,
 } from "./types";
 
 const enc = encodeURIComponent;
@@ -33,7 +33,18 @@ export async function logout() {
 }
 
 // ─── Queue ───────────────────────────────────────────────────────────────────
-export const fetchQueue = (view: QueueView, limit = 100) => api<QueueResponse>("GET", `/x/queue?view=${view}&limit=${limit}`);
+/** `query` filters on the server (phase1-contract.md §1); unset fields are left out */
+export function fetchQueue(view: QueueView, limit = 100, query?: QueueQuery) {
+  const params = new URLSearchParams({ view, limit: String(limit) });
+  if (query?.district) params.set("district", query.district);
+  if (query?.desk) params.set("desk", query.desk);
+  if (query?.big !== undefined) params.set("big", String(query.big));
+  if (query?.update !== undefined) params.set("update", String(query.update));
+  if (query?.needsCheck !== undefined) params.set("needsCheck", String(query.needsCheck));
+  return api<QueueResponse>("GET", `/x/queue?${params}`);
+}
+/** Counts for the queue filters over the whole view (phase 1) */
+export const fetchQueueFacets = (view: "inbox" | "posted") => api<QueueFacets>("GET", `/x/queue/facets?view=${view}`);
 export const fetchCounts = () => api<Counts>("GET", "/x/counts");
 
 // ─── Draft ───────────────────────────────────────────────────────────────────
@@ -55,6 +66,12 @@ export const resetCard = (id: string, version: number) => api<DraftView>("DELETE
 /** Records a post the operator made by hand on X, with its link. */
 export const markPosted = (id: string, version: number, permalink: string) =>
   api<{ postId: string; permalink: string }>("POST", `/drafts/${enc(id)}/mark-posted`, { version, permalink });
+/** Copy & Posted: the browser has copied the post text; this moves the draft to Posted (no link). */
+export const copyPosted = (id: string, version: number) => api<CopyPostedResult>("POST", `/drafts/${enc(id)}/copy-posted`, { version });
+/** Within `undoUntil`: back to the queue */
+export const undoCopyPosted = (id: string) => api<DraftView>("POST", `/drafts/${enc(id)}/copy-posted/undo`);
+/** "Add card": the server draws the card (202, `card.state: "rendering"`); safe to call again */
+export const renderCard = (id: string) => api<DraftView>("POST", `/drafts/${enc(id)}/card/render`);
 export const retryDraft = (id: string) => api<{ jobId: string }>("POST", `/drafts/${enc(id)}/retry`);
 
 // ─── Published ───────────────────────────────────────────────────────────────
