@@ -34,6 +34,7 @@ import { AI_CONTENT_PLATFORMS } from "./aiContentPlatforms";
 import { usePermissions } from "@/lib/access/usePermissions";
 import { postStudioKey } from "@/lib/access/catalogue";
 import { useSociaSession } from "@/providers/SociaSessionProvider";
+import { usePhase } from "@/lib/socia/usePhase";
 
 const COLLAPSED_WIDTH = 60;
 const EXPANDED_WIDTH = 220;
@@ -51,6 +52,8 @@ const LeftNavigation: React.FC = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [aiSubmenuOpen, setAiSubmenuOpen] = useState(true);
   const { can, canAny, roleLabel } = usePermissions();
+  // Phase 1 (set on the server) shows the X desk only; the other desks stay in the code, hidden
+  const { showsPlatform } = usePhase();
 
   // Sidebar state: collapsed or custom width
   const [collapsed, setCollapsed] = useState(false);
@@ -149,7 +152,7 @@ const LeftNavigation: React.FC = () => {
   const isCollapsed = sidebarWidth < 80;
 
   // Post Studio lists only the desks this person may open
-  const studioItems = AI_CONTENT_PLATFORMS.filter((p) => can(postStudioKey(p.platformKey))).map((p) => ({ label: p.label, icon: p.icon(16), platformKey: p.platformKey, path: p.path }));
+  const studioItems = AI_CONTENT_PLATFORMS.filter((p) => can(postStudioKey(p.platformKey)) && showsPlatform(p.platformKey)).map((p) => ({ label: p.label, icon: p.icon(16), platformKey: p.platformKey, path: p.path }));
   const canManageAccess = can("page.settings") && canAny(["roles.manage", "users.manage"]);
 
   const navItems = [

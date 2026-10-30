@@ -6,6 +6,7 @@ import { Box, CircularProgress, Dialog, IconButton, Typography } from "@mui/mate
 import { X } from "lucide-react";
 import type { ScraperItem } from "@/types/newsroom";
 import { AI_CONTENT_PLATFORMS, type AiContentPlatform } from "@/components/leftNavigation/aiContentPlatforms";
+import { usePhase } from "@/lib/socia/usePhase";
 import { USE_MOCKS } from "@/lib/socia/config";
 import { draftFromTrend } from "@/lib/socia/trends";
 import { prefillHref } from "@/lib/trendPrefill";
@@ -71,7 +72,10 @@ function Picker({ item, onClose }: { item: TrendFields; onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [last] = useState(readLast);
   const tiles = useRef<(HTMLButtonElement | null)[]>([]);
-  const focusIndex = Math.max(0, AI_CONTENT_PLATFORMS.findIndex((p) => p.platformKey === last));
+  // Phase 1 (set on the server) drafts for X only; the other desks are switched off
+  const { showsPlatform } = usePhase();
+  const platforms = AI_CONTENT_PLATFORMS.filter((p) => showsPlatform(p.platformKey));
+  const focusIndex = Math.max(0, platforms.findIndex((p) => p.platformKey === last));
   // The tile used last takes focus, one frame after the dialog's own focus trap has focused the box
   useEffect(() => {
     const id = requestAnimationFrame(() => tiles.current[focusIndex]?.focus());
@@ -103,7 +107,7 @@ function Picker({ item, onClose }: { item: TrendFields; onClose: () => void }) {
     const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: 2, ArrowUp: -2 }[e.key];
     if (!step) return;
     const next = i + step;
-    if (next < 0 || next >= AI_CONTENT_PLATFORMS.length) return;
+    if (next < 0 || next >= platforms.length) return;
     e.preventDefault();
     tiles.current[next]?.focus();
   };
@@ -131,7 +135,7 @@ function Picker({ item, onClose }: { item: TrendFields; onClose: () => void }) {
       </Box>
 
       <Box component="ul" aria-label="Platforms" sx={{ listStyle: "none", m: 0, p: 0, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1 }}>
-        {AI_CONTENT_PLATFORMS.map((p, i) => {
+        {platforms.map((p, i) => {
           const real = goesToQueue(p);
           const isLast = last === p.platformKey;
           const noteId = `create-draft-note-${p.platformKey}`;

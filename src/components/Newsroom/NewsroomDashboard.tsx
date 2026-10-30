@@ -67,7 +67,8 @@ const NewsroomDashboard: React.FC = () => {
 
   // Breaking stories from the FTP that are not yet out on both platforms
   const postedOn = (platform: SocialPlatform) => new Set(socialPosts.filter((p) => p.platform === platform && p.status !== "recalled").map((p) => p.newsId));
-  const DESKS: SocialPlatform[] = ["X (Twitter)", "Instagram", "Facebook"];
+  // Phase 1 (set on the server) shows the X desk only
+  const DESKS: SocialPlatform[] = desk && !desk.phaseKnown ? [] : desk?.phase1 ? ["X (Twitter)"] : ["X (Twitter)", "Instagram", "Facebook"];
   const postedSets = Object.fromEntries(DESKS.map((p) => [p, postedOn(p)])) as Record<SocialPlatform, Set<string>>;
   // Live: the X queue; a story there is by definition not posted yet, and only X is connected
   const breakingQueue = desk ? desk.queue : ftpNews.filter((n) => DESKS.some((p) => !postedSets[p].has(n.id)));
@@ -272,7 +273,7 @@ const NewsroomDashboard: React.FC = () => {
           </Box>
           {breakingQueue.length === 0 ? (
             <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", py: 3, textAlign: "center" }}>
-              Every breaking story is posted on X, Instagram and Facebook.
+              {desk?.phase1 ? "Every breaking file is posted on X." : "Every breaking story is posted on X, Instagram and Facebook."}
             </Typography>
           ) : (
             <Box sx={{ display: "flex", flexDirection: "column", maxHeight: 320, overflowY: "auto" }}>
