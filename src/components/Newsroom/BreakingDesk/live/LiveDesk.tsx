@@ -18,6 +18,7 @@ import * as socia from "@/lib/socia/api";
 import { SOCIA_API_URL, POLL_MS } from "@/lib/socia/config";
 import { usePolled, type Polled } from "@/lib/socia/usePolled";
 import { usePermissions } from "@/lib/access/usePermissions";
+import { usePhase } from "@/lib/socia/usePhase";
 import {
   errorCode,
   errorText,
@@ -27,7 +28,9 @@ import type {
   DraftMedia,
   DraftView,
   PublishedPost,
+  QueueFacets,
   QueueItem,
+  QueueQuery,
   QueueResponse,
   RejectReasonCode,
   UserCardTemplate,
@@ -82,6 +85,36 @@ export function apiFileUrl(url: string | null | undefined): string {
 
 /** Breaking stories on the live desk carry no Big Breaking tag yet; every story shows as Breaking. */
 const LIVE_TAG = "breaking" as const;
+
+/**
+ * Same id and same server data as the last poll: the same object, so memoised rows skip the re-render.
+ * Module-level and bounded; a poll brings at most a few hundred items.
+ */
+const newsCache = new Map<string, { key: string; news: LiveNewsItem }>();
+export function stableQueueToNews(item: QueueItem): LiveNewsItem {
+  const key = JSON.stringify(item);
+  const hit = newsCache.get(item.id);
+  if (hit && hit.key === key) return hit.news;
+  if (newsCache.size > 2000) newsCache.clear();
+  const news = queueToNews(item);
+  newsCache.set(item.id, { key, news });
+  return news;
+}
+
+/**
+ * Cookies go only to this app's origin (the /socia-api proxy) or the configured API origin; any other host
+ * (a signed storage URL) is fetched without them.
+ */
+export function credentialsFor(url: string): RequestCredentials {
+  try {
+    const u = new URL(url, window.location.origin);
+    if (u.origin === window.location.origin) return "include";
+    const api = new URL(SOCIA_API_URL, window.location.origin);
+    return u.origin === api.origin ? "include" : "omit";
+  } catch {
+    return "omit";
+  }
+}
 
 export function queueToNews(item: QueueItem): LiveNewsItem {
   return {
@@ -140,7 +173,8 @@ export function postToSocial(p: PublishedPost): SocialPost {
     mentions: [],
     mediaKind: "image",
     thumbUrl: fileUrl(p.cardUrl),
-    postUrl: p.permalink,
+    // Copy & Posted records no link
+    postUrl: p.permalink ?? "",
     postedAt: p.publishedAt,
     postedBy: p.publishedBy ?? (p.manual ? "Posted by hand" : "Socia"),
     status: p.recalled ? "recalled" : "live",
@@ -149,7 +183,10 @@ export function postToSocial(p: PublishedPost): SocialPost {
   };
 }
 
-/** A post waiting out the server's 10-second undo window, then its outcome. */
+/**
+ * A post waiting out the server's 10-second undo window, then its outcome. Phase 1's Copy & Posted
+ * uses the same toast (`copied`): the post is already in Posted and Undo puts it back in the queue.
+ */
 export interface LivePending {
   id: string;
   draftId: string;
@@ -158,7 +195,12 @@ export interface LivePending {
   headline: string;
   outcome?:
     { kind: "posted"; permalink: string } | { kind: "failed"; message: string };
+  /** Copy & Posted: the server allows Undo until `undoUntil`; the toast offers it while it is shown */
+  copied?: { undoUntil: string; withCard: boolean };
 }
+
+/** How long the Copy & Posted toast stays (Undo stays in the Posted tab for the server's 5 minutes) */
+const COPIED_TOAST_MS = 12_000;
 
 interface LiveDeskValue {
   canAct: boolean;
@@ -172,6 +214,21 @@ interface LiveDeskValue {
   cardTemplate: Polled<{ template: UserCardTemplate | null }>;
   /** The inbox, in the desk's story shape */
   queue: LiveNewsItem[];
+  /** Phase 1 (set on the server): ready posts from the breaking files, Copy & Posted, no X API posting */
+  phase1: boolean;
+  /** The phase has been read from /me; until then the desk shows a loading state, not phase 2 */
+  phaseKnown: boolean;
+  /** Phase 1: the server-side filters the inbox and Posted views are fetched with */
+  queueQuery: QueueQuery;
+  setQueueQuery: (q: QueueQuery) => void;
+  /** Phase 1: drafts marked with Copy & Posted (newest first), with the same filters */
+  postedView: Polled<QueueResponse>;
+  /** Phase 1: counts for the filter menus, over the whole view */
+  facets: { inbox: Polled<QueueFacets>; posted: Polled<QueueFacets> };
+  /** Copy & Posted went through: show the toast with Undo */
+  addCopied: (p: { draftId: string; postId: string; headline: string; undoUntil: string; withCard: boolean }) => void;
+  /** Undo a Copy & Posted from the Posted list (within the server's window). Resolves to an error sentence or null. */
+  undoCopied: (draftId: string) => Promise<string | null>;
   /** Polls everything now; resolves to the number of stories that were not in the inbox before */
   refreshAll: () => Promise<number>;
   pending: LivePending[];
@@ -207,32 +264,52 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
   // Opening a story to work on it needs draft.edit; the finer actions check their own permission
   const { can } = usePermissions();
   const canAct = can("draft.edit");
+  // Nothing is fetched until the phase is known, so a phase 1 desk never starts on phase 2's views
+  const { phase1, known: phaseKnown } = usePhase();
+  // Phase 1 filters on the server, so a day's ~700 files stay quick to narrow; the key refetches on change
+  const [queueQuery, setQueueQuery] = useState<QueueQuery>({});
+  const queryKey = phase1 ? JSON.stringify(queueQuery) : "";
 
   const inbox = usePolled(
-    () => socia.fetchQueue("inbox", 200),
+    () => socia.fetchQueue("inbox", 200, phase1 ? queueQuery : undefined),
     POLL_MS.queue,
-    "inbox",
+    `inbox${queryKey}`,
+    phaseKnown,
   );
+  // Phase 1 posts nothing through the X API, so nothing is ever sending or failed
   const sending = usePolled(
     () => socia.fetchQueue("sending", 100),
     POLL_MS.queue,
     "sending",
+    phaseKnown && !phase1,
   );
   const failed = usePolled(
     () => socia.fetchQueue("failed", 100),
     POLL_MS.counts,
     "failed",
+    phaseKnown && !phase1,
   );
+  const postedView = usePolled(
+    () => socia.fetchQueue("posted", 200, queueQuery),
+    POLL_MS.posts,
+    `posted${queryKey}`,
+    phaseKnown && phase1,
+  );
+  const inboxFacets = usePolled(() => socia.fetchQueueFacets("inbox"), POLL_MS.counts, "facets-inbox", phaseKnown && phase1);
+  const postedFacets = usePolled(() => socia.fetchQueueFacets("posted"), POLL_MS.counts, "facets-posted", phaseKnown && phase1);
+  const facets = useMemo(() => ({ inbox: inboxFacets, posted: postedFacets }), [inboxFacets, postedFacets]);
   const rejected = usePolled(
     () => socia.fetchQueue("rejected", 100),
     POLL_MS.counts,
     "rejected",
+    phaseKnown,
   );
-  const posts = usePolled(() => socia.fetchPosts(100), POLL_MS.posts, "posts");
+  const posts = usePolled(() => socia.fetchPosts(100), POLL_MS.posts, "posts", phaseKnown);
   const counts = usePolled(
     () => socia.fetchCountsOrDerive(),
     POLL_MS.counts,
     "counts",
+    phaseKnown,
   );
 
   // Changes only from the Templates tab, which refreshes it; the slow poll picks up another tab's change
@@ -240,30 +317,21 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
     () => socia.fetchCardTemplate("x"),
     POLL_MS.cardTemplate,
     "card-template",
+    phaseKnown,
   );
 
   const queue = useMemo(
-    () => (inbox.data?.items ?? []).map(queueToNews),
+    () => (inbox.data?.items ?? []).map(stableQueueToNews),
     [inbox.data],
   );
 
-  const refreshers = useRef([
-    inbox.refresh,
-    sending.refresh,
-    failed.refresh,
-    rejected.refresh,
-    posts.refresh,
-    counts.refresh,
-  ]);
+  const pollers = () =>
+    phase1
+      ? [inbox.refresh, rejected.refresh, posts.refresh, counts.refresh, postedView.refresh, inboxFacets.refresh, postedFacets.refresh]
+      : [inbox.refresh, sending.refresh, failed.refresh, rejected.refresh, posts.refresh, counts.refresh];
+  const refreshers = useRef(pollers());
   useEffect(() => {
-    refreshers.current = [
-      inbox.refresh,
-      sending.refresh,
-      failed.refresh,
-      rejected.refresh,
-      posts.refresh,
-      counts.refresh,
-    ];
+    refreshers.current = pollers();
   });
   const known = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -272,10 +340,10 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
 
   const refreshAll = useCallback(async () => {
     const before = known.current;
-    const fresh = await socia.fetchQueue("inbox", 200).catch(() => null);
+    const fresh = await socia.fetchQueue("inbox", 200, phase1 ? queueQuery : undefined).catch(() => null);
     await Promise.all(refreshers.current.map((r) => r()));
     return fresh ? fresh.items.filter((i) => !before.has(i.id)).length : 0;
-  }, []);
+  }, [phase1, queueQuery]);
   const refreshSoon = useCallback(
     () => void Promise.all(refreshers.current.map((r) => r())),
     [],
@@ -373,10 +441,39 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
     [watch, refreshSoon],
   );
 
+  const addCopied = useCallback(
+    (c: { draftId: string; postId: string; headline: string; undoUntil: string; withCard: boolean }) => {
+      const id = `copied:${c.postId}`;
+      clearTimeout(timers.current.get(id));
+      setPending((list) => [
+        ...list.filter((x) => x.id !== id),
+        { id, draftId: c.draftId, jobId: c.postId, sendAt: c.undoUntil, headline: c.headline, copied: { undoUntil: c.undoUntil, withCard: c.withCard } },
+      ]);
+      timers.current.set(id, setTimeout(() => dismiss(id), COPIED_TOAST_MS));
+      refreshSoon();
+    },
+    [dismiss, refreshSoon],
+  );
+
+  const undoCopied = useCallback(
+    async (draftId: string) => {
+      const error = await tryAction(() => socia.undoCopyPosted(draftId));
+      if (!error) setPending((list) => list.filter((p) => !(p.copied && p.draftId === draftId)));
+      refreshSoon();
+      return error;
+    },
+    [refreshSoon],
+  );
+
   const undo = useCallback(
     async (id: string) => {
       const p = pending.find((x) => x.id === id);
       if (!p) return null;
+      if (p.copied) {
+        const error = await undoCopied(p.draftId);
+        if (!error) dismiss(id);
+        return error;
+      }
       const error = await tryAction(async () => {
         await socia.undoJob(p.jobId);
         // Undo hands the draft back claimed; let it go so it is free in the queue again
@@ -386,7 +483,7 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
       refreshSoon();
       return error;
     },
-    [pending, dismiss, refreshSoon],
+    [pending, dismiss, refreshSoon, undoCopied],
   );
 
   useEffect(() => {
@@ -452,6 +549,14 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
       counts,
       cardTemplate,
       queue,
+      phase1,
+      phaseKnown,
+      queueQuery,
+      setQueueQuery,
+      postedView,
+      facets,
+      addCopied,
+      undoCopied,
       refreshAll,
       pending,
       addPending,
@@ -472,6 +577,13 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
       counts,
       cardTemplate,
       queue,
+      phase1,
+      phaseKnown,
+      queueQuery,
+      postedView,
+      facets,
+      addCopied,
+      undoCopied,
       refreshAll,
       pending,
       addPending,

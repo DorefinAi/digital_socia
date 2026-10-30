@@ -76,8 +76,11 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare, allo
           }}
         >
           <Box sx={{ position: "relative", width: "100%", aspectRatio: "7 / 5", borderRadius: "4px", overflow: "hidden", backgroundColor: "#111" }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={post.thumbUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            {/* A post copied by hand without a card has no picture: leave the dark tile empty */}
+            {post.thumbUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={post.thumbUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            ) : null}
             {post.mediaKind === "video" && (
               <Box sx={{ position: "absolute", right: 3, bottom: 3, display: "flex", p: "2px", borderRadius: "3px", backgroundColor: "rgba(0,0,0,0.7)", color: "#fff" }}>
                 <Film size={11} />
@@ -93,6 +96,7 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare, allo
               </Typography>
               {post.status === "recalled" && <Chip label="Recalled" size="small" color="error" variant="outlined" sx={{ height: 18, fontSize: "0.625rem", borderRadius: "5px", flexShrink: 0 }} />}
             </Box>
+            {post.postUrl ? (
             <MuiLink
               href={post.postUrl}
               target="_blank"
@@ -112,6 +116,10 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare, allo
             >
               {post.postUrl.replace(/^https:\/\/(www\.)?/, "")}
             </MuiLink>
+            ) : (
+              // Copy & Posted records no link: the post was pasted into X by hand
+              <Typography sx={{ mt: 0.25, fontSize: "0.6875rem", color: "text.secondary" }}>Copied and posted by hand, no link</Typography>
+            )}
             <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.25 }}>
               {timeAgo(post.postedAt)} · {post.postedBy}
               {post.status === "recalled" && post.recallReason ? ` · recalled: ${post.recallReason}` : ""}
@@ -119,11 +127,13 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare, allo
           </Box>
 
           <Box sx={{ display: "flex", alignItems: "center" }}>
-            {allowRecall && canRecall && post.status !== "recalled" && (
+            {allowRecall && canRecall && post.status !== "recalled" && !!post.postUrl && (
               <Button size="small" color="error" startIcon={<Undo2 size={13} />} onClick={() => setRecalling(post)} sx={{ minHeight: 28, fontSize: "0.75rem", px: 1, mr: 0.5 }}>
                 Recall
               </Button>
             )}
+            {post.postUrl && (
+            <>
             <Tooltip title={copiedId === post.id ? "Copied" : "Copy link"}>
               <IconButton size="small" onClick={() => copy(post.id, post.postUrl)} aria-label="Copy post link">
                 {copiedId === post.id ? <Check size={15} /> : <Copy size={15} />}
@@ -134,6 +144,8 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare, allo
                 <ExternalLink size={15} />
               </IconButton>
             </Tooltip>
+            </>
+            )}
           </Box>
         </Box>
       ))}

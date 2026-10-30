@@ -21,7 +21,11 @@ import { FtpRefresh } from "./FtpStatus";
 import { countMedia, QueueCards, QueueTable } from "./QueueViews";
 import NewStoriesPill from "./NewStoriesPill";
 import { CONTROL_HEIGHT, EmptyState, isRejectedNotice, PLATFORM_META, PlatformIcon, rejectedNotice, SegmentedControl, storyCategory, storyTag, TAG_TINT } from "./shared";
-import { activeFilterCount, ActiveFilterChips, type FilterFacts, matchesOtherFilters, matchesPriority, QueueFiltersButton, type QueueFilterState, readQueueFilters, saveQueueFilters, sortStories } from "./QueueFilters";
+import { activeFilterCount, ActiveFilterChips, type FilterFacts, matchesOtherFilters, matchesPriority, QueueFiltersButton, type QueueFilterState, readQueueFilters, saveQueueFilters, sortStories, toQueueQuery } from "./QueueFilters";
+import { Phase1PostedList, Phase1QueueList } from "./phase1/Phase1Queue";
+import SourceStatus from "./phase1/SourceStatus";
+import { stableQueueToNews } from "./live/LiveDesk";
+import { phase1RowId } from "./phase1/Phase1Queue";
 import { REJECTED_NEWS_PATH } from "@/lib/rejectedNews";
 import { readPrefill, type TrendPrefill } from "@/lib/trendPrefill";
 import { LiveSendingList } from "./DraftLists";
@@ -72,11 +76,15 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   // The server lets post.publish decline a draft too (Digital Team rejects on the desk)
   const canReject = canAct && (can("draft.reject") || can("post.publish"));
   const meta = PLATFORM_META[platform];
+  // Phase 1 (set on the server): breaking files as ready posts, Copy & Posted, nothing sent through the X API
+  const p1 = !!desk?.phase1;
   const otherPlatforms = (["X (Twitter)", "Instagram", "Facebook"] as SocialPlatform[]).filter((p) => p !== platform);
 
   // ?tab=templates opens the Templates tab (the profile page links there for card backgrounds)
   const initialTab = useSearchParams().get("tab");
-  const [tab, setTab] = useState<ConsoleTab>(() => (initialTab === "templates" || initialTab === "published" || initialTab === "scheduled" ? initialTab : "queue"));
+  const [tabState, setTab] = useState<ConsoleTab>(() => (initialTab === "templates" || initialTab === "published" || initialTab === "scheduled" ? initialTab : "queue"));
+  // Phase 1 has no Sending tab (nothing is sent through the X API)
+  const tab: ConsoleTab = p1 && tabState === "scheduled" ? "queue" : tabState;
   const [viewMode, setViewMode] = useState<"cards" | "list">(readView);
   const changeView = (next: "cards" | "list") => {
     setViewMode(next);
@@ -96,6 +104,12 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     setFiltersState(next);
     saveQueueFilters(next);
   };
+  // Phase 1: district, desk, BIG, UPDATE and needs-check are applied by the server
+  const serverQuery = JSON.stringify(toQueueQuery(filters));
+  const setQueueQuery = desk?.setQueueQuery;
+  useEffect(() => {
+    if (p1 && setQueueQuery) setQueueQuery(JSON.parse(serverQuery));
+  }, [p1, serverQuery, setQueueQuery]);
   const [query, setQuery] = useState("");
   // The dashboard links straight into the editor with ?compose=<news id>
   const searchParams = useSearchParams();
@@ -164,7 +178,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     },
   };
   const q = query.trim().toLowerCase();
-  const matchesSearchAndFilters = (n: FtpNewsItem) => (!q || [n.headline, n.shortText, n.area, n.ftpPath, storyCategory(n) ?? ""].some((field) => field.toLowerCase().includes(q))) && matchesOtherFilters(n, filters, facts, now);
+  const matchesSearchAndFilters = (n: FtpNewsItem) => (!q || [n.headline, n.shortText, n.area, n.ftpPath, storyCategory(n) ?? "", (isLiveItem(n) && n.live.postText) || ""].some((field) => field.toLowerCase().includes(q))) && matchesOtherFilters(n, filters, facts, now, p1);
   // Seen stories matching the search and every filter but priority; the priority switch counts within these
   const matching = queue.filter((n) => isSeen(n) && matchesSearchAndFilters(n));
   // New stories waiting behind the pill; only the ones the filters would show are counted
@@ -261,16 +275,69 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   }, [tab, composing, rejecting, visible.length, focused, canAct, canReject]);
 
 
+  // Phase 1: when the editor closes, focus goes back to the queue: the story's row if it is still there,
+  // else the row now in its place (the next story after a Copy & Posted), else the list's tab
+  const returnFocus = useRef<{ id: string; index: number } | null>(null);
+  const closeEditor = () => {
+    if (p1 && composing) returnFocus.current = { id: composing.id, index: Math.max(0, visible.findIndex((n) => n.id === composing.id)) };
+    setComposing(null);
+  };
+  const visibleIds = visible.map((n) => n.id).join(",");
+  useEffect(() => {
+    const target = returnFocus.current;
+    if (!p1 || composing || !target) return;
+    // Wait a frame so the dialog has released focus
+    const raf = requestAnimationFrame(() => {
+      const ids = visibleIds ? visibleIds.split(",") : [];
+      const stillThere = ids.indexOf(target.id);
+      const index = stillThere >= 0 && !desk?.pending.some((x) => x.copied && x.draftId === target.id) ? stillThere : Math.min(target.index, ids.length - 1);
+      const id = ids.filter((x) => !desk?.pending.some((pp) => pp.copied && pp.draftId === x))[index] ?? ids[index];
+      const el = id ? document.getElementById(phase1RowId(id)) : null;
+      if (el) {
+        setFocusIndex(ids.indexOf(id));
+        el.focus();
+      } else document.querySelector<HTMLElement>("[role=tab][aria-selected=true]")?.focus();
+      returnFocus.current = null;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [p1, composing, visibleIds, desk?.pending]);
+
   const openStory = (newsId: string) => {
     const item = ftpNews.find((n) => n.id === newsId);
     if (item) setComposing(item);
   };
 
-  const stats = [
-    { label: "To post", value: queue.length, tone: "text.primary" },
-    { label: desk ? "Sending" : "Scheduled", value: scheduledCount, tone: "text.primary" },
-    { label: "Published today", value: publishedToday, tone: "success.main" },
-  ];
+  const facetsInbox = desk?.facets.inbox.data ?? null;
+  const facetsPosted = desk?.facets.posted.data ?? null;
+  const stats = p1
+    ? [
+        // The whole day's count from the facets; the loaded page as a fallback
+        { label: "To post", value: facetsInbox?.total ?? queue.length, tone: "text.primary" },
+        { label: "Needs check", value: facetsInbox?.needsCheck ?? 0, tone: (facetsInbox?.needsCheck ?? 0) > 0 ? "warning.main" : "text.primary" },
+        { label: "Posted today", value: publishedToday, tone: "success.main" },
+      ]
+    : [
+        { label: "To post", value: queue.length, tone: "text.primary" },
+        { label: desk ? "Sending" : "Scheduled", value: scheduledCount, tone: "text.primary" },
+        { label: "Published today", value: publishedToday, tone: "success.main" },
+      ];
+
+  // Phase 1 Posted tab: drafts marked with Copy & Posted, filtered like the queue
+  const postedData = desk?.postedView.data;
+  // Mapped once per answer; unchanged stories keep their objects, so the rows skip re-rendering
+  const postedNews = useMemo(() => (p1 ? (postedData?.items ?? []).map(stableQueueToNews) : []), [p1, postedData]);
+  const postedItems = postedNews.filter(matchesSearchAndFilters);
+  const postedTotal = facetsPosted?.total ?? desk?.postedView.data?.items.length ?? 0;
+  const p1Narrowed = activeFilterCount(filters) > 0 || !!q;
+
+  // Until /me has said which phase this is, show neither desk (phase 2 must not flash on a phase 1 desk)
+  if (desk && !desk.phaseKnown) {
+    return (
+      <Box sx={{ mt: 2 }} role="status" aria-label="Loading the desk">
+        <LoadingRows rows={4} height={96} />
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 2 }}>
@@ -280,14 +347,18 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <PlatformIcon platform={platform} size={16} />
             <Typography component="h1" sx={{ fontWeight: 600, fontSize: "1.125rem", letterSpacing: "-0.01em" }}>
-              {meta.short} draft console
+              {p1 ? `${meta.short} ready posts` : `${meta.short} draft console`}
             </Typography>
           </Box>
           <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.25 }}>
-            Stories tagged Breaking or Big Breaking on the FTP, ready for the @{meta.handle} template.
+            {p1
+              ? `Breaking files from the newsroom share, written as @${meta.handle} posts. Check, copy, paste into X.`
+              : `Stories tagged Breaking or Big Breaking on the FTP, ready for the @${meta.handle} template.`}
           </Typography>
         </Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap", minWidth: 0 }}>
+          {p1 && <SourceStatus />}
+          {!p1 && (
           <SegmentedControl
             ariaLabel="Queue view"
             value={viewMode}
@@ -297,11 +368,16 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
               { value: "list", label: (<><List size={14} /> List</>) },
             ]}
           />
+          )}
           <FtpRefresh
             onDone={(added) => {
               // A check the operator asked for shows everything it found straight away, highlighted
               revealUntil(Date.now() + 1000);
-              setNotice(added ? `${added} new breaking ${added === 1 ? "story" : "stories"} pulled from FTP` : "Up to date. No new breaking stories.");
+              setNotice(
+                p1
+                  ? added ? `${added} new breaking ${added === 1 ? "file" : "files"} from the share` : "Up to date. No new breaking files."
+                  : added ? `${added} new breaking ${added === 1 ? "story" : "stories"} pulled from FTP` : "Up to date. No new breaking stories.",
+              );
             }}
           />
         </Box>
@@ -340,16 +416,48 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
           value={tab}
           onChange={setTab}
           ariaLabel="Draft console sections"
-          items={[
-            { value: "queue", label: narrowed ? `Queue (${visible.length} of ${queue.length})` : `Queue (${queue.length})` },
-            { value: "scheduled", label: `${desk ? "Sending" : "Scheduled"} (${scheduledCount})` },
-            { value: "published", label: `Published (${publishedCount})` },
-            { value: "templates", label: "Templates" },
-          ]}
+          items={
+            p1
+              ? [
+                  { value: "queue", label: p1Narrowed ? `New (${visible.length} shown)` : `New (${facetsInbox?.total ?? queue.length})` },
+                  { value: "published", label: p1Narrowed ? `Posted today (${postedItems.length} shown)` : `Posted today (${postedTotal})` },
+                  { value: "templates", label: "Templates" },
+                ]
+              : [
+                  { value: "queue", label: narrowed ? `Queue (${visible.length} of ${queue.length})` : `Queue (${queue.length})` },
+                  { value: "scheduled", label: `${desk ? "Sending" : "Scheduled"} (${scheduledCount})` },
+                  { value: "published", label: `Published (${publishedCount})` },
+                  { value: "templates", label: "Templates" },
+                ]
+          }
           tabsSx={{ minHeight: 40, maxWidth: "100%", "& .MuiTab-root": { minHeight: 40, textTransform: "none", fontWeight: 600, fontSize: "0.875rem", px: 1.5, minWidth: 0 } }}
         />
-        {tab === "queue" && (
+        {(tab === "queue" || (p1 && tab === "published")) && (
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, ml: { xs: 0, sm: "auto" }, width: { xs: "100%", sm: "auto" }, pb: 0.75, flexWrap: "wrap" }}>
+            {p1 ? (
+              <SegmentedControl<"all" | "big">
+                ariaLabel="BIG files only"
+                value={filters.big ? "big" : "all"}
+                onChange={(v) => setFilters({ ...filters, big: v === "big" })}
+                options={(["all", "big"] as const).map((v) => {
+                  const f = tab === "published" ? facetsPosted : facetsInbox;
+                  const n = v === "all" ? f?.total : f?.big;
+                  return {
+                    value: v,
+                    label: (
+                      <>
+                        {v === "all" ? "All" : "BIG"}
+                        {typeof n === "number" && (
+                          <Box component="span" sx={{ fontVariantNumeric: "tabular-nums", opacity: 0.65 }}>
+                            {n}
+                          </Box>
+                        )}
+                      </>
+                    ),
+                  };
+                })}
+              />
+            ) : (
             <SegmentedControl<"all" | BreakingTag>
               ariaLabel="Filter by priority"
               value={quickPriority}
@@ -366,8 +474,9 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
                 ),
               }))}
             />
+            )}
             <TextField
-              placeholder="Search headline, area, category"
+              placeholder={p1 ? "Search headline, district, post" : "Search headline, area, category"}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               size="small"
@@ -382,7 +491,14 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
               }}
               sx={{ flex: { xs: 1, sm: "none" }, minWidth: 0, width: { sm: 240 }, "& .MuiOutlinedInput-root": { borderRadius: "8px", fontSize: "0.8125rem", height: CONTROL_HEIGHT } }}
             />
-            <QueueFiltersButton filters={filters} onChange={setFilters} categories={categoriesInQueue} districts={districtsInQueue} live={!!desk} />
+            <QueueFiltersButton
+              filters={filters}
+              onChange={setFilters}
+              categories={categoriesInQueue}
+              districts={districtsInQueue}
+              live={!!desk}
+              {...(p1 ? { facets: tab === "published" ? facetsPosted : facetsInbox, showStatus: false } : {})}
+            />
           </Box>
         )}
       </Box>
@@ -397,9 +513,17 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
             desk.inbox.error ? <LoadError error={desk.inbox.error} onRetry={() => void desk.inbox.refresh()} /> : <LoadingRows rows={3} height={120} />
           ) : visible.length === 0 ? (
             <Box sx={{ py: 6, textAlign: "center", border: "1px dashed", borderColor: "divider", borderRadius: "12px" }}>
-              <Typography sx={{ fontSize: "0.9375rem", fontWeight: 600 }}>{queue.length === 0 ? "All drafts cleared" : "No stories match these filters"}</Typography>
+              <Typography sx={{ fontSize: "0.9375rem", fontWeight: 600 }}>
+                {p1 ? (queue.length === 0 && activeFilterCount(filters) === 0 ? "Nothing waiting to post" : "No posts match these filters") : queue.length === 0 ? "All drafts cleared" : "No stories match these filters"}
+              </Typography>
               <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", mt: 0.5 }}>
-                {queue.length === 0 ? "New breaking stories appear here as the FTP is checked automatically." : "Clear the search or the filters to see more."}
+                {p1
+                  ? queue.length === 0 && activeFilterCount(filters) === 0
+                    ? "New breaking files show up here within seconds of landing on the share."
+                    : "Clear the search or the filters to see more."
+                  : queue.length === 0
+                    ? "New breaking stories appear here as the FTP is checked automatically."
+                    : "Clear the search or the filters to see more."}
               </Typography>
             </Box>
           ) : (
@@ -424,6 +548,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
                     }
                   : {}),
               };
+              if (p1) return <Phase1QueueList {...props} highlightIds={highlight} />;
               return viewMode === "list" ? <QueueTable {...props} highlightIds={highlight} /> : <QueueCards {...props} highlightIds={highlight} />;
             })()
           )}
@@ -435,7 +560,22 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       )}
 
       {tab === "scheduled" && (desk ? <LiveSendingList /> : <ScheduledList platform={platform} onEdit={openStory} />)}
-      {tab === "published" && <PostedPostsList platform={platform} allowRecall emptyHint={`No posts on ${meta.short} yet. Approved stories land here with their link.`} />}
+      {tab === "published" && p1 && desk && (
+        <>
+          <ActiveFilterChips filters={filters} onChange={setFilters} live />
+          {!desk.postedView.data ? (
+            desk.postedView.error ? <LoadError error={desk.postedView.error} onRetry={() => void desk.postedView.refresh()} /> : <LoadingRows rows={3} height={96} />
+          ) : postedItems.length === 0 ? (
+            <EmptyState
+              title={p1Narrowed ? "No posts match these filters" : "Nothing posted today yet"}
+              hint={p1Narrowed ? "Clear the search or the filters to see more." : "Today's posts land here when someone presses Copy & Posted."}
+            />
+          ) : (
+            <Phase1PostedList items={sortStories(postedItems, filters.sort)} onNotice={setNotice} />
+          )}
+        </>
+      )}
+      {tab === "published" && !p1 && <PostedPostsList platform={platform} allowRecall emptyHint={`No posts on ${meta.short} yet. Approved stories land here with their link.`} />}
       {tab === "templates" &&
         (desk ? (
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
@@ -448,7 +588,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
 
       {composing &&
         (desk ? (
-          <LiveEditor item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />
+          <LiveEditor item={composing} platform={platform} onClose={closeEditor} onSwitch={setComposing} onSaved={setNotice} />
         ) : (
           <PostEditor item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />
         ))}

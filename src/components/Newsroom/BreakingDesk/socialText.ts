@@ -7,7 +7,12 @@ export const PLATFORM_LIMITS: Record<SocialPlatform, { text: number; hashtags: n
   Facebook: { text: 5000, hashtags: 30, mentions: 50 },
 };
 
-// X counts most Latin and Indic scripts as 1 and everything else (emoji, CJK) as 2.
+/** X's post limit, in weighted characters */
+export const X_LIMIT = 280;
+
+// twitter-text v3: code points 0-4351 (Latin, Devanagari and the other Indic scripts), 8192-8205,
+// 8208-8223 and 8242-8247 weigh 1; everything else (emoji, CJK) weighs 2. Counted per code point after
+// NFC, so every matra and halant counts ("क्षेत्र" is 7).
 const isSingleWeight = (cp: number) =>
   cp <= 4351 || (cp >= 8192 && cp <= 8205) || (cp >= 8208 && cp <= 8223) || (cp >= 8242 && cp <= 8247);
 
@@ -18,6 +23,18 @@ export function countChars(text: string, platform: SocialPlatform): number {
     total += isSingleWeight(ch.codePointAt(0) ?? 0) ? 1 : 2;
   }
   return total;
+}
+
+/** The longest start of `text` that weighs at most `max` on X (where the timeline puts "Show more"). */
+export function cutAtWeight(text: string, max: number): string {
+  let total = 0;
+  let out = "";
+  for (const ch of text.normalize("NFC")) {
+    total += isSingleWeight(ch.codePointAt(0) ?? 0) ? 1 : 2;
+    if (total > max) break;
+    out += ch;
+  }
+  return out;
 }
 
 export function composePostText(text: string, mentions: string[], hashtags: string[]): string {

@@ -6,7 +6,7 @@
 import React, { useRef } from "react";
 import { Box, Button, CircularProgress, Dialog, IconButton, Typography } from "@mui/material";
 import { X as CloseIcon } from "lucide-react";
-import { EDITOR_KEYS, EDITOR_POINTER_KEYS, type EditorKeySection, editorKeyLabel, editorKeyName } from "./editorKeys";
+import { EDITOR_KEYS, EDITOR_POINTER_KEYS, type EditorKeySection, editorKeyLabel, editorKeyName, PHASE1_KEYS } from "./editorKeys";
 
 const SECTIONS: EditorKeySection[] = ["Post", "Edit", "Text box", "Help"];
 
@@ -53,7 +53,9 @@ function Keys({ keys }: { keys: string[] }) {
 const rowSx = { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: 1.5, py: 0.6 } as const;
 const headSx = { fontSize: "0.75rem", fontWeight: 700, color: "text.secondary", mt: 2, mb: 0.25 } as const;
 
-export function EditorShortcutsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+/** `phase1` lists the phase 1 text editor's keys (Copy & Posted, no card canvas). */
+export function EditorShortcutsSheet({ open, onClose, phase1 }: { open: boolean; onClose: () => void; phase1?: boolean }) {
+  const keys = phase1 ? PHASE1_KEYS : EDITOR_KEYS;
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth aria-labelledby="x-editor-keys-title" slotProps={{ paper: { sx: { borderRadius: "14px", backgroundImage: "none" } } }}>
       <Box sx={{ display: "flex", alignItems: "center", px: 2.5, pt: 2, pb: 0.5 }}>
@@ -66,15 +68,16 @@ export function EditorShortcutsSheet({ open, onClose }: { open: boolean; onClose
       </Box>
       <Box sx={{ px: 2.5, pb: 2.5, overflowY: "auto" }}>
         <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", lineHeight: 1.5 }}>
-          While you type in a box, only Save and Post work; Esc leaves the box first. Undo covers the card, the post
-          text, hashtags, mentions, the photo and which card posts.
+          {phase1
+            ? "While you type in a box, only Save and Copy & Posted work; Esc leaves the box first."
+            : "While you type in a box, only Save and Post work; Esc leaves the box first. Undo covers the card, the post text, hashtags, mentions, the photo and which card posts."}
         </Typography>
-        {SECTIONS.map((section) => (
+        {SECTIONS.filter((section) => keys.some((k) => k.section === section)).map((section) => (
           <Box key={section} component="section" aria-label={section}>
             <Typography component="h3" sx={headSx}>
               {section}
             </Typography>
-            {EDITOR_KEYS.filter((k) => k.section === section).map((k) => (
+            {keys.filter((k) => k.section === section).map((k) => (
               <Box key={k.id} sx={rowSx}>
                 <Typography sx={{ fontSize: "0.8125rem" }}>{k.label}</Typography>
                 <Keys keys={k.show ?? k.keys} />
@@ -82,15 +85,19 @@ export function EditorShortcutsSheet({ open, onClose }: { open: boolean; onClose
             ))}
           </Box>
         ))}
-        <Typography component="h3" sx={headSx}>
-          Mouse
-        </Typography>
-        {EDITOR_POINTER_KEYS.map((k) => (
-          <Box key={k.keys} sx={rowSx}>
-            <Typography sx={{ fontSize: "0.8125rem" }}>{k.label}</Typography>
-            <Keys keys={[k.keys]} />
-          </Box>
-        ))}
+        {!phase1 && (
+          <>
+            <Typography component="h3" sx={headSx}>
+              Mouse
+            </Typography>
+            {EDITOR_POINTER_KEYS.map((k) => (
+              <Box key={k.keys} sx={rowSx}>
+                <Typography sx={{ fontSize: "0.8125rem" }}>{k.label}</Typography>
+                <Keys keys={[k.keys]} />
+              </Box>
+            ))}
+          </>
+        )}
       </Box>
     </Dialog>
   );

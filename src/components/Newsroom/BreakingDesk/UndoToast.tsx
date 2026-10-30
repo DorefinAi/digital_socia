@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Box, Typography, Button, IconButton, Tooltip } from "@mui/material";
 import { Check, Copy, ExternalLink, X as CloseIcon } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { PLATFORM_META } from "./shared";
 import { useLiveDesk } from "./live/LiveDesk";
+import { eventKey, isTextEntryTarget, keyLabel } from "./video/keymap";
 
 const stackSx = { position: "fixed", left: { xs: 12, lg: 24 }, bottom: 24, zIndex: 1400, display: "flex", flexDirection: "column", gap: 1, width: { xs: "calc(100% - 96px)", sm: 380 } } as const;
 const toastSx = { display: "flex", alignItems: "center", gap: 1, px: 1.5, py: 1, borderRadius: "10px", backgroundColor: "#18181B", color: "#fff", boxShadow: "0 8px 24px rgba(0,0,0,0.25)" } as const;
@@ -85,7 +86,7 @@ function LiveUndoToast() {
   const [copied, setCopied] = useState<string | null>(null);
   const [failed, setFailed] = useState<Record<string, string>>({});
   const pending = desk?.pending ?? [];
-  const counting = pending.some((p) => !p.outcome);
+  const counting = pending.some((p) => !p.outcome && !p.copied);
 
   useEffect(() => {
     if (!counting) return;
@@ -93,12 +94,29 @@ function LiveUndoToast() {
     return () => clearInterval(timer);
   }, [counting]);
 
+  // Ctrl+Z (Cmd+Z) undoes the newest Copy & Posted while its toast is up, from anywhere but a text box
+  const latestCopied = [...pending].reverse().find((p) => p.copied)?.id ?? null;
+  const undo = useCallback(
+    async (id: string) => {
+      if (!desk) return;
+      const error = await desk.undo(id);
+      if (error) setFailed((f) => ({ ...f, [id]: error }));
+    },
+    [desk],
+  );
+  useEffect(() => {
+    if (!latestCopied) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || eventKey(e) !== "mod+z" || isTextEntryTarget(e.target)) return;
+      e.preventDefault();
+      void undo(latestCopied);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [latestCopied, undo]);
+
   if (!desk || !pending.length) return null;
 
-  const undo = async (id: string) => {
-    const error = await desk.undo(id);
-    if (error) setFailed((f) => ({ ...f, [id]: error }));
-  };
   const copy = async (id: string, url: string) => {
     try {
       await navigator.clipboard.writeText(url);
@@ -111,6 +129,23 @@ function LiveUndoToast() {
   return (
     <Box role="status" aria-live="polite" sx={stackSx}>
       {pending.map((p) => {
+        // Phase 1 Copy & Posted: already in Posted; Undo puts it back in the queue
+        if (p.copied) {
+          return (
+            <Box key={p.id} sx={toastSx}>
+              <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600 }}>{p.copied.withCard ? "Copied, card saved, moved to Posted" : "Copied and moved to Posted"}</Typography>
+                <Typography sx={{ fontSize: "0.75rem", color: failed[p.id] ? "#FF8A80" : "rgba(255,255,255,0.65)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{failed[p.id] ?? `Paste it into X now. ${keyLabel("mod+z")} to undo`}</Typography>
+              </Box>
+              <Button size="small" onClick={() => void undo(p.id)} aria-keyshortcuts="Control+Z Meta+Z" sx={{ minHeight: 30, color: "#FFD400", fontWeight: 700 }}>
+                Undo
+              </Button>
+              <IconButton size="small" onClick={() => desk.dismiss(p.id)} aria-label="Dismiss" sx={{ color: "rgba(255,255,255,0.6)" }}>
+                <CloseIcon size={15} />
+              </IconButton>
+            </Box>
+          );
+        }
         const left = Math.max(0, Math.ceil((new Date(p.sendAt).getTime() - now) / 1000));
         const posted = p.outcome?.kind === "posted" ? p.outcome : null;
         const title = posted ? "Posted to X" : p.outcome?.kind === "failed" ? "Not posted" : left > 0 ? `Posting to X in ${left}s` : "Posting to X";

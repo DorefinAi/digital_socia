@@ -38,6 +38,31 @@ export const EDITOR_KEYS: EditorKey[] = [
   { id: "help.keys", label: "Show these shortcuts", section: "Help", keys: ["?"] },
 ];
 
+/**
+ * Phase 1's text editor (Phase1Editor): no card canvas and no X API posting, so Ctrl+Enter is Copy & Posted
+ * (the one main button, as Post to X is in phase 2).
+ */
+export const PHASE1_KEYS: EditorKey[] = [
+  { id: "post.copyPosted", label: "Copy & Posted (copies the post and moves it to Posted)", section: "Post", keys: ["mod+enter"], global: true },
+  { id: "post.save", label: "Save the text now (it also saves by itself)", section: "Post", keys: ["mod+s"], global: true },
+  { id: "editor.close", label: "Back to the desk", section: "Post", keys: ["escape"] },
+  { id: "help.keys", label: "Show these shortcuts", section: "Help", keys: ["?"] },
+];
+
+const phase1ByKey = new Map<string, EditorKey>();
+for (const k of PHASE1_KEYS) for (const key of k.keys) phase1ByKey.set(key, k);
+
+/** The phase 1 editor command for a keyboard event, or undefined */
+export function phase1KeyFor(e: KeyboardEvent): EditorKey | undefined {
+  return phase1ByKey.get(eventKey(e));
+}
+
+/** First key of a phase 1 command for tooltips: "Ctrl+Enter" */
+export function phase1Shortcut(id: string): string {
+  const k = PHASE1_KEYS.find((b) => b.id === id)?.keys[0];
+  return k ? keyLabel(k) : "";
+}
+
 /** Not single keys; listed in the sheet */
 export const EDITOR_POINTER_KEYS: { keys: string; label: string }[] = [
   { keys: "right-click", label: "Text box and card options" },

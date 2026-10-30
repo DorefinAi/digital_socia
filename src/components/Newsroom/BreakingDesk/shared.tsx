@@ -82,6 +82,8 @@ const liveOf = (item: FtpNewsItem): QueueItem | null => ("live" in item ? (item 
  */
 export const storyTag = (item: FtpNewsItem): BreakingTag | null => {
   const live = liveOf(item);
+  // Phase 1 breaking files: BIG in the file name is Big Breaking, every other breaking file is Breaking
+  if (live?.tags) return live.tags.big ? "big_breaking" : "breaking";
   return live ? priorityTag(live.priority) : item.tag;
 };
 
