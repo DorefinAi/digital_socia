@@ -45,6 +45,7 @@ import {
   Move,
   Scaling,
   MoreHorizontal,
+  ClipboardCopy,
 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { Playhead, usePlayhead, usePlayheadTime } from "@/hooks/usePlayhead";
@@ -76,7 +77,10 @@ import { DAILY_CAP, isLiveOn } from "@/data/socialDesk";
 import * as socia from "@/lib/socia/api";
 import type { DraftView } from "@/lib/socia/types";
 import type { LiveEditing } from "./live/LiveEditor";
-import { apiFileUrl, errorCode, errorText, useLiveDesk } from "./live/LiveDesk";
+import { apiFileUrl, credentialsFor, errorCode, errorText, useLiveDesk } from "./live/LiveDesk";
+import { usePhase } from "@/lib/socia/usePhase";
+import { assemblePost } from "./phase1/Phase1Editor";
+import { needsCheckHint, needsCheckLabel, Phase1Badges } from "./phase1/badges";
 import { keyHash, useBackgroundCard } from "./live/useBackgroundCard";
 import { PostedLinkDialog } from "./actionDialogs";
 import { NUDGE, editorKeyFor, editorShortcut, isCanvasKeyTarget, isEditorTypingTarget, isTextEntryTarget, swallowNextContextMenu, withEditorShortcut } from "./editorKeys";
@@ -269,6 +273,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const mayMarkPosted = can("post.mark_posted");
   // Reject declines the draft: draft.reject or post.publish, as on the server
   const mayReject = can("draft.reject") || can("post.publish");
+  // Phase 1 (set on the server): no X API posting (approve answers 409 phase_off), no video export and no
+  // post-link step. The main button is Copy & Posted: copy the text, send the card, move the story to Posted.
+  const { features } = usePhase();
+  const phase1 = !!live && !!desk?.phase1;
+  const apiPosting = !phase1 || !!features?.xApiPosting;
+  const copyMode = phase1 && features?.copyPosted !== false;
 
   // Everything that belongs to one story. Reopening a saved or scheduled story picks up where the operator left off.
   const storyStart = (story: FtpNewsItem) => {
@@ -368,7 +378,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   // ── Live desk state ──
-  const [busy, setBusy] = useState<null | "save" | "post" | "posted" | "reject" | "claim" | "card">(null);
+  const [busy, setBusy] = useState<null | "save" | "post" | "posted" | "copy" | "reject" | "claim" | "card">(null);
+  // Phase 1 Copy & Posted: copied but not marked (blocks until retried), or someone already posted the story
+  const [notPosted, setNotPosted] = useState<string | null>(null);
+  const [takenBy, setTakenBy] = useState<string | null>(null);
   // Someone saved the draft after it was opened: the server's version, until the operator picks a side
   const [stale, setStale] = useState<number | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
@@ -427,6 +440,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     setLeaving(false);
     setMockSaved(null);
     setConfirmPost(null);
+    setNotPosted(null);
+    setTakenBy(null);
   }
 
   // Any change from how the story opened, so switching stories only saves real work
@@ -449,7 +464,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   const isVideo = media.kind === "video";
   // The Video tab only exists for video stories
-  const panel: Tool = tool === "video" && !isVideo ? "background" : tool;
+  const panel: Tool = tool === "video" && (!isVideo || phase1) ? "background" : tool;
   const frame = TEMPLATE_FORMATS[format];
   const fit = Math.max(0.05, Math.min(stage.w / frame.w, stage.h / frame.h));
   const frameWidth = Math.round(frame.w * fit * zoom);
@@ -470,11 +485,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const bgFrame = { w: bg.card?.width ?? cardTemplate?.width ?? 1080, h: bg.card?.height ?? cardTemplate?.height ?? 1080 };
   const bgFrameWidth = Math.round(bgFrame.w * Math.max(0.05, Math.min(stage.w / bgFrame.w, stage.h / bgFrame.h)) * zoom);
   // Background cards are still images, so a video story posts (and downloads) the card
-  const exportsVideo = isVideo && !bgMode;
+  const exportsVideo = isVideo && !bgMode && !phase1;
 
   const selectedHashtags = useMemo(() => hashtags.filter((h) => h.checked).map((h) => h.value), [hashtags]);
   const selectedMentions = useMemo(() => mentions.filter((m) => m.checked).map((m) => m.value), [mentions]);
-  const finalText = composePostText(text, selectedMentions, selectedHashtags);
+  // Phase 1 copies the post as the server assembles it (copy-posted answers with that text)
+  const finalText = phase1 ? assemblePost(text, selectedHashtags, selectedMentions) : composePostText(text, selectedMentions, selectedHashtags);
   const used = countChars(finalText, platform);
   const overLimit = used > limits.text;
   const tooManyTags = selectedHashtags.length > limits.hashtags || selectedMentions.length > limits.mentions;
@@ -483,7 +499,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const cap = live && liveCap ? liveCap.cap : DAILY_CAP[platform];
   const today = new Date().toDateString();
   const postedToday = live ? (liveCap?.used ?? 0) : socialPosts.filter((p) => p.platform === platform && p.status !== "recalled" && new Date(p.postedAt).toDateString() === today).length;
-  const capReached = postedToday >= cap;
+  // Phase 1 has no daily cap, only a count of what was posted
+  const capReached = !phase1 && postedToday >= cap;
   const alreadyPosted = !live && isLiveOn(socialPosts, item.id, platform);
 
   // Links multiply the cost of an X post, so the X formatter refuses them outright
@@ -492,7 +509,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const canPost = canEdit && !busy && stale === null && !overLimit && !tooManyTags && !url && !capReached && !bgFailed && text.trim().length > 0 && layout.headline.trim().length > 0;
 
   let blockedReason = "";
-  if (live?.lease.kind === "held") blockedReason = `${live.lease.name} is working on this story`;
+  if (takenBy) blockedReason = "Already posted";
+  else if (live?.lease.kind === "held") blockedReason = `${live.lease.name} is working on this story`;
   else if (live?.lease.kind === "lost") blockedReason = "Claim the story again to post it";
   else if (live && stale !== null) blockedReason = "Someone else saved this story. Choose whose version to keep first";
   else if (!canEdit) blockedReason = "Your role can view posts but not publish them";
@@ -911,8 +929,14 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     adopt(await socia.saveDraft(live.draft.id, { version: versionRef.current, ...livePatch }));
   };
 
-  const uploadOwnCard = async () => {
-    if (!live || !canEdit) return;
+  /**
+   * Sends the card when it changed here. `always` (phase 1 Copy & Posted) sends the card on screen even if
+   * untouched, since phase 1 has no automatic card; it then resolves to the PNG for the operator's download
+   * (null when the card already on the server is the one shown).
+   */
+  const uploadOwnCard = async (always = false): Promise<Blob | null> => {
+    if (!live || !canEdit) return null;
+    if (always && serverView) return null;
     if (bgMode) {
       const current = draftRef.current ?? live.draft;
       const id = current.id;
@@ -921,23 +945,25 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const hash = keyHash(drawn.key);
       const record = bgStore.read(id);
       // Same drawing as the card already on the server: nothing to send
-      if (current.card.custom && record?.hash === hash && record.cardUrl === current.card.url) return;
+      if (current.card.custom && record?.hash === hash && record.cardUrl === current.card.url) return drawn.card.blob;
       const d = await socia.uploadCard(id, versionRef.current, drawn.card.blob);
       adopt(d);
       bgStore.write(id, { hash, cardUrl: d.card.url ?? "" });
       setBgUploaded({ id, key: drawn.key });
       // Reopening draws on the background again rather than restoring an older design
       designStore.write(d.id, null);
-      return;
+      return drawn.card.blob;
     }
-    if (!designEdited || cardSynced) return;
+    if (!always && (!designEdited || cardSynced)) return null;
     const png = await canvasRef.current?.png(CARD_MAX_BYTES);
-    if (!png) throw new Error("The browser couldn't export your card, so the automatic card stays. Try another photo, or try again.");
+    if (!png) throw new Error(always ? "The browser couldn't export the card. Try another photo, or try again." : "The browser couldn't export your card, so the automatic card stays. Try another photo, or try again.");
+    if (cardSynced) return png;
     const d = await socia.uploadCard(live.draft.id, versionRef.current, png);
     adopt(d);
     setUploaded({ layout, url: media.url });
     designStore.write(d.id, { layout, mediaFile: media.fileName, cardUrl: d.card.url });
     bgStore.write(d.id, null);
+    return png;
   };
 
   /** Sends whatever is not on the server yet: text first, then the card (Post, Save draft, Save as posted). */
@@ -956,7 +982,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     await serial(saveText);
     if (!cardUnsent) return null;
     try {
-      await serial(uploadOwnCard);
+      await serial(() => uploadOwnCard());
       return null;
     } catch (err) {
       const why = errorCode(err) ? errorText(err) : err instanceof Error ? err.message : errorText(err);
@@ -1011,6 +1037,86 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       setPreviewOpen(false);
       onClose();
     });
+
+  // ── Phase 1: Copy & Posted ──
+  const canCopyPost = canPost && mayMarkPosted && !takenBy;
+
+  /** Saves the posted card for the operator: the PNG just sent, else the card already on the server. */
+  const downloadPostedCard = async (png: Blob | null): Promise<boolean> => {
+    try {
+      let blob = png;
+      if (!blob) {
+        const src = apiFileUrl((draftRef.current ?? live?.draft)?.card.url);
+        if (!src) return false;
+        const res = await fetch(src, { credentials: credentialsFor(src) });
+        if (!res.ok) throw new Error(String(res.status));
+        blob = await res.blob();
+      }
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = `${item.id}-x.png`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(href), 4000);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  /**
+   * Clipboard first, while the click still counts as the operator's; only once the text is on the clipboard
+   * are the text and card sent and the story marked posted. A refused clipboard marks nothing.
+   */
+  const copyAndPost = async () => {
+    if (!live || !copyMode || !canCopyPost || inFlight.current) return;
+    inFlight.current = "copy";
+    setBusy("copy");
+    setNotPosted(null);
+    const id = live.draft.id;
+    const copiedText = finalText;
+    try {
+      await navigator.clipboard.writeText(copiedText);
+    } catch {
+      inFlight.current = null;
+      setBusy(null);
+      setNotice("The browser blocked the clipboard. Select the text in the box and copy it by hand.");
+      return;
+    }
+    try {
+      const png = await serial(async () => {
+        await saveText();
+        return uploadOwnCard(true);
+      });
+      const res = await serial(() => socia.copyPosted(id, versionRef.current));
+      // Both sides assemble the post the same way; say so if they ever differ rather than leave a wrong post
+      if (res.text && res.text.trim() !== copiedText.trim()) onSaved?.("Marked posted, but the server's text differs from what was copied. Check the post on X.");
+      const cardSaved = await downloadPostedCard(png);
+      if (!cardSaved) onSaved?.("Posted, but the card didn't download. Open the story in Posted and save the card by hand.");
+      live.onFinished();
+      desk?.addCopied({ draftId: id, postId: res.postId, headline: item.headline, undoUntil: res.undoUntil, withCard: cardSaved });
+      setPreviewOpen(false);
+      onClose();
+    } catch (err) {
+      // The clipboard holds a post the server didn't mark: empty it (best effort) and block with a banner
+      void navigator.clipboard?.writeText("").catch(() => undefined);
+      if (errorCode(err) === "already_posted") {
+        // 409 already_posted { postedBy, postedAt }; postedBy is the name (an object tolerated)
+        const who = (err as { data?: { postedBy?: string | { name?: string } | null; postedAt?: string | null } }).data;
+        const name = (typeof who?.postedBy === "string" ? who.postedBy : who?.postedBy?.name) || "someone";
+        const at = who?.postedAt ? new Date(who.postedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }) : "";
+        setTakenBy(`Already posted by ${name}${at ? ` at ${at}` : ""}. Don't post it again.`);
+        void desk?.refreshAll();
+      } else {
+        const code = errorCode(err);
+        setNotPosted(code === "stale_version" ? "The post changed on the server before it was marked." : code ? errorText(err) : err instanceof Error ? err.message : errorText(err));
+        liveFail(err);
+      }
+    } finally {
+      inFlight.current = null;
+      setBusy(null);
+    }
+  };
 
   /** Save as posted, live: records the link of a post made by hand. Resolves to an error for the dialog. */
   const markPostedLive = async (permalink: string): Promise<string | null> => {
@@ -1156,8 +1262,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const tooClose = !!live?.draft.rewrite?.tooClose;
   const postNow = () => {
     setConfirmPost(null);
-    // Live: approve, which holds the post for its 10-second undo window. Demo: Save as posted, the demo's post action.
-    if (live) void postLive();
+    // Live: approve, which holds the post for its 10-second undo window (phase 1: Copy & Posted). Demo: Save as posted, the demo's post action.
+    if (live && copyMode) void copyAndPost();
+    else if (live) void postLive();
     else void saveAsPosted();
   };
   /** The Post button and Ctrl+Enter: a too-close rewording asks first; demo Ctrl+Enter (no undo window) always asks. */
@@ -1171,11 +1278,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // ── Ctrl+Enter: the Post button, with the same checks ──
   const approveByKey = () => {
     if (busy || exporting !== null) return;
-    if (!mayPublish || (!live && !mayMarkPosted)) {
-      setNotice("Your role can't post to the platforms.");
+    if (copyMode ? !mayMarkPosted : !mayPublish || (!live && !mayMarkPosted)) {
+      setNotice(copyMode ? "Your role can't mark posts as posted." : "Your role can't post to the platforms.");
       return;
     }
-    if (!canPost) {
+    // Phase 1 without Copy & Posted: nothing to post with from here
+    if (live && !copyMode && !apiPosting) return;
+    if (!(copyMode ? canCopyPost : canPost)) {
       setNotice(blockedReason ? `Not posted: ${blockedReason}.` : "This post can't go out right now.");
       return;
     }
@@ -1349,7 +1458,23 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   );
 
   const postButton = (onDark: boolean) =>
-    live ? (
+    live && copyMode ? (
+      <Tooltip title={!mayMarkPosted ? "Your role can't mark posts as posted" : blockedReason || `Copies the post, saves the card and moves the story to Posted (${editorShortcut("post.approve")})`}>
+        <span>
+          <Button
+            variant="contained"
+            onClick={() => requestPost("button")}
+            aria-label={busy === "copy" ? "Copying and marking posted" : "Copy & Posted"}
+            aria-keyshortcuts="Control+Enter Meta+Enter"
+            disabled={!canCopyPost}
+            startIcon={busy === "copy" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <ClipboardCopy size={15} />}
+            sx={{ minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", "&:hover": { backgroundColor: "#B50F14" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.7)" } }}
+          >
+            Copy &amp; Posted
+          </Button>
+        </span>
+      </Tooltip>
+    ) : live && apiPosting ? (
       <Tooltip title={!mayPublish ? "Your role can't post to the platforms" : blockedReason || `Posts the card to ${meta.short} after a 10-second undo window (${editorShortcut("post.approve")})`}>
         <span>
           <Button
@@ -1377,6 +1502,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           {onDark ? phoneLabel(copied ? "Copied" : "Copy") : copied ? "Copied" : "Copy"}
         </Button>
       </Tooltip>
+      {!phase1 && (
       <Tooltip title={!mayMarkPosted ? "Your role can't save posts as posted" : blockedReason || (live ? `Downloads the ${exportsVideo ? "clip" : "card"} to post by hand, then asks for the post's link` : `Downloads the ${isVideo ? "clip" : "card"} and marks this story posted on ${meta.short}`)}>
         <span>
           <Button
@@ -1397,6 +1523,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           </Button>
         </span>
       </Tooltip>
+      )}
       {postButton(onDark)}
     </>
   );
@@ -1462,9 +1589,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               Preview
             </Box>
           </Button>
-          <Tooltip title={`${meta.short} posts saved today against the daily cap`}>
+          <Tooltip title={phase1 ? `${meta.short} posts marked posted today` : `${meta.short} posts saved today against the daily cap`}>
             <Typography sx={{ display: { xs: "none", md: "block" }, px: 0.75, fontSize: "0.75rem", fontVariantNumeric: "tabular-nums", color: capReached ? "#FF8A80" : BAR.text, whiteSpace: "nowrap" }}>
-              {postedToday} / {cap} today
+              {phase1 ? `${postedToday} posted today` : `${postedToday} / ${cap} today`}
             </Typography>
           </Tooltip>
           {actionButtons(true)}
@@ -1474,7 +1601,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         <Box ref={measureWorkspace} sx={{ position: "relative", flex: 1, minHeight: 0, display: { xs: "flex", lg: "grid" }, flexDirection: "column", gridTemplateColumns: workspaceColumns, overflowY: { xs: "auto", lg: "hidden" } }}>
           {/* Tool rail */}
           <Box role="tablist" aria-label="Design tools" sx={{ order: { xs: 1, lg: 0 }, flexShrink: 0, display: "flex", flexDirection: { xs: "row", lg: "column" }, gap: 0.5, p: 0.75, backgroundColor: "background.paper", borderRight: { lg: "1px solid" }, borderTop: { xs: "1px solid", lg: "none" }, borderColor: "divider" }}>
-            {TOOLS.filter((t) => !t.videoOnly || isVideo).map((t) => (
+            {TOOLS.filter((t) => !t.videoOnly || (isVideo && !phase1)).map((t) => (
               <Box
                 key={t.id}
                 component="button"
@@ -1923,7 +2050,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               <>
                 <Typography sx={panelTitle}>Story from FTP</Typography>
                 <Typography sx={{ fontSize: "0.9375rem", fontWeight: 600, lineHeight: 1.45 }}>{item.headline}</Typography>
-                <Typography sx={{ fontSize: "0.8125rem", lineHeight: 1.7, color: "text.secondary", mt: 1 }}>{item.body}</Typography>
+                {phase1 ? (
+                  <Typography lang="hi" sx={{ fontSize: "0.8125rem", lineHeight: 1.7, color: "text.secondary", mt: 1, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                    {live?.draft.story.sourceText?.trim() || item.body}
+                  </Typography>
+                ) : (
+                  <Typography sx={{ fontSize: "0.8125rem", lineHeight: 1.7, color: "text.secondary", mt: 1 }}>{item.body}</Typography>
+                )}
                 <Typography sx={{ fontSize: "0.6875rem", fontFamily: "var(--font-mono), monospace", color: "text.disabled", mt: 1.5, wordBreak: "break-all" }}>{item.ftpPath}</Typography>
               </>
             )}
@@ -2151,7 +2284,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               </Tooltip>
             </Box>
           </Box>
-            {isVideo && duration > 0 && segments.length > 0 && (
+            {isVideo && !phase1 && duration > 0 && segments.length > 0 && (
               <VideoTimeline
                 media={media}
                 duration={duration}
@@ -2175,6 +2308,18 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
           {/* Post panel */}
           <Box id="post-editor-post-panel" sx={{ order: { xs: 3, lg: 0 }, flexShrink: 0, p: 2, overflowY: { lg: "auto" }, display: "flex", flexDirection: "column", gap: 2.5, backgroundColor: "background.paper", borderLeft: { lg: "1px solid" }, borderColor: "divider", ...(rightFolded && foldedPanelSx) }}>
+            {phase1 && live && (
+              <Phase1Checks
+                story={live.draft.story}
+                takenBy={takenBy}
+                notPosted={notPosted}
+                retry={
+                  <Button color="inherit" size="small" variant="outlined" onClick={() => requestPost("button")} disabled={!canCopyPost} sx={{ whiteSpace: "nowrap", borderColor: "rgba(255,255,255,0.7)" }}>
+                    Retry
+                  </Button>
+                }
+              />
+            )}
             {live && (live.lease.kind !== "mine" || stale !== null || (exportsVideo && isX)) && (
               <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
                 {live.lease.kind === "held" && (
@@ -2242,7 +2387,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 <Typography sx={{ ...sectionLabel, mb: 0.5 }}>Card that will be posted</Typography>
                 <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
                   <Typography sx={{ fontSize: "0.8125rem" }}>
-                    {serverView ? "A card made elsewhere" : bgMode ? "Your X background card" : ownCard ? "Your design from this editor" : "The automatic card"}
+                    {serverView ? "A card made elsewhere" : bgMode ? "Your X background card" : ownCard ? "Your design from this editor" : phase1 ? "The card on the left" : "The automatic card"}
                     {(busy === "card" || (bgMode && bg.status === "drawing")) && <CircularProgress size={12} sx={{ ml: 1, verticalAlign: "middle" }} aria-label="Working" />}
                   </Typography>
                   {ownCard && canEdit && (
@@ -2258,7 +2403,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                     ? `Today's date, the headline and the whole story on your background${bg.card ? `, at ${bg.card.fontPx} px` : ""}.`
                     : ownCard
                       ? "The frame on the left, exactly as you see it."
-                      : "Change the template, text or picture and your design posts instead."}
+                      : phase1
+                        ? "Copy & Posted saves it with the post and downloads it, exactly as you see it."
+                        : "Change the template, text or picture and your design posts instead."}
                 </Typography>
                 {bgMode && bg.status === "ready" && bg.card?.cut && (
                   <Alert severity="warning" sx={{ mt: 1, py: 0, fontSize: "0.75rem", borderRadius: "8px" }}>
@@ -2372,7 +2519,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       )}
 
       {cardMenu.element}
-      <EditorShortcutsSheet open={sheetOpen} onClose={() => setSheetOpen(false)} />
+      <EditorShortcutsSheet open={sheetOpen} onClose={() => setSheetOpen(false)} copyPosted={copyMode} />
       <ConfirmPostDialog
         open={confirmPost !== null}
         title={confirmPost === "demo" ? "Save this story as posted?" : "This text is too close to the source. Post anyway?"}
@@ -2381,7 +2528,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             ? `This downloads the ${isVideo ? "clip" : "card"} and marks the story posted on ${meta.short}. There is no undo.`
             : `The reworded text still repeats much of what the publishers wrote. Reword it before posting, or post it to ${meta.short} as it is.`
         }
-        confirmLabel={confirmPost === "demo" ? "Save as posted" : "Post anyway"}
+        confirmLabel={confirmPost === "demo" ? "Save as posted" : copyMode ? "Copy & Posted anyway" : "Post anyway"}
         onConfirm={postNow}
         onCancel={() => setConfirmPost(null)}
       />
@@ -2395,5 +2542,52 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         </Alert>
       </Snackbar>
     </Dialog>
+  );
+}
+
+/**
+ * Phase 1, above the post: the file's badges, why it needs a second look (an update of a posted story among
+ * them), and the Copy & Posted banners (already posted by someone, or copied but not marked).
+ */
+function Phase1Checks({ story, takenBy, notPosted, retry }: { story: DraftView["story"]; takenBy: string | null; notPosted: string | null; retry: React.ReactNode }) {
+  const reasons = [...(story.needsCheck ?? [])];
+  if (story.deskNoteRemoved && !reasons.includes("desk_note")) reasons.push("desk_note");
+  const hasBadges = !!(story.tags?.big || story.tags?.update || story.tags?.exclusive || reasons.length);
+  if (!hasBadges && !takenBy && !notPosted) return null;
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      {takenBy && (
+        <Alert severity="error" variant="filled" role="alert" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }}>
+          {takenBy}
+        </Alert>
+      )}
+      {notPosted && !takenBy && (
+        <Alert severity="error" variant="filled" role="alert" action={retry} sx={{ fontSize: "0.8125rem", borderRadius: "8px", alignItems: "center" }}>
+          <b>NOT marked as posted. Do not paste this.</b> {notPosted} The clipboard was emptied where the browser allowed it.
+        </Alert>
+      )}
+      {hasBadges && (
+        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, alignItems: "center" }}>
+          <Phase1Badges tags={story.tags} needsCheck={story.needsCheck} deskNoteRemoved={story.deskNoteRemoved} />
+        </Box>
+      )}
+      {reasons.length > 0 && (
+        <Alert severity="warning" sx={{ fontSize: "0.8125rem", borderRadius: "8px", "& .MuiAlert-message": { width: "100%" } }}>
+          <Box component="ul" sx={{ m: 0, pl: 2, display: "flex", flexDirection: "column", gap: 0.5 }}>
+            {reasons.map((r) => (
+              <li key={r}>
+                <b>{needsCheckLabel(r)}.</b> {needsCheckHint(r)}
+              </li>
+            ))}
+          </Box>
+          {story.deskNote && (
+            <Box sx={{ mt: 1, pl: 1.25, borderLeft: "3px solid", borderColor: "warning.main" }}>
+              <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>Removed from the post:</Typography>
+              <Typography lang="hi" sx={{ fontSize: "0.8125rem", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{story.deskNote}</Typography>
+            </Box>
+          )}
+        </Alert>
+      )}
+    </Box>
   );
 }

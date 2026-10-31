@@ -11,7 +11,6 @@ import { HEARTBEAT_MS } from "@/lib/socia/config";
 import type { DraftView } from "@/lib/socia/types";
 import type { FtpNewsItem, SocialPlatform } from "@/types/newsroom";
 import PostEditor from "../PostEditor";
-import Phase1Editor from "../phase1/Phase1Editor";
 import { draftToNews, errorCode, errorText, useLiveDesk } from "./LiveDesk";
 
 /** Whether this operator may change the open story. */
@@ -177,8 +176,7 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved 
   }
 
   const live: LiveEditing = { draft: shown.draft, lease: shown.lease, onDraft, onLeaseLost, onHeldBy, claimAgain, onFinished };
-  // Phase 1 (set on the server): the text-first editor with Copy & Posted instead of the card studio
-  // Keyed by draft: another story is a fresh editor, so no save or timer from the last one can reach it
-  if (desk?.phase1) return <Phase1Editor key={shown.draft.id} item={story} onClose={onClose} onSaved={onSaved} live={live} />;
+  // Phase 1 (set on the server) opens the same editor; it swaps Post to X for Copy & Posted itself.
+  // phase1/Phase1Editor.tsx (the text-first editor) stays in the repo, unused.
   return <PostEditor item={story} platform={platform} onClose={onClose} onSwitch={onSwitch} onSaved={onSaved} live={live} />;
 }

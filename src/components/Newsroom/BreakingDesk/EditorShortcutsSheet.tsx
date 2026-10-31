@@ -50,12 +50,17 @@ function Keys({ keys }: { keys: string[] }) {
   );
 }
 
+const COPY_POSTED_LABEL = PHASE1_KEYS.find((k) => k.id === "post.copyPosted")?.label ?? "Copy & Posted";
+
 const rowSx = { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: 1.5, py: 0.6 } as const;
 const headSx = { fontSize: "0.75rem", fontWeight: 700, color: "text.secondary", mt: 2, mb: 0.25 } as const;
 
-/** `phase1` lists the phase 1 text editor's keys (Copy & Posted, no card canvas). */
-export function EditorShortcutsSheet({ open, onClose, phase1 }: { open: boolean; onClose: () => void; phase1?: boolean }) {
-  const keys = phase1 ? PHASE1_KEYS : EDITOR_KEYS;
+/**
+ * `phase1` lists the phase 1 text editor's keys (Copy & Posted, no card canvas). `copyPosted`: the card
+ * editor in phase 1, where Ctrl+Enter is Copy & Posted instead of Post to X.
+ */
+export function EditorShortcutsSheet({ open, onClose, phase1, copyPosted }: { open: boolean; onClose: () => void; phase1?: boolean; copyPosted?: boolean }) {
+  const keys = phase1 ? PHASE1_KEYS : copyPosted ? EDITOR_KEYS.map((k) => (k.id === "post.approve" ? { ...k, label: COPY_POSTED_LABEL } : k)) : EDITOR_KEYS;
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth aria-labelledby="x-editor-keys-title" slotProps={{ paper: { sx: { borderRadius: "14px", backgroundImage: "none" } } }}>
       <Box sx={{ display: "flex", alignItems: "center", px: 2.5, pt: 2, pb: 0.5 }}>
@@ -70,7 +75,7 @@ export function EditorShortcutsSheet({ open, onClose, phase1 }: { open: boolean;
         <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", lineHeight: 1.5 }}>
           {phase1
             ? "While you type in a box, only Save and Copy & Posted work; Esc leaves the box first."
-            : "While you type in a box, only Save and Post work; Esc leaves the box first. Undo covers the card, the post text, hashtags, mentions, the photo and which card posts."}
+            : `While you type in a box, only Save and ${copyPosted ? "Copy & Posted" : "Post"} work; Esc leaves the box first. Undo covers the card, the post text, hashtags, mentions, the photo and which card posts.`}
         </Typography>
         {SECTIONS.filter((section) => keys.some((k) => k.section === section)).map((section) => (
           <Box key={section} component="section" aria-label={section}>
