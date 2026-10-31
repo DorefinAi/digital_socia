@@ -9,6 +9,7 @@ import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShar
 import { CategoryLabel, srOnly, storyCategory, storyTag, TAG_TINT, tagTint, timeAgo } from "./shared";
 import { isLiveItem, useLiveDesk } from "./live/LiveDesk";
 import NewStoriesPill, { freshHighlightSx } from "./NewStoriesPill";
+import StoryThumb, { THUMB_ROOT_ATTR } from "./live/StoryThumb";
 
 const STATUS_STYLE: Record<string, { label: string; color: string }> = {
   posted: { label: "Posted", color: "success.main" },
@@ -75,6 +76,7 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
       </Box>
       <Box
         ref={listRef}
+        {...{ [THUMB_ROOT_ATTR]: "" }}
         onScroll={(e) => setAtTop(e.currentTarget.scrollTop <= 2)}
         onPointerEnter={() => setPointerIn(true)}
         onPointerLeave={() => setPointerIn(false)}
@@ -150,7 +152,9 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
                 }}
               >
                 <Box sx={{ position: "relative", width: 52, height: 38, borderRadius: "4px", overflow: "hidden", backgroundColor: "#111" }}>
-                  {cover?.url || cover?.posterUrl ? (
+                  {platform === "X (Twitter)" ? (
+                    <StoryThumb item={n} boxW={52} boxH={38} org={desk?.orgCardTemplates.data} own={desk?.cardTemplate.data?.template} />
+                  ) : cover?.url || cover?.posterUrl ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img src={cover.posterUrl ?? cover.url} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                   ) : null}

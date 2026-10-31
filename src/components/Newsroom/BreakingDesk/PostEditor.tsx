@@ -83,6 +83,7 @@ import { assemblePost } from "./phase1/Phase1Editor";
 import { needsCheckHint, needsCheckLabel, Phase1Badges } from "./phase1/badges";
 import { keyHash, useBackgroundCard } from "./live/useBackgroundCard";
 import OrgTemplatePicker, { type CardChoice } from "./live/OrgTemplatePicker";
+import { cardChoiceChanged } from "./live/storyThumbs";
 import { PostedLinkDialog } from "./actionDialogs";
 import { NUDGE, editorKeyFor, editorShortcut, isCanvasKeyTarget, isEditorTypingTarget, isTextEntryTarget, swallowNextContextMenu, withEditorShortcut } from "./editorKeys";
 import { ConfirmPostDialog, EditorShortcutsSheet, LeaveEditorDialog } from "./EditorShortcutsSheet";
@@ -517,7 +518,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const pickCardDesign = (key: string) => {
     setBgPick(key);
     setCardSource("background");
-    if (live) choiceStore.write(live.draft.id, { template: key });
+    if (live) {
+      choiceStore.write(live.draft.id, { template: key });
+      // The FTP feed's thumbnail of this story follows the new design
+      cardChoiceChanged(live.draft.id);
+    }
   };
   // A click on the drawn card opens the headline for typing (the drawing itself can't take text)
   const headlineFieldRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);

@@ -53,6 +53,9 @@ export function msUntilIst(now: number, hour: number, minute = 0): number {
 /** Video projects the editor may still be working on survive a forced clear for this long after their last save */
 export const FORCE_KEEP_STUDIO_MS = 10 * 60_000;
 
+/** Fired on window after a tidy removed card-design choices, so thumbnails drawn from them redraw (live/storyThumbs) */
+export const CARD_CHOICES_TIDIED_EVENT = "socia:card-choices-tidied";
+
 /**
  * A record's `savedAt` as ms. A readable record from before `savedAt` was kept is stamped with `now` and
  * written back, so it gets the full TTL from today. Null when the record can't be read.
@@ -107,6 +110,7 @@ export function tidyBrowserStorage({ force = false, now = Date.now() }: { force?
       return !USE_MOCKS && DEMO_KEYS.includes(k);
     });
     for (const k of stale) localStorage.removeItem(k);
+    if (stale.some((k) => k.startsWith("socia_card_choice_"))) window.dispatchEvent(new Event(CARD_CHOICES_TIDIED_EVENT));
 
     localStorage.setItem(TIDY_DAY_KEY, today);
     return stale.length;
