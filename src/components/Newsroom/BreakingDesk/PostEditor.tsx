@@ -197,7 +197,10 @@ interface PostEditorProps {
 const CARD_MAX_BYTES = 5 * 1024 * 1024;
 const plainCardText = (text: string) => text.replace(/\*\*/g, "").trim();
 
-/** Small per-draft records in this browser's storage; a blocked storage just means nothing is remembered. */
+/**
+ * Small per-draft records in this browser's storage; a blocked storage just means nothing is remembered.
+ * Each write stamps `savedAt` so lib/browserTidy can drop records nobody has touched for a while.
+ */
 function draftStore<T>(prefix: string) {
   const key = (id: string) => `${prefix}${id}`;
   return {
@@ -212,7 +215,7 @@ function draftStore<T>(prefix: string) {
     },
     write(id: string, value: T | null) {
       try {
-        if (value) localStorage.setItem(key(id), JSON.stringify(value));
+        if (value) localStorage.setItem(key(id), JSON.stringify({ ...value, savedAt: Date.now() }));
         else localStorage.removeItem(key(id));
       } catch {
         // Storage blocked: nothing is remembered for this draft
@@ -242,7 +245,8 @@ const designStore = {
   },
   write(id: string, value: { layout: TemplateLayout; mediaFile: string; cardUrl?: string | null } | null) {
     try {
-      if (value) localStorage.setItem(designStore.key(id), JSON.stringify(value));
+      // savedAt: lib/browserTidy drops records nobody has touched for a while
+      if (value) localStorage.setItem(designStore.key(id), JSON.stringify({ ...value, savedAt: Date.now() }));
       else localStorage.removeItem(designStore.key(id));
     } catch {
       // Storage blocked: the design just won't be restored on reopen

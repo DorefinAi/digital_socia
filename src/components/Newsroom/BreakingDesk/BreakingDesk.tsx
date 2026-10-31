@@ -32,6 +32,7 @@ import { LiveSendingList } from "./DraftLists";
 import LiveEditor from "./live/LiveEditor";
 import { isLiveItem, useLiveDesk } from "./live/LiveDesk";
 import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
+import { useTabBusy } from "@/lib/browserTidy";
 
 type ConsoleTab = "queue" | "scheduled" | "published" | "templates";
 
@@ -85,7 +86,12 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const [tabState, setTab] = useState<ConsoleTab>(() => (initialTab === "templates" || initialTab === "published" || initialTab === "scheduled" ? initialTab : "queue"));
   // Phase 1 has no Sending tab (nothing is sent through the X API)
   const tab: ConsoleTab = p1 && tabState === "scheduled" ? "queue" : tabState;
-  const [viewMode, setViewMode] = useState<"cards" | "list">(readView);
+  // The saved view is applied after mount: the page is prerendered, and reading storage while rendering would not match the server's HTML
+  const [viewMode, setViewMode] = useState<"cards" | "list">("cards");
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setViewMode(readView());
+  }, []);
   const changeView = (next: "cards" | "list") => {
     setViewMode(next);
     try {
@@ -123,6 +129,8 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     if (prefill) return trendToNews(prefill);
     return ftpNews.find((n) => n.id === composeId) || null;
   });
+  // An open editor holds back the nightly reload (lib/browserTidy)
+  useTabBusy(!!composing);
   const [rejecting, setRejecting] = useState<FtpNewsItem | null>(null);
   const [focusIndex, setFocusIndex] = useState(0);
   // Stories the operator has already seen; new arrivals wait behind the "new stories" pill so the list never moves under the cursor

@@ -5,6 +5,7 @@ import ReduxProvider from "@/providers/ReduxProvider";
 import MuiProvider from "@/providers/MuiProvider";
 import { NewsroomProvider } from "@/providers/NewsroomProvider";
 import { SociaSessionProvider } from "@/providers/SociaSessionProvider";
+import { BrowserTidy } from "@/providers/BrowserTidy";
 import AgentAssistant from "@/components/Chat/Chatbot";
 
 export const metadata: Metadata = {
@@ -21,6 +22,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className={`${roboto.variable} ${robotoMono.variable} ${notoDevanagari.variable}`}>
       <body>
+        <BrowserTidy />
         <ReduxProvider>
           <MuiProvider>
             <SociaSessionProvider>

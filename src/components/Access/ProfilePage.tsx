@@ -3,13 +3,14 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { Alert, Box, Button, Chip, CircularProgress, Collapse, TextField, Typography } from "@mui/material";
-import { ImageIcon, KeyRound, ShieldCheck, UserRound } from "lucide-react";
+import { Eraser, ImageIcon, KeyRound, Monitor, ShieldCheck, UserRound } from "lucide-react";
 import { platformLabel } from "@/lib/access/catalogue";
 import { accessService } from "@/lib/access/service";
 import { usePermissions } from "@/lib/access/usePermissions";
 import { useSociaSession } from "@/providers/SociaSessionProvider";
+import { tidyBrowserStorage } from "@/lib/browserTidy";
 import { errorText } from "@/components/Newsroom/SociaDesk/liveShared";
-import { AllowedMark, Avatar, SectionHeading, formatDate, formatDateTime, groupCatalogue, tileSx } from "./shared";
+import { AllowedMark, Avatar, ConfirmDialog, SectionHeading, formatDate, formatDateTime, groupCatalogue, tileSx } from "./shared";
 
 const fieldLabelSx = { fontSize: "0.75rem", color: "text.secondary", mb: 0.25 } as const;
 
@@ -139,6 +140,31 @@ function PasswordForm() {
   );
 }
 
+/** Removes the editor's saved per-draft data from this browser now; sign-in, theme and layout stay. */
+function ClearBrowserCache() {
+  const [cleared, setCleared] = useState<number | null>(null);
+  const [asking, setAsking] = useState(false);
+  const clear = () => {
+    setAsking(false);
+    setCleared(tidyBrowserStorage({ force: true }));
+  };
+
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
+      <Button variant="outlined" startIcon={<Eraser size={15} />} onClick={() => setAsking(true)} sx={{ borderColor: "divider", color: "text.primary" }}>
+        Clear this browser&apos;s cache
+      </Button>
+      <ConfirmDialog open={asking} title="Clear this browser's cache?" confirmLabel="Clear cache" danger onConfirm={clear} onClose={() => setAsking(false)}>
+        This removes what the editor saved in this browser for each story: card designs and template picks, uploaded X-background cards, and
+        unfinished video projects (except ones saved in the last 10 minutes). It can&apos;t be undone. Your sign-in, theme and layout stay.
+      </ConfirmDialog>
+      <Typography role="status" sx={{ fontSize: "0.8125rem", color: "text.secondary" }}>
+        {cleared === null ? "" : cleared === 0 ? "Nothing saved to clear." : `Cleared ${cleared} saved ${cleared === 1 ? "item" : "items"}.`}
+      </Typography>
+    </Box>
+  );
+}
+
 export default function ProfilePage() {
   const { ready, user, roleLabel, catalogue, overrides, can } = usePermissions();
   const [show, setShow] = useState<"all" | "allowed">("all");
@@ -257,6 +283,20 @@ export default function ProfilePage() {
             <Field label="Password">
               <PasswordForm />
             </Field>
+          </Box>
+
+          {/* This browser */}
+          <Box component="section" aria-labelledby="profile-browser" sx={{ ...tileSx, py: 2 }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
+              <Monitor size={16} aria-hidden />
+              <Typography id="profile-browser" component="h2" sx={{ fontWeight: 600, fontSize: "0.9375rem" }}>
+                This browser
+              </Typography>
+            </Box>
+            <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", mb: 1.5 }}>
+              The editor remembers card designs and video projects here, and clears ones older than two days every night. Clear them now if the editor feels slow. You stay signed in.
+            </Typography>
+            <ClearBrowserCache />
           </Box>
         </Box>
 

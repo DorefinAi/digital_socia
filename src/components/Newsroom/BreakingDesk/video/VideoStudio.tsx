@@ -28,6 +28,7 @@ import type { StudioCommand } from "./timeline/commands";
 import { togglePlayback } from "./panels/playback";
 import { ASSET_DRAG_TYPE } from "./panels/catalog";
 import { S, studioTheme } from "./panels/studioTheme";
+import { useTabBusy } from "@/lib/browserTidy";
 import { useSuppressBrowserMenu } from "./ui/EditorContextMenu";
 import { usePermissions } from "@/lib/access/usePermissions";
 
@@ -50,6 +51,8 @@ export interface VideoStudioProps {
 const MIN_WIDTH = 900;
 
 export default function VideoStudio(props: VideoStudioProps) {
+  // An open studio holds back the nightly reload (lib/browserTidy)
+  useTabBusy();
   const store = useCreateStudio(() => emptyProject(props.aspect ?? PLATFORM_ASPECT[props.platform]));
   return (
     <ThemeProvider theme={studioTheme}>
