@@ -2,7 +2,7 @@
 
 import { ApiError, api, setCsrfToken } from "./client";
 import type {
-  CardTemplateLayout, CopyPostedResult, Counts, DraftPatch, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, OrgCardTemplate, OrgCardTemplateLayout, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, UserCardTemplate,
+  CardTemplateLayout, CopyPostedResult, Counts, DraftPatch, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, OrgCardTemplate, OrgCardTemplateLayout, OrgCardTemplatePatch, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, UserCardTemplate,
 } from "./types";
 
 const enc = encodeURIComponent;
@@ -103,6 +103,14 @@ export async function fetchOrgCardTemplates(platform = "x"): Promise<OrgCardTemp
 /** Moves the date slot and text box of a shared template (Settings permission). */
 export const saveOrgCardTemplateLayout = (slug: string, layout: OrgCardTemplateLayout) =>
   api<{ template: OrgCardTemplate }>("PATCH", `/card-templates/${enc(slug)}`, { layout });
+/** Adds a shared template (PNG or JPEG, up to 5 MB, each side 600–4000 px). It starts with the server's default text area. */
+export const uploadOrgCardTemplate = (image: Blob, label: string, platform = "x") =>
+  api<{ template: OrgCardTemplate }>("POST", `/card-templates?platform=${enc(platform)}&label=${enc(label)}`, image);
+/** Rename or move the text area (the uploader or an admin); defaultFor is admin only and moves the tag off every other template. */
+export const updateOrgCardTemplate = (slug: string, patch: OrgCardTemplatePatch) =>
+  api<{ template: OrgCardTemplate }>("PATCH", `/card-templates/${enc(slug)}`, patch);
+/** Admin only. Cards already posted keep their own image. */
+export const deleteOrgCardTemplate = (slug: string) => api<unknown>("DELETE", `/card-templates/${enc(slug)}`);
 
 // ─── Source health ───────────────────────────────────────────────────────────
 export const fetchIngestStatus = () => api<IngestStatus>("GET", "/ingest/status");

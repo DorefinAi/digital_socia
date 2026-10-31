@@ -228,6 +228,14 @@ export interface CardLayout {
   /** Video fades in from black at the start and out to black at the end */
   fadeIn?: boolean;
   fadeOut?: boolean;
+  // Added with the shared X templates (org-card-templates-contract.md)
+  /**
+   * Slug of the desk template the card is drawn on. The template's picture fills the card at its own size,
+   * in place of the photo and the code-drawn design; the headline and text boxes sit on top as usual.
+   */
+  orgTemplate?: string;
+  /** On a desk template: where the story's photo sits, as shares of the card (left, top, width, height). None: no photo. */
+  photoBox?: { x: number; y: number; w: number; h: number };
 }
 
 export type TextAnimation = "none" | "fade" | "rise" | "pop" | "wipe" | "typewriter";

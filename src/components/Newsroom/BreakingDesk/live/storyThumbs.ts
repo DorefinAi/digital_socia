@@ -5,8 +5,8 @@
 import { CARD_CHOICES_TIDIED_EVENT } from "@/lib/browserTidy";
 import type { DrawableCardTemplate, OrgCardTemplate, UserCardTemplate } from "@/lib/socia/types";
 import type { BreakingTag } from "@/types/newsroom";
-import { apiFileUrl } from "./LiveDesk";
-import { fontsReady, istDate, loadImage, paintCardText } from "./backgroundCard";
+import { fontsReady, istDate, paintCardText } from "./backgroundCard";
+import { templateImage } from "./orgCanvas";
 import { keyHash } from "./useBackgroundCard";
 
 // ─── The design picked for a draft (PostEditor's choiceStore, same browser) ──────────────────────────
@@ -159,7 +159,8 @@ const loading = new Set<string>();
 function background(url: string): Promise<HTMLImageElement> {
   let p = backgrounds.get(url);
   if (!p) {
-    p = loadImage(apiFileUrl(url));
+    // The same decoded picture the editor and the Template tab use
+    p = templateImage(url);
     backgrounds.set(url, p);
     p.catch(() => {
       // Try again a minute later, not on every row

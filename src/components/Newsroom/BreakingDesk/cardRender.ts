@@ -733,10 +733,14 @@ export const templateById = (id: string | undefined) => CARD_TEMPLATES.find((t) 
 
 export const accentFor = (layout: CardLayout, tag: BreakingTag) => layout.accent ?? tagAccent(tag);
 
+/** Headline look on a desk template: plain words on the template's own picture (backgroundCard.ts draws it the same way) */
+export const ORG_HEADLINE: Partial<CardTextStyle> = { box: false, shadow: 0, weight: 700, lineHeight: 1.3 };
+
 /** The headline's look after template defaults, then the operator's choices. */
 export function resolveHeadlineStyle(layout: CardLayout, tag: BreakingTag): ResolvedStyle {
   const accent = accentFor(layout, tag);
-  const style: ResolvedStyle = { ...TEXT_DEFAULTS, ...templateById(layout.template).headline(accent, inkOn(accent)), ...defined(layout.headlineStyle) };
+  const base = layout.orgTemplate ? ORG_HEADLINE : templateById(layout.template).headline(accent, inkOn(accent));
+  const style: ResolvedStyle = { ...TEXT_DEFAULTS, ...base, ...defined(layout.headlineStyle) };
   style.align = layout.align;
   if (layout.color && layout.color !== "auto") style.color = layout.color;
   return style;
@@ -749,10 +753,31 @@ export function templatePatch(template: CardTemplate, format: TemplateFormat): P
   return { template: template.id, color: "auto", align: template.align ?? "left", textY: template.textY?.(format) ?? DEFAULT_TEXT_Y[format], headlineStyle: {}, textX: undefined, textWidth: undefined, textHeight: undefined };
 }
 
-export const mediaRectFor = (layout: CardLayout, format: TemplateFormat): Rect => {
-  const { w: W, h: H } = TEMPLATE_FORMATS[format];
+/**
+ * A desk template's picture as the card's background (org-card-templates-contract.md): the card takes its
+ * size, and `image` (null while it loads) is drawn over the whole card instead of the code-drawn design.
+ */
+export interface CardBackdrop {
+  w: number;
+  h: number;
+  image: CanvasImageSource | null;
+}
+
+/** The card's size: a desk template's own, else the format's */
+export const cardSize = (format: TemplateFormat, backdrop?: CardBackdrop | null) => (backdrop ? { w: backdrop.w, h: backdrop.h } : TEMPLATE_FORMATS[format]);
+
+/** Base headline size on a desk template, in px on a 1080 frame; fontScale multiplies it */
+export const ORG_BASE_SIZE = 56;
+
+/** Where the photo goes: on a desk template its own box (null when it has none), else the template's media area. */
+export function mediaRectFor(layout: CardLayout, format: TemplateFormat, backdrop?: CardBackdrop | null): Rect | null {
+  const { w: W, h: H } = cardSize(format, backdrop);
+  if (backdrop) {
+    const p = layout.photoBox;
+    return p ? { x: p.x * W, y: p.y * H, w: p.w * W, h: p.h * H } : null;
+  }
   return templateById(layout.template).mediaRect?.(W, H, format) ?? { x: 0, y: 0, w: W, h: H };
-};
+}
 
 /** Every font the card needs, as CSS font strings, so they can be loaded before painting. */
 export function fontsFor(layout: CardLayout, tag: BreakingTag): string[] {
@@ -789,19 +814,34 @@ export interface CardRects {
 }
 
 /** Paints the whole card: media, template furniture, headline, then the extra text boxes. */
-export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, source: Source | null, layout: CardLayout, tag: BreakingTag, handle: string, frame?: FrameTime, editing?: string | null): CardRects {
-  const { w: W, h: H } = TEMPLATE_FORMATS[format];
+export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, source: Source | null, layout: CardLayout, tag: BreakingTag, handle: string, frame?: FrameTime, editing?: string | null, backdrop?: CardBackdrop | null): CardRects {
+  const { w: W, h: H } = cardSize(format, backdrop);
   // The block being typed in on the card is laid out at rest with its words left to the editor over it
   let editingGeometry: TextGeometry | undefined;
   const typedIn = (key: string) => (editing === key ? { hideWords: true, onLayout: (g: TextGeometry) => (editingGeometry = g) } : {});
   const u = Math.min(W, H) / 1080;
   const pad = 56 * u;
   const template = templateById(layout.template);
-  const m = mediaRectFor(layout, format);
+  const m = mediaRectFor(layout, format, backdrop);
 
   ctx.fillStyle = "#0B0B0D";
   ctx.fillRect(0, 0, W, H);
+  if (backdrop?.image) ctx.drawImage(backdrop.image, 0, 0, W, H);
 
+  if (m) drawMedia(ctx, m, source, layout, u);
+
+  const accent = accentFor(layout, tag);
+  const headline = resolveHeadlineStyle(layout, tag);
+  const stamp = new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  // A desk template has its furniture in its picture: the headline may go anywhere on it
+  const area: HeadlineArea = backdrop
+    ? { x: 0, width: W, minY: 0, maxY: H, baseSize: ORG_BASE_SIZE * u, inset: { l: 0, r: 0, t: 0, b: 0 } }
+    : template.draw({ ctx, W, H, u, pad, format, tag, accent, ink: inkOn(accent), handle, stamp, headline });
+  return drawWords(ctx, layout, headline, area, W, H, u, pad, frame, editing, typedIn, () => editingGeometry);
+}
+
+/** The photo or video in its rect: backdrop (when shown whole), crop, filters, warmth and vignette. */
+function drawMedia(ctx: CanvasRenderingContext2D, m: Rect, source: Source | null, layout: CardLayout, u: number) {
   ctx.save();
   ctx.beginPath();
   ctx.rect(m.x, m.y, m.w, m.h);
@@ -848,12 +888,23 @@ export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, 
     ctx.fillRect(m.x, m.y, m.w, m.h);
   }
   ctx.restore();
+}
 
-  const accent = accentFor(layout, tag);
-  const headline = resolveHeadlineStyle(layout, tag);
-  const stamp = new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-  const area = template.draw({ ctx, W, H, u, pad, format, tag, accent, ink: inkOn(accent), handle, stamp, headline });
-
+/** The headline, then the extra text boxes, then any fade to black. */
+function drawWords(
+  ctx: CanvasRenderingContext2D,
+  layout: CardLayout,
+  headline: ResolvedStyle,
+  area: HeadlineArea,
+  W: number,
+  H: number,
+  u: number,
+  pad: number,
+  frame: FrameTime | undefined,
+  editing: string | null | undefined,
+  typedIn: (key: string) => Partial<TextBlockSpec>,
+  editingGeometry: () => TextGeometry | undefined,
+): CardRects {
   // The headline column can be narrowed and moved; the template's column is the default. Once resized by
   // hand the box has its own height and may go anywhere on the card; the text then shrinks to fit it.
   const fixed = layout.textHeight !== undefined;
@@ -922,5 +973,5 @@ export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, 
     ctx.fillRect(0, 0, W, H);
   }
 
-  return { headline: headlineRect, headlineArea: { x, width: area.width }, layers, editing: editingGeometry };
+  return { headline: headlineRect, headlineArea: { x, width: area.width }, layers, editing: editingGeometry() };
 }

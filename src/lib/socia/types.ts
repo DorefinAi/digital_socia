@@ -419,8 +419,26 @@ export interface OrgCardTemplate {
   height: number;
   layout: OrgCardTemplateLayout;
   /** Story tags this template opens on */
-  defaultFor: ("big_breaking" | "breaking")[];
+  defaultFor: OrgTemplateTag[];
   updatedAt: string;
+  // v2 (upload, rename, delete); absent from an older server, which means none of these are allowed
+  /** Who uploaded it; null for the seeded house designs */
+  createdBy?: { id: string; name: string } | null;
+  /** The requesting user may rename it and move its text area */
+  canEdit?: boolean;
+  /** Admin only */
+  canDelete?: boolean;
+  /** Admin only: make it the default for a story tag */
+  canSetDefault?: boolean;
+}
+
+export type OrgTemplateTag = "big_breaking" | "breaking";
+
+/** PATCH /card-templates/:slug; send only what changes */
+export interface OrgCardTemplatePatch {
+  label?: string;
+  layout?: OrgCardTemplateLayout;
+  defaultFor?: OrgTemplateTag[];
 }
 
 /** What the background-card drawing needs: a per-user background or an org template. */

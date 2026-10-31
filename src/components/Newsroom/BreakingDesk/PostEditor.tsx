@@ -71,11 +71,12 @@ import VideoTimeline, { CLIP_SPEEDS, TimelineText, clock, outputLength } from ".
 import TextControls, { ALIGN_ICONS, FontSelect } from "./TextControls";
 import TemplatePicker from "./TemplatePicker";
 import { ENTER_SECONDS, MEDIA_LOOKS, TEXT_ANIMATIONS, accentFor, inkOn, mediaFilter, mediaWarmth, resolveHeadlineStyle, resolveLayerStyle, templateById, templatePatch, textSpan, warmthColor } from "./cardRender";
+import { BODY_STYLE, ORG_BODY_ID, ORG_DATE_ID, orgBodyText, orgLayout, orgPlacement, refreshOrgDate, switchOrgTemplate, useBackdrop, useTemplateImage } from "./live/orgCanvas";
 import { fontById, nearestWeight } from "./templateFonts";
 import FtpFeedPanel from "./FtpFeedPanel";
 import { DAILY_CAP, isLiveOn } from "@/data/socialDesk";
 import * as socia from "@/lib/socia/api";
-import type { DraftView, DrawableCardTemplate } from "@/lib/socia/types";
+import type { DraftView, DrawableCardTemplate, OrgCardTemplate } from "@/lib/socia/types";
 import type { LiveEditing } from "./live/LiveEditor";
 import { apiFileUrl, credentialsFor, errorCode, errorText, useLiveDesk } from "./live/LiveDesk";
 import { usePhase } from "@/lib/socia/usePhase";
@@ -154,6 +155,8 @@ const floatingSx = { backgroundColor: "background.paper", border: "1px solid", b
 
 /** Longest text the card template takes; the font shrinks to fit anything up to this. */
 const CARD_TEXT_MAX = 500;
+/** Longest story a desk template's story box takes (the whole FTP story; the font shrinks to fit) */
+const STORY_TEXT_MAX = 3000;
 
 let layerCount = 0;
 const newLayerId = () => `t${Date.now().toString(36)}${(layerCount++).toString(36)}`;
@@ -199,18 +202,22 @@ interface PostEditorProps {
 const CARD_MAX_BYTES = 5 * 1024 * 1024;
 const plainCardText = (text: string) => text.replace(/\*\*/g, "").trim();
 
+const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
 /**
  * Small per-draft records in this browser's storage; a blocked storage just means nothing is remembered.
  * Each write stamps `savedAt` so lib/browserTidy can drop records nobody has touched for a while.
  */
-function draftStore<T>(prefix: string) {
+function draftStore<T>(prefix: string, valid: (value: Record<string, unknown>) => boolean) {
   const key = (id: string) => `${prefix}${id}`;
   return {
     key,
+    /** Null when there is no record, or an old or damaged one that doesn't have this shape */
     read(id: string): T | null {
       try {
         const raw = localStorage.getItem(key(id));
-        return raw ? (JSON.parse(raw) as T) : null;
+        const parsed: unknown = raw ? JSON.parse(raw) : null;
+        return isRecord(parsed) && valid(parsed) ? (parsed as T) : null;
       } catch {
         return null;
       }
@@ -231,10 +238,10 @@ function draftStore<T>(prefix: string) {
  * background, layout, date, words) and the card URL the server gave it. Reopening with the same drawing
  * skips the upload, and a different URL on the server means someone else replaced the card since.
  */
-const bgStore = draftStore<{ hash: string; cardUrl: string }>("socia_bg_card_");
+const bgStore = draftStore<{ hash: string; cardUrl: string }>("socia_bg_card_", (v) => typeof v.hash === "string" && typeof v.cardUrl === "string");
 
 /** The card design the operator picked for a draft in the Template tab: an org template's slug, or "own" for their X background. */
-const choiceStore = draftStore<{ template: string }>("socia_card_choice_");
+const choiceStore = draftStore<{ template: string }>("socia_card_choice_", (v) => typeof v.template === "string");
 
 /** "Square, 1080 × 1080" for a design's thumbnail */
 const shapeNote = (t: { width: number; height: number }) =>
@@ -247,7 +254,12 @@ const designStore = {
   read(id: string): { layout: TemplateLayout; mediaFile: string; cardUrl?: string | null } | null {
     try {
       const raw = localStorage.getItem(designStore.key(id));
-      return raw ? JSON.parse(raw) : null;
+      const parsed: unknown = raw ? JSON.parse(raw) : null;
+      // An old or damaged record is ignored rather than handed to the card
+      if (!isRecord(parsed) || !isRecord(parsed.layout) || !isRecord(parsed.layout.box) || !isRecord(parsed.layout.headline)) return null;
+      if (typeof parsed.mediaFile !== "string") return null;
+      if (parsed.cardUrl !== undefined && parsed.cardUrl !== null && typeof parsed.cardUrl !== "string") return null;
+      return parsed as unknown as { layout: TemplateLayout; mediaFile: string; cardUrl?: string | null };
     } catch {
       return null;
     }
@@ -318,6 +330,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         serverCard: !!d.card.custom && !saved && ownBg?.cardUrl !== d.card.url,
         // The card design picked for this draft in this browser; null opens on the story's default
         bgPick: (choiceStore.read(d.id)?.template ?? null) as string | null,
+        // "Use automatic card" was chosen: the card is not moved onto a desk template
+        noOrg: false,
+        // A design reopened on another day: its date box shows today now, so the card on the server is older
+        dateStale: false,
       };
     }
     const draft = socialDrafts.find((d) => d.newsId === story.id && d.platform === platform && (d.status === "saved" || d.status === "scheduled"));
@@ -335,6 +351,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       savedDesign: false,
       serverCard: false,
       bgPick: null as string | null,
+      noOrg: false,
+      dateStale: false,
     };
   };
   const [start, setStart] = useState(() => storyStart(item));
@@ -481,11 +499,6 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   }, []);
 
   const isVideo = media.kind === "video";
-  // The Video tab only exists for video stories
-  const panel: Tool = tool === "video" && (!isVideo || phase1) ? "background" : tool;
-  const frame = TEMPLATE_FORMATS[format];
-  const fit = Math.max(0.05, Math.min(stage.w / frame.w, stage.h / frame.h));
-  const frameWidth = Math.round(frame.w * fit * zoom);
 
   // ── The operator's X background (Templates tab): X cards are drawn on it unless they design their own ──
   const cardTemplates = live && isX ? desk?.cardTemplate : undefined;
@@ -493,37 +506,116 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // The card on the draft was made elsewhere: it is shown and kept until the operator edits here or picks a source
   const cardTouched = layout !== start.layout || mediaIndex !== start.mediaIndex || uploads.length > 0;
   const serverView = !!live?.draft.card.custom && !!live.draft.card.url && start.serverCard && cardSource === null && !cardTouched;
-  // The desk's shared designs (org-card-templates-contract.md) come first: BIG stories open on the one made
-  // for big_breaking, others on the one for breaking. None from the server: the X background as before.
-  const orgTemplates = (live && isX ? desk?.orgCardTemplates.data : null) ?? [];
+  // The desk's shared designs (org-card-templates-contract.md) are the card's background in this editor: BIG
+  // stories open on the one made for big_breaking, others on the one for breaking. None from the server: the
+  // X background as before. `orgList` is null until the list has loaded.
+  const orgPoll = live && isX ? desk?.orgCardTemplates : undefined;
+  const orgList = orgPoll?.data ?? null;
+  const orgTemplates = orgList ?? [];
   // Phase 1 breaking files: BIG in the file name is Big Breaking, every other one Breaking (as shared.storyTag)
   const liveStory = live?.draft.story;
   const tagNow = liveStory ? (liveStory.tags ? (liveStory.tags.big ? "big_breaking" : "breaking") : priorityTag(liveStory.priority)) : storyTag(item);
   const orgDefault = orgTemplates.find((t) => !!tagNow && t.defaultFor.includes(tagNow)) ?? orgTemplates[0] ?? null;
   const ownPicked = bgPick === "own" && !!cardTemplate;
-  const activeOrg = ownPicked ? null : (orgTemplates.find((t) => t.slug === bgPick) ?? orgDefault);
-  const activeTemplate: DrawableCardTemplate | null = activeOrg ?? cardTemplate;
-  const activeKey = activeOrg ? activeOrg.slug : activeTemplate ? "own" : null;
+  /** The design a story opens on: the one picked for it in this browser, else the one for its tag */
+  const orgStart = orgTemplates.find((t) => t.slug === bgPick) ?? orgDefault;
+  // The flat drawing on a background (live/backgroundCard.ts) is kept for the operator's own X background only
+  const activeTemplate: DrawableCardTemplate | null = orgTemplates.length ? (ownPicked ? cardTemplate : null) : cardTemplate;
   /** How the card's design is named in sentences */
-  const bgName = activeOrg ? `the ${activeOrg.label} design` : "your X background";
-  const useBgLabel = activeOrg ? `Use ${activeOrg.label}` : "Use your X background";
+  const bgName = "your X background";
+  const useBgLabel = "Use your X background";
   const cardChoices: CardChoice[] = orgTemplates.length
     ? [
-        ...orgTemplates.map((t) => ({ key: t.slug, label: t.label, note: shapeNote(t), template: t })),
+        ...orgTemplates.map((t) => ({ key: t.slug, label: t.label, note: shapeNote(t), template: t, org: t })),
         ...(cardTemplate ? [{ key: "own", label: "Your X background", note: shapeNote(cardTemplate), template: cardTemplate }] : []),
       ]
     : [];
   const bgMode = !!activeTemplate && !serverView && (cardSource ?? (start.savedDesign || start.serverCard ? "design" : "background")) === "background";
-  /** Template tab thumbnail: draw the open story on that design, and remember it for this draft in this browser. */
-  const pickCardDesign = (key: string) => {
+  // The desk template the design is on, and whether the canvas shows it
+  const orgTpl = layout.orgTemplate ? (orgTemplates.find((t) => t.slug === layout.orgTemplate) ?? null) : null;
+  const orgMode = !!orgTpl && !bgMode && !serverView;
+  // A design on a desk template whose list hasn't loaded yet: wait rather than flash the photo card
+  const orgWaiting = !!layout.orgTemplate && !orgTpl && !bgMode && !serverView && !orgList;
+  // The list's first load failed (server error, no access, offline): say so with a retry instead of waiting forever
+  const orgFailed = orgWaiting && !!orgPoll?.error;
+  const [orgRetrying, setOrgRetrying] = useState(false);
+  const retryOrgList = () => {
+    if (!orgPoll) return;
+    setOrgRetrying(true);
+    void orgPoll.refresh().finally(() => setOrgRetrying(false));
+  };
+  // The card's design was deleted and there is no other desk design to move it onto
+  const orgGone = !!orgList && !!layout.orgTemplate && !orgTpl && !orgStart && !bgMode && !serverView;
+  const activeKey = bgMode ? "own" : orgMode ? orgTpl.slug : null;
+
+  // One decoded picture per template, shared with the Template tab and the feed; the canvas repaints only
+  // when it arrives or the design changes, never on the desk's polls
+  const orgImage = useTemplateImage(orgMode ? orgTpl.backgroundUrl : null);
+  const orgW = orgMode ? orgTpl.width || orgImage.image?.naturalWidth || 1080 : 0;
+  const orgH = orgMode ? orgTpl.height || orgImage.image?.naturalHeight || 1080 : 0;
+  const orgPicture = orgImage.image;
+  const backdrop = useBackdrop(orgW, orgH, orgPicture);
+
+  /** Makes `next` the layout the story opened with: no undo step, not an edit */
+  const adoptStartLayout = (next: TemplateLayout, flags: { dateStale?: boolean } = {}) => {
+    setStart((s) => ({ ...s, ...flags, layout: next }));
+    setLayout(next);
+    setHistory({ stack: [{ layout: next, text, hashtags, mentions, mediaIndex, cardSource }], index: 0 });
+  };
+  // Opening a story (or the list arriving): an untouched card moves onto its desk template; a design whose
+  // template was deleted moves onto the default one; a design from another day shows today's date
+  if (orgList?.length && orgStart && !start.noOrg && layout === start.layout) {
+    if (!layout.orgTemplate && !start.savedDesign) adoptStartLayout(orgLayout(orgStart, { headline: layout.headline, body: item.body }, layout));
+    else if (layout.orgTemplate && !orgTpl) adoptStartLayout(switchOrgTemplate(layout, null, orgStart, item.body));
+    else if (orgTpl && !start.dateStale) {
+      const dated = refreshOrgDate(layout, orgTpl);
+      if (dated !== layout) adoptStartLayout(dated, { dateStale: true });
+    }
+  } else if (orgList && orgStart && layout.orgTemplate && !orgTpl && !serverView) {
+    // Its template was deleted while the card was being edited: onto the default design too, edits kept
+    setLayout(switchOrgTemplate(layout, null, orgStart, item.body));
+  }
+
+  // The Video tab only exists for video stories; a desk template is a still card
+  const panel: Tool = tool === "video" && (!isVideo || phase1 || orgMode) ? "background" : tool;
+  const frame = backdrop ?? TEMPLATE_FORMATS[format];
+  const fit = Math.max(0.05, Math.min(stage.w / frame.w, stage.h / frame.h));
+  const frameWidth = Math.round(frame.w * fit * zoom);
+
+  /** Template tab thumbnail: lay the open story out on that design, and remember it for this draft in this browser. */
+  const pickCardDesign = (key: string, picked?: OrgCardTemplate) => {
     setBgPick(key);
-    setCardSource("background");
     if (live) {
       choiceStore.write(live.draft.id, { template: key });
       // The FTP feed's thumbnail of this story follows the new design
       cardChoiceChanged(live.draft.id);
     }
+    if (key === "own") {
+      setCardSource("background");
+      return;
+    }
+    const to = picked ?? orgTemplates.find((t) => t.slug === key);
+    if (!to) return;
+    setCardSource("design");
+    setSelection(null);
+    // The words and their styling move to the new design (orgCanvas.switchOrgTemplate says how)
+    setLayout((l) => (l.orgTemplate === to.slug ? l : switchOrgTemplate(l, orgTemplates.find((t) => t.slug === l.orgTemplate) ?? null, to, item.body)));
   };
+  /** The Template tab's designs: pick one, upload one, look after one */
+  const orgPickerProps = {
+    choices: cardChoices,
+    current: activeKey,
+    headline: plainCardText(layout.headline) || item.headline,
+    body: orgBodyText(layout, item.body),
+    disabled: !canEdit || !!busy,
+    onPick: (key: string) => pickCardDesign(key),
+    canUpload: !!live && can("draft.edit"),
+    onChanged: desk?.orgCardTemplates.refresh,
+    // A new design is ready: the open story moves onto it (only when the story can be changed here)
+    onUploaded: (t: OrgCardTemplate) => canEdit && pickCardDesign(t.slug, t),
+  };
+  /** The operator's own X background: picked like a design when there are desk templates */
+  const useOwnBackground = () => (orgTemplates.length ? pickCardDesign("own") : setCardSource("background"));
   // A click on the drawn card opens the headline for typing (the drawing itself can't take text)
   const headlineFieldRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
   const focusHeadline = useRef(false);
@@ -549,8 +641,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     ((bgUploaded?.id === item.id && bgUploaded.key === bg.key) || (!!bgRecord && bgRecord.cardUrl === live?.draft.card.url && bgRecord.hash === keyHash(bg.key)));
   const bgFrame = { w: bg.card?.width ?? activeTemplate?.width ?? 1080, h: bg.card?.height ?? activeTemplate?.height ?? 1080 };
   const bgFrameWidth = Math.round(bgFrame.w * Math.max(0.05, Math.min(stage.w / bgFrame.w, stage.h / bgFrame.h)) * zoom);
-  // Background cards are still images, so a video story posts (and downloads) the card
-  const exportsVideo = isVideo && !bgMode && !phase1;
+  // Background cards and desk templates are still images, so a video story posts (and downloads) the card
+  const exportsVideo = isVideo && !bgMode && !orgMode && !phase1;
 
   const selectedHashtags = useMemo(() => hashtags.filter((h) => h.checked).map((h) => h.value), [hashtags]);
   const selectedMentions = useMemo(() => mentions.filter((m) => m.checked).map((m) => m.value), [mentions]);
@@ -571,7 +663,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // Links multiply the cost of an X post, so the X formatter refuses them outright
   const url = isX ? findUrl(finalText) : null;
   const bgFailed = bgMode && bg.status === "error";
-  const canPost = canEdit && !busy && stale === null && !overLimit && !tooManyTags && !url && !capReached && !bgFailed && text.trim().length > 0 && layout.headline.trim().length > 0;
+  const orgLoading = orgMode && !orgPicture;
+  const canPost = canEdit && !busy && stale === null && !overLimit && !tooManyTags && !url && !capReached && !bgFailed && !orgLoading && !orgWaiting && !orgGone && text.trim().length > 0 && layout.headline.trim().length > 0;
 
   let blockedReason = "";
   if (takenBy) blockedReason = "Already posted";
@@ -585,6 +678,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   else if (tooManyTags) blockedReason = "Too many hashtags or mentions selected";
   else if (url) blockedReason = `Remove the link "${url}" first`;
   else if (capReached) blockedReason = `Today's ${meta.short} cap of ${cap} posts is reached`;
+  else if (orgLoading) blockedReason = orgImage.error ? `${orgTpl.label} didn't load. Try again from the card` : `${orgTpl.label} is still loading`;
+  else if (orgWaiting) blockedReason = orgFailed ? "The card designs didn't load. Retry from the card" : "The card design is still loading";
+  else if (orgGone) blockedReason = "This card's design was deleted. Pick another design first";
   else if (bgFailed) blockedReason = `The card on ${bgName} didn't draw. Use the automatic card instead`;
 
   const patch = (changes: Partial<TemplateLayout>) => setLayout((l) => ({ ...l, ...changes }));
@@ -727,6 +823,15 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     });
 
   const resetTextStyle = () => {
+    // On a desk template the story and the headline go back to the template's own look
+    if (orgMode && activeLayer?.id === ORG_BODY_ID) {
+      patchLayer(activeLayer.id, { style: { ...BODY_STYLE, color: orgTpl.layout.body.color } });
+      return;
+    }
+    if (orgMode && !activeLayer) {
+      setLayout((l) => ({ ...l, headlineStyle: {}, color: orgTpl.layout.headline.color, align: "center" }));
+      return;
+    }
     if (activeLayer) {
       const preset = LAYER_PRESETS.find((p) => p.size === activeLayer.size) ?? LAYER_PRESETS[0];
       patchLayer(activeLayer.id, { style: preset.style });
@@ -800,8 +905,29 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     setSegments([]);
     setSelectedClip(null);
     playhead.set(0);
-    patch({ bgZoom: 1, bgX: 0, bgY: 0 });
+    // On a desk template, choosing a photo puts it on the card
+    patch({ bgZoom: 1, bgX: 0, bgY: 0, ...(orgMode && !layout.photoBox ? { photoBox: newPhotoBox() } : {}) });
   };
+
+  // ── Desk template: the photo frame, and where the template puts the words ──
+  const near = (a: number | undefined, b: number | undefined, tol = 0.002) => a !== undefined && b !== undefined && Math.abs(a - b) <= tol;
+  /** A photo frame for a desk template: 60% of the card wide, 4:3, a little above the middle */
+  const newPhotoBox = () => {
+    const w = 0.6;
+    const h = Math.min(0.6, (w * frame.w * 0.75) / frame.h);
+    return { x: (1 - w) / 2, y: Math.max(0, 0.42 - h / 2), w, h };
+  };
+  const addPhoto = () => {
+    setLayout((l) => (l.photoBox ? l : { ...l, photoBox: newPhotoBox(), bgZoom: 1, bgX: 0, bgY: 0 }));
+    setSelection("background");
+  };
+  const removePhoto = () => {
+    setLayout((l) => ({ ...l, photoBox: undefined }));
+    setSelection(null);
+  };
+  /** Where the template puts the headline, story and date for the words on the card now */
+  const orgHome = () =>
+    orgTpl ? orgPlacement(orgTpl, { headline: layout.headline, body: orgBodyText(layout, item.body) }, { head: layout.headlineStyle?.font, body: layout.layers?.find((l) => l.id === ORG_BODY_ID)?.style.font }) : null;
 
   const handleDuration = (seconds: number) => {
     setDuration(seconds);
@@ -974,9 +1100,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   // The card: the server's automatic card posts until the design here is changed, then this canvas does
   // On the X background the drawn card is always the one that posts; the design here does not apply
-  const designEdited = !!live && !bgMode && cardTouched;
-  const cardSynced = !!uploaded && uploaded.layout === layout && uploaded.url === media.url;
-  const ownCard = bgMode || designEdited || !!live?.draft.card.custom;
+  // A desk template is always this editor's card; picking one counts as choosing it, like picking the X background
+  const designEdited = !!live && !bgMode && (cardTouched || (orgMode && cardSource !== null));
+  const cardSynced =
+    (!!uploaded && uploaded.layout === layout && uploaded.url === media.url) ||
+    // Reopened with the design this browser last sent, unchanged (and its date still today's)
+    (orgMode && start.savedDesign && !start.dateStale && !cardTouched);
+  const ownCard = bgMode || orgMode || designEdited || !!live?.draft.card.custom;
   // The card goes up only when the operator means it: Post, Save draft, Save as posted, or leaving after
   // changing the card here (its words or design, or picking the X background over a card made elsewhere)
   const cardChosen = cardTouched || cardSource !== null;
@@ -1026,14 +1156,19 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       designStore.write(d.id, null);
       return drawn.card.blob;
     }
-    if (!always && (!designEdited || cardSynced)) return null;
+    // A desk template goes up with Post or Save draft even untouched: the server's automatic card is another design
+    if (!always && (orgMode ? cardSynced : !designEdited || cardSynced)) return null;
+    // Never send a desk-template card drawn without its picture
+    if (orgMode && !orgPicture) throw new Error(`${orgTpl.label} is still loading, so the card wasn't sent. Try again in a moment.`);
+    // The design as exported, taken before any await so what is recorded is what was drawn
+    const sent = { layout, url: media.url, mediaFile: media.fileName };
     const png = await canvasRef.current?.png(CARD_MAX_BYTES);
     if (!png) throw new Error(always ? "The browser couldn't export the card. Try another photo, or try again." : "The browser couldn't export your card, so the automatic card stays. Try another photo, or try again.");
     if (cardSynced) return png;
     const d = await socia.uploadCard(live.draft.id, versionRef.current, png);
     adopt(d);
-    setUploaded({ layout, url: media.url });
-    designStore.write(d.id, { layout, mediaFile: media.fileName, cardUrl: d.card.url });
+    setUploaded({ layout: sent.layout, url: sent.url });
+    designStore.write(d.id, { layout: sent.layout, mediaFile: sent.mediaFile, cardUrl: d.card.url });
     bgStore.write(d.id, null);
     return png;
   };
@@ -1242,7 +1377,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const fresh = defaultLayout(d.cardHeadline, "x");
       setCardSource("design");
       setBgUploaded(null);
-      setStart((s) => ({ ...s, layout: fresh, mediaIndex: 0, custom: false }));
+      // The automatic card stays: the design is not moved back onto a desk template
+      setStart((s) => ({ ...s, layout: fresh, mediaIndex: 0, custom: false, noOrg: true }));
       setUploads([]);
       setMediaIndex(0);
       setLayout(fresh);
@@ -1378,7 +1514,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const menuFor = (target: Exclude<CanvasSelection, null> | "stage"): MenuEntry[] => {
     if (serverView) {
       const entries: MenuEntry[] = [];
-      if (canEdit && activeTemplate) entries.push({ label: useBgLabel, icon: <ImageIcon size={14} />, onSelect: () => setCardSource("background") });
+      if (canEdit && (orgTemplates.length ? cardTemplate : activeTemplate)) entries.push({ label: useBgLabel, icon: <ImageIcon size={14} />, onSelect: useOwnBackground });
       if (canEdit) entries.push({ label: "Design the card here", icon: <Pencil size={14} />, onSelect: () => setCardSource("design") });
       return [...entries, ...generalEntries()];
     }
@@ -1394,14 +1530,21 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const layer = layers[index];
       if (!layer) return menuFor("stage");
       const width = LAYER_PRESETS.find((p) => p.size === layer.size)?.width ?? 0.7;
+      // The story and date boxes on a desk template go back to where the template puts them
+      const placed = orgMode && (id === ORG_BODY_ID || id === ORG_DATE_ID) ? orgHome() : null;
+      const home = placed ? (id === ORG_BODY_ID ? placed.body : placed.date) : null;
       return [
         { label: "Edit text", icon: <Pencil size={14} />, hint: "Click", onSelect: () => editText(`layer:${id}`) },
         { kind: "divider" },
         { label: "Bring forward", icon: <ArrowUpToLine size={14} />, disabled: index >= layers.length - 1, onSelect: () => restack(id, 1) },
         { label: "Send backward", icon: <ArrowDownToLine size={14} />, disabled: index <= 0, onSelect: () => restack(id, -1) },
         { kind: "divider" },
-        { label: "Reset position", icon: <Move size={14} />, disabled: layer.x === 0.5 && layer.y === 0.5, onSelect: () => patchLayer(id, { x: 0.5, y: 0.5 }) },
-        { label: "Reset size", icon: <Scaling size={14} />, disabled: layer.height === undefined && layer.width === width, onSelect: () => patchLayer(id, { width, height: undefined }) },
+        home
+          ? { label: "Reset position", icon: <Move size={14} />, disabled: near(layer.x, home.x) && near(layer.y, home.y), onSelect: () => patchLayer(id, { x: home.x, y: home.y }) }
+          : { label: "Reset position", icon: <Move size={14} />, disabled: layer.x === 0.5 && layer.y === 0.5, onSelect: () => patchLayer(id, { x: 0.5, y: 0.5 }) },
+        home
+          ? { label: "Reset size", icon: <Scaling size={14} />, disabled: near(layer.width, home.width) && near(layer.height, home.height) && near(layer.size, home.size, 0.5), onSelect: () => patchLayer(id, { width: home.width, height: home.height, size: home.size }) }
+          : { label: "Reset size", icon: <Scaling size={14} />, disabled: layer.height === undefined && layer.width === width, onSelect: () => patchLayer(id, { width, height: undefined }) },
         {
           label: "Hide text box",
           icon: <EyeOff size={14} />,
@@ -1412,6 +1555,17 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         },
         { label: "Duplicate", icon: <CopyPlus size={14} />, onSelect: () => duplicateLayer(id) },
         { label: "Delete text box", icon: <Trash2 size={14} />, hint: "Del", danger: true, onSelect: () => removeLayer(id) },
+        ...generalEntries(),
+      ];
+    }
+    if (target === "headline" && orgMode) {
+      const home = orgHome()?.head;
+      if (!home) return menuFor("stage");
+      return [
+        { label: "Edit text", icon: <Pencil size={14} />, hint: "Click", onSelect: () => editText("headline") },
+        { kind: "divider" },
+        { label: "Reset position", icon: <Move size={14} />, disabled: near(layout.textX, home.textX) && near(layout.textY, home.textY), onSelect: () => patch({ textX: home.textX, textY: home.textY }) },
+        { label: "Reset size", icon: <Scaling size={14} />, disabled: near(layout.textWidth, home.textWidth) && near(layout.textHeight, home.textHeight) && near(layout.fontScale, home.fontScale, 0.01), onSelect: () => patch({ textWidth: home.textWidth, textHeight: home.textHeight, fontScale: home.fontScale }) },
         ...generalEntries(),
       ];
     }
@@ -1432,6 +1586,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         { label: layout.fit === "cover" ? "Show all of the picture" : "Fill the frame", icon: <Maximize size={14} />, onSelect: () => patch({ fit: layout.fit === "cover" ? "contain" : "cover", bgX: 0, bgY: 0 }) },
         { label: "Replace picture or video", icon: <Upload size={14} />, onSelect: () => fileInputRef.current?.click() },
       ];
+      if (orgMode) entries.push({ label: "Remove photo from the card", icon: <Trash2 size={14} />, hint: "Del", danger: true, onSelect: removePhoto });
       if (showHidden.length) entries.push({ kind: "divider" }, ...showHidden);
       return [...entries, ...generalEntries()];
     }
@@ -1495,6 +1650,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           setSheetOpen(true);
           return;
         case "box.delete":
+          if (onCanvas && orgMode && selection === "background" && layout.photoBox) {
+            e.preventDefault();
+            removePhoto();
+            return;
+          }
           if (!onCanvas || !layerId) return;
           e.preventDefault();
           removeLayer(layerId);
@@ -1673,7 +1833,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         <Box ref={measureWorkspace} sx={{ position: "relative", flex: 1, minHeight: 0, display: { xs: "flex", lg: "grid" }, flexDirection: "column", gridTemplateColumns: workspaceColumns, overflowY: { xs: "auto", lg: "hidden" } }}>
           {/* Tool rail */}
           <Box role="tablist" aria-label="Design tools" sx={{ order: { xs: 1, lg: 0 }, flexShrink: 0, display: "flex", flexDirection: { xs: "row", lg: "column" }, gap: 0.5, p: 0.75, backgroundColor: "background.paper", borderRight: { lg: "1px solid" }, borderTop: { xs: "1px solid", lg: "none" }, borderColor: "divider" }}>
-            {TOOLS.filter((t) => !t.videoOnly || (isVideo && !phase1)).map((t) => (
+            {TOOLS.filter((t) => !t.videoOnly || (isVideo && !phase1 && !orgMode)).map((t) => (
               <Box
                 key={t.id}
                 component="button"
@@ -1737,7 +1897,25 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
             {panel === "background" && !bgMode && (
               <>
-                <Typography sx={panelTitle}>Background</Typography>
+                <Typography sx={panelTitle}>{orgMode ? "Photo" : "Background"}</Typography>
+                {orgMode && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mb: 1, lineHeight: 1.5 }}>
+                      {layout.photoBox
+                        ? "The photo sits in its own frame on the template. Drag it on the card and pull a handle to resize it; Alt-drag moves the picture inside the frame."
+                        : `${orgTpl.label} is the card's background. Add a photo from the story on top of it.`}
+                    </Typography>
+                    {layout.photoBox ? (
+                      <Button fullWidth variant="outlined" color="error" onClick={removePhoto} startIcon={<Trash2 size={15} />} disabled={!canEdit}>
+                        Remove photo from the card
+                      </Button>
+                    ) : (
+                      <Button fullWidth variant="contained" onClick={addPhoto} startIcon={<ImageIcon size={15} />} disabled={!canEdit}>
+                        Add photo to the card
+                      </Button>
+                    )}
+                  </Box>
+                )}
                 <Typography sx={{ ...sectionLabel, mb: 0.75 }}>From this story&apos;s FTP folder</Typography>
                 <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1 }}>
                   {mediaList.map((m, i) => (
@@ -1946,16 +2124,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
             {panel === "template" && !bgMode && (
               <>
-              {cardChoices.length > 0 && (
-              <OrgTemplatePicker
-                choices={cardChoices}
-                current={null}
-                headline={plainCardText(layout.headline) || item.headline}
-                body={item.body}
-                disabled={!canEdit || !!busy}
-                onPick={pickCardDesign}
-              />
-              )}
+              {cardChoices.length > 0 && <OrgTemplatePicker {...orgPickerProps} />}
+              {/* The code-drawn photo cards; a card on a desk template comes back to them with "Use automatic card" */}
+              {!orgMode && (
               <TemplatePicker
                 layout={layout}
                 media={media}
@@ -1965,6 +2136,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 onPick={(t) => patch(templatePatch(t, format))}
                 onAccent={(value) => patch({ accent: value })}
               />
+              )}
               </>
             )}
 
@@ -1972,7 +2144,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               <>
                 {/* Which text is being edited: the card headline or one of the extra boxes */}
                 <Box role="group" aria-label="Text on the card" sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mb: 1.5 }}>
-                  {[{ key: "headline" as CanvasSelection, label: "Card text" }, ...(layout.layers ?? []).map((l, i) => ({ key: `layer:${l.id}` as CanvasSelection, label: `${l.text.trim().slice(0, 14) || `Text ${i + 1}`}${l.hidden ? " (hidden)" : ""}` }))].map(({ key, label }) => {
+                  {[{ key: "headline" as CanvasSelection, label: orgMode ? "Headline" : "Card text" }, ...(layout.layers ?? []).map((l, i) => ({ key: `layer:${l.id}` as CanvasSelection, label: `${l.text.trim().slice(0, 14) || `Text ${i + 1}`}${l.hidden ? " (hidden)" : ""}` }))].map(({ key, label }) => {
                     const on = key === "headline" ? !activeLayer : selection === key;
                     return (
                       <Box key={key} component="button" aria-pressed={on} onClick={() => select(key)} sx={{ px: 1.1, py: 0.5, borderRadius: "999px", border: "1px solid", borderColor: on ? "text.primary" : "divider", backgroundColor: on ? "text.primary" : "transparent", color: on ? "background.paper" : "text.primary", fontFamily: "inherit", fontSize: "0.75rem", fontWeight: 600, cursor: "pointer", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -1986,7 +2158,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   multiline
                   minRows={activeLayer ? 3 : 6}
                   maxRows={14}
-                  slotProps={{ htmlInput: { maxLength: activeLayer ? 300 : CARD_TEXT_MAX, "aria-label": activeLayer ? "Text box words" : "Card text" } }}
+                  slotProps={{ htmlInput: { maxLength: activeLayer ? (activeLayer.id === ORG_BODY_ID ? STORY_TEXT_MAX : 300) : CARD_TEXT_MAX, "aria-label": activeLayer ? "Text box words" : "Card text" } }}
                   helperText={activeLayer ? "Drag the box on the card to place it; drag a handle to resize it. The words shrink to fit." : `${layout.headline.length} / ${CARD_TEXT_MAX} characters. The text shrinks to fit the card.`}
                   fullWidth
                   size="small"
@@ -2011,7 +2183,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   style={textStyle}
                   onChange={styleText}
                   size={textSize}
-                  autoColor={activeLayer ? undefined : { active: layout.color === "auto", onPick: () => patch({ color: "auto" }) }}
+                  autoColor={activeLayer || orgMode ? undefined : { active: layout.color === "auto", onPick: () => patch({ color: "auto" }) }}
                   onReset={resetTextStyle}
                 />
 
@@ -2086,7 +2258,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   ))}
                 </Box>
 
-                {!activeLayer && (
+                {!activeLayer && orgMode && (
+                  <Button size="small" onClick={() => setLayout((l) => orgLayout(orgTpl, { headline: item.headline, body: item.body }, l))} startIcon={<RotateCcw size={13} />} sx={{ mt: 2, px: 0.5, color: "text.secondary", fontSize: "0.75rem" }}>
+                    Reset the headline and story to the FTP story
+                  </Button>
+                )}
+                {!activeLayer && !orgMode && (
                   <Button size="small" onClick={() => setLayout((l) => ({ ...defaultLayout(defaultCardText(item), format), ...templatePatch(templateById(l.template), format), accent: l.accent, layers: l.layers, fit: l.fit, backdrop: l.backdrop, bgZoom: l.bgZoom, bgX: l.bgX, bgY: l.bgY, adjust: l.adjust, flipX: l.flipX, volume: l.volume, fadeIn: l.fadeIn, fadeOut: l.fadeOut }))} startIcon={<RotateCcw size={13} />} sx={{ mt: 2, px: 0.5, color: "text.secondary", fontSize: "0.75rem" }}>
                     Reset card text to the FTP story
                   </Button>
@@ -2097,14 +2274,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             {bgMode && (panel === "text" || panel === "template" || panel === "background") && (
               <>
                 {panel === "template" && cardChoices.length > 0 ? (
-                  <OrgTemplatePicker
-                    choices={cardChoices}
-                    current={activeKey}
-                    headline={plainCardText(layout.headline) || item.headline}
-                    body={item.body}
-                    disabled={!canEdit || !!busy}
-                    onPick={pickCardDesign}
-                  />
+                  <OrgTemplatePicker {...orgPickerProps} />
                 ) : (
                   <Typography sx={panelTitle}>{panel === "text" ? "Card headline" : panel === "template" ? "Template" : "Background"}</Typography>
                 )}
@@ -2129,17 +2299,15 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   </>
                 ) : panel === "template" && cardChoices.length > 0 ? null : (
                   <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", lineHeight: 1.6 }}>
-                    {activeOrg
-                      ? `This card is drawn on ${bgName}: ${activeOrg.layout.date ? "today's date, " : ""}the headline and the whole story. Pick another design in Template.`
-                      : "This card is drawn on your X background from the Templates tab: today's date, the headline and the whole story."}
+                    {"This card is drawn on your X background from the Templates tab: today's date, the headline and the whole story."}
                   </Typography>
                 )}
                 <Alert
                   severity="info"
                   sx={{ mt: 2, fontSize: "0.75rem", borderRadius: "8px" }}
-                  action={canEdit ? <Button color="inherit" size="small" onClick={() => void switchToAutoCard()} disabled={!!busy} sx={{ whiteSpace: "nowrap" }}>Design here</Button> : undefined}
+                  action={canEdit ? <Button color="inherit" size="small" onClick={() => (orgStart ? pickCardDesign(orgStart.slug) : void switchToAutoCard())} disabled={!!busy} sx={{ whiteSpace: "nowrap" }}>Design here</Button> : undefined}
                 >
-                  For a template, a photo or extra text, design the card here instead of using {activeOrg ? "a desk design" : "your background"}.
+                  For a template, a photo or extra text, design the card here instead of using your background.
                 </Alert>
               </>
             )}
@@ -2180,8 +2348,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                       </Typography>
                       {canEdit && (
                         <Box sx={{ display: "flex", gap: 0.5 }}>
-                          {activeTemplate && (
-                            <Button size="small" onClick={() => setCardSource("background")} disabled={!!busy} sx={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>
+                          {(orgTemplates.length ? cardTemplate : activeTemplate) && (
+                            <Button size="small" onClick={useOwnBackground} disabled={!!busy} sx={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>
                               {useBgLabel}
                             </Button>
                           )}
@@ -2217,9 +2385,27 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                       </Box>
                     )}
                   </Box>
+                ) : orgFailed ? (
+                  <Alert
+                    severity="error"
+                    sx={{ m: "auto", maxWidth: 360, fontSize: "0.8125rem", borderRadius: "8px" }}
+                    action={
+                      <Button color="inherit" size="small" onClick={retryOrgList} disabled={orgRetrying} sx={{ whiteSpace: "nowrap" }}>
+                        {orgRetrying ? "Retrying" : "Retry"}
+                      </Button>
+                    }
+                  >
+                    The card designs didn&apos;t load, so this card can&apos;t be shown yet.
+                  </Alert>
+                ) : orgWaiting ? (
+                  <Box role="status" sx={{ m: "auto", display: "flex", alignItems: "center", gap: 1, px: 1.5, py: 1, borderRadius: "8px", backgroundColor: "rgba(0,0,0,0.7)", color: "#fff" }}>
+                    <CircularProgress size={14} sx={{ color: "#fff" }} />
+                    <Typography sx={{ fontSize: "0.75rem" }}>Loading the card design</Typography>
+                  </Box>
                 ) : (
                 <TemplateCanvas
                   ref={canvasRef}
+                  backdrop={backdrop}
                   media={media}
                   format={format}
                   handle={`@${meta.handle}`}
@@ -2228,7 +2414,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   onLayoutChange={setLayout}
                   selection={selection}
                   onSelect={select}
-                  textLimits={{ headline: CARD_TEXT_MAX, layer: 300 }}
+                  textLimits={{ headline: CARD_TEXT_MAX, layer: 300, byLayer: { [ORG_BODY_ID]: STORY_TEXT_MAX } }}
                   onContextTarget={(target) => {
                     menuTarget.current = target;
                   }}
@@ -2335,6 +2521,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   <Button size="small" onClick={() => patch({ fit: layout.fit === "cover" ? "contain" : "cover", bgX: 0, bgY: 0 })} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.primary" }}>
                     {layout.fit === "cover" ? "Show all" : "Fill frame"}
                   </Button>
+                  {orgMode && (
+                    <Tooltip title="Remove the photo (Del)">
+                      <IconButton sx={{ ...toolbarIcon, color: "error.main" }} aria-label="Remove photo from the card" onClick={removePhoto}>
+                        <Trash2 size={15} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
                   <Tooltip title={`More options (${editorShortcut("box.menu")})`}>
                     <IconButton sx={toolbarIcon} aria-label="More options for the picture" aria-haspopup="menu" aria-keyshortcuts="Shift+F10" onClick={(e) => openCardMenuFromKeys(e.currentTarget)}>
                       <MoreHorizontal size={15} />
@@ -2342,12 +2535,40 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   </Tooltip>
                 </>
               )}
+              {!selection && orgMode && canEdit && (
+                <>
+                  <Button size="small" onClick={() => addLayer(LAYER_PRESETS[1])} startIcon={<Type size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.primary" }}>
+                    Add text
+                  </Button>
+                  {!layout.photoBox && (
+                    <Button size="small" onClick={addPhoto} startIcon={<ImageIcon size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.primary" }}>
+                      Add photo
+                    </Button>
+                  )}
+                  {toolbarDivider}
+                </>
+              )}
               {!selection && (
                 <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", px: 1 }}>
-                  {bgMode ? `Drawn on ${bgName}. Click the card to change the headline.` : "Click any text to type in it, or the picture to edit it. Drag to move."}
+                  {bgMode ? `Drawn on ${bgName}. Click the card to change the headline.` : orgMode ? "Click any text to type in it. Drag to move, pull a handle to resize." : "Click any text to type in it, or the picture to edit it. Drag to move."}
                 </Typography>
               )}
             </Box>
+
+            {orgMode && !orgImage.image && (
+              <Box role={orgImage.error ? "alert" : "status"} sx={{ ...floatingSx, position: "absolute", left: 12, bottom: 12, display: "flex", alignItems: "center", gap: 1, px: 1.25, height: 36, borderRadius: "8px", fontSize: "0.75rem" }}>
+                {orgImage.error ? (
+                  <>
+                    {orgImage.error}
+                    <Button size="small" onClick={orgImage.retry} sx={{ minHeight: 28, fontSize: "0.75rem" }}>Try again</Button>
+                  </>
+                ) : (
+                  <>
+                    <CircularProgress size={13} /> Loading {orgTpl.label}
+                  </>
+                )}
+              </Box>
+            )}
 
             {/* View zoom */}
             <Box sx={{ ...floatingSx, position: "absolute", right: 12, bottom: 12, display: "flex", alignItems: "center", px: 0.5, height: 36, borderRadius: "8px" }}>
@@ -2386,7 +2607,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               </Tooltip>
             </Box>
           </Box>
-            {isVideo && !phase1 && duration > 0 && segments.length > 0 && (
+            {isVideo && !phase1 && !orgMode && duration > 0 && segments.length > 0 && (
               <VideoTimeline
                 media={media}
                 duration={duration}
@@ -2489,7 +2710,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 <Typography sx={{ ...sectionLabel, mb: 0.5 }}>Card that will be posted</Typography>
                 <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
                   <Typography sx={{ fontSize: "0.8125rem" }}>
-                    {serverView ? "A card made elsewhere" : bgMode ? (activeOrg ? `${activeOrg.label} card` : "Your X background card") : ownCard ? "Your design from this editor" : phase1 ? "The card on the left" : "The automatic card"}
+                    {serverView ? "A card made elsewhere" : bgMode ? "Your X background card" : orgMode ? `${orgTpl.label} card, ${frame.w} × ${frame.h}` : ownCard ? "Your design from this editor" : phase1 ? "The card on the left" : "The automatic card"}
                     {(busy === "card" || (bgMode && bg.status === "drawing")) && <CircularProgress size={12} sx={{ ml: 1, verticalAlign: "middle" }} aria-label="Working" />}
                   </Typography>
                   {ownCard && canEdit && (
@@ -2502,7 +2723,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   {serverView
                     ? `Another operator or browser put this card on the draft. It posts as it is until you change the design or use ${activeTemplate ? bgName : "your X background"}.`
                     : bgMode
-                    ? `${activeTemplate?.layout.date ? "Today's date, the headline" : "The headline"} and the whole story on ${activeOrg ? bgName : "your background"}${bg.card ? `, ${bg.card.width} × ${bg.card.height} at ${bg.card.fontPx} px` : ""}.`
+                    ? `${activeTemplate?.layout.date ? "Today's date, the headline" : "The headline"} and the whole story on your background${bg.card ? `, ${bg.card.width} × ${bg.card.height} at ${bg.card.fontPx} px` : ""}.`
+                    : orgMode
+                      ? "The card on the left, exactly as you see it, at the template's own size. Click any text to type in it; drag to move, handles to resize."
                     : ownCard
                       ? "The frame on the left, exactly as you see it."
                       : phase1
@@ -2514,8 +2737,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                     The story is too long for the box even at the smallest size, so its end is cut. Shorten the headline, or design the card here.
                   </Alert>
                 )}
-                {!bgMode && !serverView && activeTemplate && canEdit && (
-                  <Button size="small" onClick={() => setCardSource("background")} disabled={!!busy} startIcon={<ImageIcon size={13} />} sx={{ mt: 0.5, minHeight: 30, px: 0.5, fontSize: "0.75rem" }}>
+                {!bgMode && !serverView && (orgTemplates.length ? cardTemplate : activeTemplate) && canEdit && (
+                  <Button size="small" onClick={useOwnBackground} disabled={!!busy} startIcon={<ImageIcon size={13} />} sx={{ mt: 0.5, minHeight: 30, px: 0.5, fontSize: "0.75rem" }}>
                     {useBgLabel}
                   </Button>
                 )}
@@ -2581,7 +2804,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 /* eslint-disable-next-line @next/next/no-img-element */
                 <img src={bg.card.url} alt={`Card on ${bgName}`} style={{ display: "block", width: `min(100%, calc(58vh * ${bgFrame.w} / ${bgFrame.h}))` }} />
               )}
-              {previewOpen && !bgMode && <TemplateCanvas media={media} format={format} handle={`@${meta.handle}`} tag={item.tag} layout={layout} style={{ width: `min(100%, calc(58vh * ${frame.w} / ${frame.h}))` }} />}
+              {previewOpen && !bgMode && <TemplateCanvas backdrop={backdrop} media={media} format={format} handle={`@${meta.handle}`} tag={item.tag} layout={layout} style={{ width: `min(100%, calc(58vh * ${frame.w} / ${frame.h}))` }} />}
             </PostMock>
           </Box>
         </Box>

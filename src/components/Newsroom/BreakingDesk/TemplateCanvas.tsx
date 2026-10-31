@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { BreakingTag, CardLayout, ClipSegment, FtpMedia } from "@/types/newsroom";
 import { CHANNEL } from "@/constants";
-import { CardRects, FrameTime, MIN_BOX, Rect, TEMPLATE_FORMATS, TemplateFormat, TextGeometry, drawCard, fittedSize, fontsFor, mediaRectFor, resolveHeadlineStyle, resolveLayerStyle } from "./cardRender";
+import { CardBackdrop, CardRects, FrameTime, MIN_BOX, Rect, TemplateFormat, TextGeometry, cardSize, drawCard, fittedSize, fontsFor, mediaRectFor, resolveHeadlineStyle, resolveLayerStyle } from "./cardRender";
 import { BoxHandle, FrameBox, ResizeFrame, resizeBox, useBoxGesture } from "./ResizeFrame";
 import { NUDGE, eventKey, isMac } from "./editorKeys";
 import { fontById, nearestWeight } from "./templateFonts";
@@ -58,7 +58,7 @@ interface TemplateCanvasProps {
   selection?: CanvasSelection;
   onSelect?: (selection: CanvasSelection) => void;
   /** Longest text the headline and a text box take while typed in on the card */
-  textLimits?: { headline: number; layer: number };
+  textLimits?: { headline: number; layer: number; /** Longer limits for some boxes by id (a desk template's story) */ byLayer?: Record<string, number> };
   /** Right-click: what is under the pointer (the editor opens its menu from the stage around the card) */
   onContextTarget?: (target: Exclude<CanvasSelection, null>) => void;
   /** Draws at a fraction of full size; for thumbnails */
@@ -70,13 +70,20 @@ interface TemplateCanvasProps {
   onTime?: (seconds: number) => void;
   /** Video only: plays the sound in the editor. Saved clips carry the sound either way. */
   sound?: boolean;
+  /**
+   * A desk template's picture: the card takes its size and is drawn on it. The story's photo then shows
+   * only in `layout.photoBox`, as a still, and the picture outside the photo can't be selected.
+   * Pass the same object while nothing changes, or every render repaints the card.
+   */
+  backdrop?: CardBackdrop | null;
   ref?: React.Ref<TemplateCanvasHandle>;
   style?: React.CSSProperties;
 }
 
 const SELECT_BLUE = "#2F7BFF";
 
-type Drag = { target: Exclude<CanvasSelection, null>; x: number; y: number; layout: TemplateLayout; dx: number; dy: number; box: Rect | null; clientX: number; clientY: number; moved: boolean; typeOnClick: boolean };
+/** `pan`: the press drags the picture inside the photo frame (always off a desk template, Alt on one) */
+type Drag = { target: Exclude<CanvasSelection, null>; x: number; y: number; layout: TemplateLayout; dx: number; dy: number; box: Rect | null; clientX: number; clientY: number; moved: boolean; typeOnClick: boolean; pan: boolean };
 
 /** Where the caret goes when typing starts: under the pointer, on every word, or at the end */
 type Caret = { x: number; y: number } | "all" | "end";
@@ -126,14 +133,17 @@ function offsetAtPoint(area: HTMLTextAreaElement, x: number, y: number): number 
 /** How close, in canvas px at 1080, a dragged box's centre snaps to the frame's centre lines */
 const SNAP = 14;
 
-export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHandle}`, tag, layout, onLayoutChange, selection, onSelect, textLimits, onContextTarget, renderScale = 1, paused, segments, onDuration, onTime, sound = false, ref, style }: TemplateCanvasProps) {
+export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHandle}`, tag, layout, onLayoutChange, selection, onSelect, textLimits, onContextTarget, renderScale = 1, paused, segments, onDuration, onTime, sound = false, backdrop = null, ref, style }: TemplateCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const startGesture = useBoxGesture();
   const sourceRef = useRef<Source | null>(null);
   const rectsRef = useRef<CardRects>({ headline: null, headlineArea: null, layers: {} });
   const dragRef = useRef<Drag | null>(null);
-  const stateRef = useRef({ format, tag, layout, handle, renderScale });
+  const stateRef = useRef({ format, tag, layout, handle, renderScale, backdrop });
+  // On a desk template the photo is a still in its own frame, and only loaded once it has one
+  const still = !!backdrop;
+  const wantMedia = !backdrop || !!layout.photoBox;
   const playbackRef = useRef({ segments, onDuration, onTime, recording: false, lastReport: 0 });
   // Sound for saved clips goes through Web Audio, built the first time a clip is saved
   const audioRef = useRef<{ ctx: AudioContext; el: HTMLVideoElement; source: MediaElementAudioSourceNode; gain: GainNode; monitor: GainNode; out: MediaStreamAudioDestinationNode } | null>(null);
@@ -157,7 +167,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   const paint = useCallback((exporting = false) => {
     const ctx = canvasRef.current?.getContext("2d");
     if (!ctx) return;
-    const { format: f, tag: t, layout: l, handle: h, renderScale: scale } = stateRef.current;
+    const { format: f, tag: t, layout: l, handle: h, renderScale: scale, backdrop: bd } = stateRef.current;
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
     // Video frames carry the playhead, so text timing, animations and fades play
     const source = sourceRef.current;
@@ -166,10 +176,10 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
       const ranges = playbackRef.current.segments;
       frame = { time: source.currentTime, from: ranges?.[0]?.start ?? 0, to: ranges?.[ranges.length - 1]?.end ?? source.duration };
     }
-    const rects = drawCard(ctx, f, source, l, t, h, frame, exporting ? null : typingRef.current);
+    const rects = drawCard(ctx, f, source, l, t, h, frame, exporting ? null : typingRef.current, bd);
     if (exporting) return;
     rectsRef.current = rects;
-    const { w: W, h: H } = TEMPLATE_FORMATS[f];
+    const { w: W, h: H } = cardSize(f, bd);
     const pct = (r: Rect) => ({ x: (r.x / W) * 100, y: (r.y / H) * 100, w: (r.w / W) * 100, h: (r.h / H) * 100 });
     const next: Record<string, Rect> = {};
     if (rects.headline) next.headline = pct(rects.headline);
@@ -183,10 +193,10 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   }, []);
 
   useEffect(() => {
-    stateRef.current = { format, tag, layout, handle, renderScale };
+    stateRef.current = { format, tag, layout, handle, renderScale, backdrop };
     typingRef.current = typingIn;
     paint();
-  }, [format, tag, layout, handle, renderScale, typingIn, paint]);
+  }, [format, tag, layout, handle, renderScale, backdrop, typingIn, paint]);
 
   // Once the words' place is known, the box over them takes focus with the caret where it was asked for
   useLayoutEffect(() => {
@@ -266,7 +276,26 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     sourceRef.current = null;
     paint();
 
-    if (media.kind === "video") {
+    if (!wantMedia) {
+      // A desk template without a photo frame: nothing to load (a video would repaint the card every frame)
+    } else if (still && media.kind === "video" && media.posterUrl) {
+      loadImage(media.posterUrl);
+    } else if (still && media.kind === "video") {
+      // No poster: the first frame, held still
+      video = document.createElement("video");
+      video.crossOrigin = "anonymous";
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "auto";
+      const el = video;
+      el.onloadeddata = () => {
+        if (cancelled) return;
+        sourceRef.current = el;
+        paint();
+      };
+      el.addEventListener("seeked", () => !cancelled && paint());
+      el.src = media.url;
+    } else if (media.kind === "video") {
       if (media.posterUrl) loadImage(media.posterUrl);
       video = document.createElement("video");
       video.crossOrigin = "anonymous";
@@ -352,14 +381,14 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     };
     // `paused` is handled by the effect below so toggling it does not reload the media
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [media.url, media.kind, media.posterUrl, paint, applySound]);
+  }, [media.url, media.kind, media.posterUrl, paint, applySound, still, wantMedia]);
 
   useEffect(() => {
     const source = sourceRef.current;
-    if (!(source instanceof HTMLVideoElement)) return;
+    if (!(source instanceof HTMLVideoElement) || still) return;
     if (paused) source.pause();
     else source.play().catch(() => undefined);
-  }, [paused]);
+  }, [paused, still]);
 
   // Exports run on a frame with all the text in it; typing hides its words on screen, so paint once without
   // that, read the canvas, then paint the typing view back
@@ -550,8 +579,10 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     editText: (target, caret = "all") => startTyping(target, caret),
   }));
 
-  const size = TEMPLATE_FORMATS[format];
+  const size = cardSize(format, backdrop);
   const u = Math.min(size.w, size.h) / 1080;
+  /** The photo's frame on a desk template, in canvas px; null when it has none */
+  const photoRect = backdrop ? mediaRectFor(layout, format, backdrop) : null;
 
   const toCanvas = (e: React.PointerEvent | React.MouseEvent) => {
     const bounds = e.currentTarget.getBoundingClientRect();
@@ -559,6 +590,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   };
 
   const rectOf = (target: CanvasSelection): Rect | null => {
+    if (target === "background") return photoRect;
     if (target === "headline") return rectsRef.current.headline;
     if (target?.startsWith("layer:")) return rectsRef.current.layers[target.slice(6)] ?? null;
     return null;
@@ -566,12 +598,14 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
 
   const inside = (p: { x: number; y: number }, r: Rect | null) => !!r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
 
-  /** Topmost thing under the pointer: text boxes, then the headline, then the media */
-  const hitTest = (p: { x: number; y: number }): Exclude<CanvasSelection, null> => {
+  /** Topmost thing under the pointer: text boxes, then the headline, then the media (on a desk template, only inside the photo frame) */
+  const hitTest = (p: { x: number; y: number }): CanvasSelection => {
     const ids = (layout.layers ?? []).map((l) => l.id).reverse();
     const layerId = ids.find((id) => inside(p, rectsRef.current.layers[id]));
     if (layerId) return `layer:${layerId}`;
-    return inside(p, rectsRef.current.headline) ? "headline" : "background";
+    if (inside(p, rectsRef.current.headline)) return "headline";
+    if (backdrop) return inside(p, photoRect) ? "background" : null;
+    return "background";
   };
 
   const patchLayer = (base: TemplateLayout, id: string, changes: Partial<NonNullable<TemplateLayout["layers"]>[number]>) => ({
@@ -583,19 +617,24 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     if (!editable) return;
     const p = toCanvas(e);
     const target = hitTest(p);
-    const r = rectOf(target);
     onSelect?.(target);
+    // The template's own picture: nothing to pick or drag
+    if (!target) return;
+    const r = rectOf(target);
     // Right and middle buttons select what is under the pointer but never drag it
     // (Ctrl+click on a Mac is a right-click too)
     if (e.pointerType === "mouse" && (e.button !== 0 || (e.ctrlKey && isMac()))) return;
     // A plain click on text (no drag) types in it right there, caret under the pointer
     const typeOnClick = target !== "background" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
-    dragRef.current = { target, x: p.x, y: p.y, layout, dx: r ? p.x - (r.x + r.w / 2) : 0, dy: r ? p.y - (r.y + r.h / 2) : 0, box: r ? { ...r } : null, clientX: e.clientX, clientY: e.clientY, moved: false, typeOnClick };
+    const pan = target === "background" && (!backdrop || e.altKey);
+    dragRef.current = { target, x: p.x, y: p.y, layout, dx: r ? p.x - (r.x + r.w / 2) : 0, dy: r ? p.y - (r.y + r.h / 2) : 0, box: r ? { ...r } : null, clientX: e.clientX, clientY: e.clientY, moved: false, typeOnClick, pan };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
   /** Writes a hand-sized box back: from now on it keeps this size and its text shrinks to fit. */
-  const applyBox = (base: TemplateLayout, target: Exclude<CanvasSelection, "background" | null>, box: FrameBox): TemplateLayout => {
+  const applyBox = (base: TemplateLayout, target: Exclude<CanvasSelection, null>, box: FrameBox): TemplateLayout => {
+    // The photo's frame on a desk template
+    if (target === "background") return { ...base, photoBox: { x: box.x / size.w, y: box.y / size.h, w: box.w / size.w, h: box.h / size.h } };
     const centre = { x: (box.x + box.w / 2) / size.w, y: (box.y + box.h / 2) / size.h };
     if (target === "headline") {
       const areaW = rectsRef.current.headlineArea?.width || size.w;
@@ -607,7 +646,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   /** One of the eight handles on the selected box: top and bottom change the height, the sides the width, corners both. */
   const onHandleDown = (handle: BoxHandle, e: React.PointerEvent<HTMLSpanElement>) => {
     const frame = frameRef.current;
-    if (!editable || !onLayoutChange || !frame || !selection || selection === "background") return;
+    if (!editable || !onLayoutChange || !frame || !selection || (selection === "background" && !photoRect)) return;
     const target = selection;
     // The box as drawn now; an older design without a height starts from the height its text takes
     const start = rectOf(target);
@@ -632,6 +671,13 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     }
     const p = toCanvas(e);
     const base = drag.layout;
+
+    // The photo's frame on a desk template moves like a text box
+    if (drag.target === "background" && !drag.pan) {
+      if (!drag.box) return;
+      onLayoutChange(applyBox(base, "background", resizeBox(drag.box, "move", p.x - drag.x, p.y - drag.y, { W: size.w, H: size.h, minW: 0, minH: 0 })));
+      return;
+    }
 
     if (drag.target !== "background") {
       // Move by the box centre, snapping to the frame's centre lines
@@ -658,8 +704,8 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
       return;
     }
 
-    const m = mediaRectFor(base, format);
-    const fitted = sourceRef.current && fittedSize(sourceRef.current, m.w, m.h, base.bgZoom, base.fit);
+    const m = mediaRectFor(base, format, backdrop);
+    const fitted = m && sourceRef.current && fittedSize(sourceRef.current, m.w, m.h, base.bgZoom, base.fit);
     if (!fitted) return;
     const slackX = Math.abs(fitted.dw - m.w);
     const slackY = Math.abs(fitted.dh - m.h);
@@ -677,7 +723,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
    */
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (!editable || !onLayoutChange || !e.altKey || !e.key.startsWith("Arrow")) return;
-    if (!selection || selection === "background") return;
+    if (!selection || (selection === "background" && !photoRect)) return;
     const start = rectOf(selection);
     if (!start) return;
     e.preventDefault();
@@ -700,7 +746,8 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   /** The text being typed in, as stored, and how to write it back */
   const typedLayer = typingIn?.startsWith("layer:") ? layout.layers?.find((l) => l.id === typingIn.slice(6)) : undefined;
   const typedValue = typingIn === "headline" ? layout.headline : (typedLayer?.text ?? "");
-  const typedLimit = typingIn === "headline" ? (textLimits?.headline ?? 500) : (textLimits?.layer ?? 300);
+  // Never shorter than the words already there, so typing never cuts a longer text short
+  const typedLimit = Math.max(typedValue.length, typingIn === "headline" ? (textLimits?.headline ?? 500) : (textLimits?.byLayer?.[typingIn?.slice(6) ?? ""] ?? textLimits?.layer ?? 300));
   const writeTyped = (value: string) => {
     if (!onLayoutChange || !typingIn) return;
     const text = value.slice(0, typedLimit);
@@ -770,7 +817,8 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   };
   const typeCss = typeStyle();
 
-  const selectedBox = selection && selection !== "background" ? boxes[selection] : undefined;
+  const photoPct = photoRect ? { x: (photoRect.x / size.w) * 100, y: (photoRect.y / size.h) * 100, w: (photoRect.w / size.w) * 100, h: (photoRect.h / size.h) * 100 } : undefined;
+  const selectedBox = selection === "background" ? photoPct : selection ? boxes[selection] : undefined;
 
   return (
     <div
@@ -788,13 +836,14 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
         // Tell the editor what is under the pointer; its menu opens from the stage around the card
         const target = hitTest(toCanvas(e));
         onSelect?.(target);
-        onContextTarget(target);
+        // The template's own picture: the stage's menu
+        if (target) onContextTarget(target);
       }}
       onDoubleClick={(e) => {
         // The first click of the two has already started typing; this only catches a click that did not
         if (!editable || typingIn) return;
         const target = hitTest(toCanvas(e));
-        if (target !== "background") startTyping(target, { x: e.clientX, y: e.clientY });
+        if (target && target !== "background") startTyping(target, { x: e.clientX, y: e.clientY });
       }}
       style={{
         position: "relative",
@@ -818,7 +867,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
         aria-label={`Template: ${layout.headline}`}
         style={{ display: "block", width: "100%", height: "100%" }}
       />
-      {editable && selection === "background" && (
+      {editable && selection === "background" && !backdrop && (
         <div style={{ position: "absolute", inset: 0, outline: `2px solid ${SELECT_BLUE}`, outlineOffset: -2, pointerEvents: "none" }} />
       )}
       {typingIn && typeCss && (
