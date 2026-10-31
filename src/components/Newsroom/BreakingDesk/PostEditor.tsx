@@ -606,8 +606,15 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     if (next === "background") setTool("background");
   };
 
+  /** Types in the text right on the card (every word selected); the Text panel only shows its style, it never takes the focus */
   const editText = (target: CanvasSelection = "headline") => {
     select(target);
+    const canvas = canvasRef.current;
+    if (canvas && (target === "headline" || target?.startsWith("layer:"))) {
+      canvas.editText(target as Exclude<CanvasSelection, "background" | null>, "all");
+      return;
+    }
+    // No card drawn here (your X background): the panel's box is where the words are typed
     setTimeout(() => {
       headlineInputRef.current?.focus();
       headlineInputRef.current?.select();
@@ -1327,7 +1334,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       if (!layer) return menuFor("stage");
       const width = LAYER_PRESETS.find((p) => p.size === layer.size)?.width ?? 0.7;
       return [
-        { label: "Edit text", icon: <Pencil size={14} />, hint: "Double-click", onSelect: () => editText(`layer:${id}`) },
+        { label: "Edit text", icon: <Pencil size={14} />, hint: "Click", onSelect: () => editText(`layer:${id}`) },
         { kind: "divider" },
         { label: "Bring forward", icon: <ArrowUpToLine size={14} />, disabled: index >= layers.length - 1, onSelect: () => restack(id, 1) },
         { label: "Send backward", icon: <ArrowDownToLine size={14} />, disabled: index <= 0, onSelect: () => restack(id, -1) },
@@ -1351,7 +1358,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const home = templatePatch(templateById(layout.template), format).textY ?? DEFAULT_TEXT_Y[format];
       const sizedByHand = layout.textHeight !== undefined || layout.textWidth !== undefined;
       return [
-        { label: "Edit text", icon: <Pencil size={14} />, hint: "Double-click", onSelect: () => editText("headline") },
+        { label: "Edit text", icon: <Pencil size={14} />, hint: "Click", onSelect: () => editText("headline") },
         { kind: "divider" },
         { label: "Reset position", icon: <Move size={14} />, disabled: layout.textY === home && layout.textX === undefined, onSelect: () => patch({ textY: home, textX: undefined }) },
         { label: "Reset size", icon: <Scaling size={14} />, disabled: !sizedByHand, onSelect: () => patch({ textWidth: undefined, textHeight: undefined, textX: undefined }) },
@@ -2130,7 +2137,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   onLayoutChange={setLayout}
                   selection={selection}
                   onSelect={select}
-                  onEditText={editText}
+                  textLimits={{ headline: CARD_TEXT_MAX, layer: 300 }}
                   onContextTarget={(target) => {
                     menuTarget.current = target;
                   }}
@@ -2246,7 +2253,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               )}
               {!selection && (
                 <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", px: 1 }}>
-                  {bgMode ? "Drawn on your X background. Change the headline in Text." : "Click any text or the picture to edit it. Double-click text to type."}
+                  {bgMode ? "Drawn on your X background. Change the headline in Text." : "Click any text to type in it, or the picture to edit it. Drag to move."}
                 </Typography>
               )}
             </Box>

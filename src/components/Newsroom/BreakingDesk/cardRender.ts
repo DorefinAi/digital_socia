@@ -185,6 +185,23 @@ export interface TextBlockSpec {
   decorate?: (ctx: CanvasRenderingContext2D, rect: Rect) => void;
   /** Mid-animation state on a video frame; absent draws the text at rest */
   motion?: MotionState;
+  /** The words are being typed in place over the card: lay them out and draw the box, but not the words */
+  hideWords?: boolean;
+  /** Receives where the words were laid out, for an editor placed over them */
+  onLayout?: (geometry: TextGeometry) => void;
+}
+
+/** Where a block's words sit, in canvas px: the column they wrap in, the first line's top and the fitted size. */
+export interface TextGeometry {
+  x: number;
+  width: number;
+  top: number;
+  height: number;
+  size: number;
+  lineHeight: number;
+  /** The block's centre, which rotation turns around */
+  cx: number;
+  cy: number;
 }
 
 function setLetterSpacing(ctx: CanvasRenderingContext2D, px: number) {
@@ -201,7 +218,8 @@ function roundedRect(ctx: CanvasRenderingContext2D, r: Rect, radius: number) {
 export function drawTextBlock(ctx: CanvasRenderingContext2D, spec: TextBlockSpec): Rect | null {
   const { style: s, u, inset } = spec;
   const paragraphs = parseRich(s.uppercase ? spec.text.toUpperCase() : spec.text);
-  if (!paragraphs.some((p) => p.length)) return null;
+  // An emptied block being typed in keeps its place so the editor over it stays put
+  if (!paragraphs.some((p) => p.length) && !spec.hideWords) return null;
 
   const innerW = Math.max(10 * u, spec.width - inset.l - inset.r);
   let size = spec.size;
@@ -233,6 +251,7 @@ export function drawTextBlock(ctx: CanvasRenderingContext2D, spec: TextBlockSpec
   const blockY = spec.fixed ? spec.minY : Math.max(spec.minY, Math.min(spec.maxY - blockH, spec.centerY - blockH / 2));
   const textTop = blockY + (blockH - textH) / 2;
   const rect = { x: blockX, y: blockY, w: blockW, h: blockH };
+  spec.onLayout?.({ x: spec.x + inset.l, width: innerW, top: textTop + inset.t, height: Math.max(1, lines.length) * lineH, size, lineHeight: lineH, cx: blockX + blockW / 2, cy: blockY + blockH / 2 });
 
   const motion = spec.motion;
   ctx.save();
@@ -276,7 +295,7 @@ export function drawTextBlock(ctx: CanvasRenderingContext2D, spec: TextBlockSpec
     ctx.shadowOffsetY = 0;
   };
 
-  lines.forEach((line, i) => {
+  if (!spec.hideWords) lines.forEach((line, i) => {
     const y = textTop + inset.t + lineH * (i + 0.5);
     const startX = blockX + inset.l + (s.align === "center" ? (innerBlockW - line.w) / 2 : s.align === "right" ? innerBlockW - line.w : 0);
     let x = startX;
@@ -765,11 +784,16 @@ export interface CardRects {
   /** The headline's column, for resizing */
   headlineArea: { x: number; width: number } | null;
   layers: Record<string, Rect>;
+  /** Where the words of the block named in drawCard's `editing` were laid out */
+  editing?: TextGeometry;
 }
 
 /** Paints the whole card: media, template furniture, headline, then the extra text boxes. */
-export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, source: Source | null, layout: CardLayout, tag: BreakingTag, handle: string, frame?: FrameTime): CardRects {
+export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, source: Source | null, layout: CardLayout, tag: BreakingTag, handle: string, frame?: FrameTime, editing?: string | null): CardRects {
   const { w: W, h: H } = TEMPLATE_FORMATS[format];
+  // The block being typed in on the card is laid out at rest with its words left to the editor over it
+  let editingGeometry: TextGeometry | undefined;
+  const typedIn = (key: string) => (editing === key ? { hideWords: true, onLayout: (g: TextGeometry) => (editingGeometry = g) } : {});
   const u = Math.min(W, H) / 1080;
   const pad = 56 * u;
   const template = templateById(layout.template);
@@ -841,7 +865,7 @@ export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, 
   const x = Math.max(margin, Math.min(W - margin - width, centreX - width / 2));
   const boxH = fixed ? Math.min(H, Math.max(MIN_BOX.h * u, (layout.textHeight ?? 0) * H)) : 0;
   const boxTop = fixed ? Math.max(0, Math.min(H - boxH, layout.textY * H - boxH / 2)) : 0;
-  const headlineMotion = motionAt(layout.headlineMotion, frame);
+  const headlineMotion = editing === "headline" ? undefined : motionAt(layout.headlineMotion, frame);
   const headlineRect = headlineMotion === null ? null : drawTextBlock(ctx, {
     motion: headlineMotion,
     text: layout.headline,
@@ -857,13 +881,14 @@ export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, 
     inset: area.inset,
     u,
     decorate: area.decorate,
+    ...typedIn("headline"),
   });
 
   const layers: Record<string, Rect> = {};
   for (const layer of layout.layers ?? []) {
     // A hidden box is not drawn, has no rect and so can't be picked on the canvas
     if (layer.hidden) continue;
-    const motion = motionAt(layer.motion, frame);
+    const motion = editing === `layer:${layer.id}` ? undefined : motionAt(layer.motion, frame);
     if (motion === null) continue;
     const style = resolveLayerStyle(layer);
     const size = layer.size * u;
@@ -886,6 +911,7 @@ export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, 
       ...(h ? { fixed: true, minSize: Math.min(size, 8 * u) } : {}),
       u,
       motion,
+      ...typedIn(`layer:${layer.id}`),
     });
     if (rect) layers[layer.id] = rect;
   }
@@ -896,5 +922,5 @@ export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, 
     ctx.fillRect(0, 0, W, H);
   }
 
-  return { headline: headlineRect, headlineArea: { x, width: area.width }, layers };
+  return { headline: headlineRect, headlineArea: { x, width: area.width }, layers, editing: editingGeometry };
 }
