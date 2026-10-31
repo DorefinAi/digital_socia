@@ -4,7 +4,7 @@
 // date. Redraws a moment after the words stop changing; the last good drawing stays on screen meanwhile.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { UserCardTemplate } from "@/lib/socia/types";
+import type { DrawableCardTemplate } from "@/lib/socia/types";
 import { apiFileUrl } from "./LiveDesk";
 import { type DrawnCard, drawBackgroundCard, istDate } from "./backgroundCard";
 
@@ -58,14 +58,18 @@ export function keyHash(key: string): string {
 }
 
 /** `scope` names what the drawing is for (the draft id) and is part of its key. */
-export function useBackgroundCard(template: UserCardTemplate | null | undefined, headline: string, body: string, maxBytes: number, scope = ""): BackgroundCard {
-  const key = template ? JSON.stringify([scope, template.backgroundUrl, template.updatedAt, template.layout, istDate(template.layout.date.format), headline, body]) : "";
+export function useBackgroundCard(template: DrawableCardTemplate | null | undefined, headline: string, body: string, maxBytes: number, scope = ""): BackgroundCard {
+  const key = template ? JSON.stringify([scope, template.backgroundUrl, template.updatedAt, template.layout, template.layout.date ? istDate(template.layout.date.format) : null, headline, body]) : "";
   const [result, setResult] = useState<Result | null>(null);
   const pending = useRef<Deferred | null>(null);
   const shownUrl = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!template) return;
+    if (!template) {
+      // No background any more: nothing is being drawn, so nobody waits on the last drawing
+      pending.current = null;
+      return;
+    }
     let cancelled = false;
     let settle: { resolve: (v: { key: string; card: DrawnCard }) => void; reject: (e: Error) => void } | null = null;
     const promise = new Promise<{ key: string; card: DrawnCard }>((resolve, reject) => {
@@ -112,7 +116,10 @@ export function useBackgroundCard(template: UserCardTemplate | null | undefined,
     // A redraw replaced by a newer one rejects; follow the newest until it settles
     for (let i = 0; i < 5; i++) {
       const current = pending.current;
-      if (!current) break;
+      if (!current) {
+        if (i === 0) throw new Error("There's no X background to draw the card on.");
+        break;
+      }
       try {
         const done = await current.promise;
         if (scope !== undefined && keyScope(done.key) !== scope) throw new Error("This card was drawn for another story. Try again.");

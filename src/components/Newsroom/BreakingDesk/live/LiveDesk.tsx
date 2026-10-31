@@ -34,6 +34,7 @@ import type {
   QueueResponse,
   RejectReasonCode,
   UserCardTemplate,
+  OrgCardTemplate,
 } from "@/lib/socia/types";
 import type { FtpMedia, FtpNewsItem, SocialPost } from "@/types/newsroom";
 
@@ -212,6 +213,8 @@ interface LiveDeskValue {
   counts: Polled<Counts>;
   /** The signed-in user's X card background; `data.template` is null until they upload one */
   cardTemplate: Polled<{ template: UserCardTemplate | null }>;
+  /** The desk's shared X card designs; [] on a server without them (the editor then works as before) */
+  orgCardTemplates: Polled<OrgCardTemplate[]>;
   /** The inbox, in the desk's story shape */
   queue: LiveNewsItem[];
   /** Phase 1 (set on the server): ready posts from the breaking files, Copy & Posted, no X API posting */
@@ -319,6 +322,7 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
     "card-template",
     phaseKnown,
   );
+  const orgCardTemplates = usePolled(() => socia.fetchOrgCardTemplates("x"), POLL_MS.cardTemplate, "org-card-templates", phaseKnown);
 
   const queue = useMemo(
     () => (inbox.data?.items ?? []).map(stableQueueToNews),
@@ -548,6 +552,7 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
       posts,
       counts,
       cardTemplate,
+      orgCardTemplates,
       queue,
       phase1,
       phaseKnown,
@@ -576,6 +581,7 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
       posts,
       counts,
       cardTemplate,
+      orgCardTemplates,
       queue,
       phase1,
       phaseKnown,

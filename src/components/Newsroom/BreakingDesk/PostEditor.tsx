@@ -65,7 +65,7 @@ import TemplateCanvas, {
 import { PLATFORM_LIMITS, TagSuggestion, composePostText, countChars, findUrl, shortenToFit, suggestHashtags, suggestMentions } from "./socialText";
 import { RejectDialog, ScheduleDialog } from "./actionDialogs";
 import { FoldedPanelStrip, PanelResizeHandle, PanelsConfig, useResizablePanels } from "./ResizablePanels";
-import { CategoryLabel, PLATFORM_META, PlatformIcon, priorityTag, rejectedNotice, srOnly, TAG_TINT, tagTint } from "./shared";
+import { CategoryLabel, PLATFORM_META, PlatformIcon, priorityTag, rejectedNotice, srOnly, storyTag, TAG_TINT, tagTint } from "./shared";
 import { PostMock, TagOption, TagPicker, fieldSx, sectionLabel } from "./composerParts";
 import VideoTimeline, { CLIP_SPEEDS, TimelineText, clock, outputLength } from "./VideoTimeline";
 import TextControls, { ALIGN_ICONS, FontSelect } from "./TextControls";
@@ -75,13 +75,14 @@ import { fontById, nearestWeight } from "./templateFonts";
 import FtpFeedPanel from "./FtpFeedPanel";
 import { DAILY_CAP, isLiveOn } from "@/data/socialDesk";
 import * as socia from "@/lib/socia/api";
-import type { DraftView } from "@/lib/socia/types";
+import type { DraftView, DrawableCardTemplate } from "@/lib/socia/types";
 import type { LiveEditing } from "./live/LiveEditor";
 import { apiFileUrl, credentialsFor, errorCode, errorText, useLiveDesk } from "./live/LiveDesk";
 import { usePhase } from "@/lib/socia/usePhase";
 import { assemblePost } from "./phase1/Phase1Editor";
 import { needsCheckHint, needsCheckLabel, Phase1Badges } from "./phase1/badges";
 import { keyHash, useBackgroundCard } from "./live/useBackgroundCard";
+import OrgTemplatePicker, { type CardChoice } from "./live/OrgTemplatePicker";
 import { PostedLinkDialog } from "./actionDialogs";
 import { NUDGE, editorKeyFor, editorShortcut, isCanvasKeyTarget, isEditorTypingTarget, isTextEntryTarget, swallowNextContextMenu, withEditorShortcut } from "./editorKeys";
 import { ConfirmPostDialog, EditorShortcutsSheet, LeaveEditorDialog } from "./EditorShortcutsSheet";
@@ -231,6 +232,13 @@ function draftStore<T>(prefix: string) {
  */
 const bgStore = draftStore<{ hash: string; cardUrl: string }>("socia_bg_card_");
 
+/** The card design the operator picked for a draft in the Template tab: an org template's slug, or "own" for their X background. */
+const choiceStore = draftStore<{ template: string }>("socia_card_choice_");
+
+/** "Square, 1080 × 1080" for a design's thumbnail */
+const shapeNote = (t: { width: number; height: number }) =>
+  `${t.width === t.height ? "Square" : t.height > t.width ? "Portrait" : "Landscape"}, ${t.width} × ${t.height}`;
+
 /** The card design last sent to the server for a draft, so reopening shows the card that will be posted. */
 const designStore = {
   key: (id: string) => `socia_card_design_${id}`,
@@ -307,6 +315,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         savedDesign: !!saved,
         // A custom card this browser did not send (another operator or browser) stays until the operator chooses
         serverCard: !!d.card.custom && !saved && ownBg?.cardUrl !== d.card.url,
+        // The card design picked for this draft in this browser; null opens on the story's default
+        bgPick: (choiceStore.read(d.id)?.template ?? null) as string | null,
       };
     }
     const draft = socialDrafts.find((d) => d.newsId === story.id && d.platform === platform && (d.status === "saved" || d.status === "scheduled"));
@@ -323,6 +333,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       custom: false,
       savedDesign: false,
       serverCard: false,
+      bgPick: null as string | null,
     };
   };
   const [start, setStart] = useState(() => storyStart(item));
@@ -393,6 +404,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const [uploaded, setUploaded] = useState<{ layout: TemplateLayout; url: string } | null>(null);
   // Where the posted card comes from: the operator's X background or this editor's design. null follows the default.
   const [cardSource, setCardSource] = useState<"background" | "design" | null>(null);
+  const [bgPick, setBgPick] = useState<string | null>(start.bgPick);
   // The background card last uploaded as this draft's card, by draft and drawing
   const [bgUploaded, setBgUploaded] = useState<{ id: string; key: string } | null>(null);
   // ── Keyboard and right-click ──
@@ -439,6 +451,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     setLinkOpen(false);
     setUploaded(null);
     setCardSource(null);
+    setBgPick(next.bgPick);
     setBgUploaded(null);
     setBusy(null);
     setLeaving(false);
@@ -479,14 +492,57 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // The card on the draft was made elsewhere: it is shown and kept until the operator edits here or picks a source
   const cardTouched = layout !== start.layout || mediaIndex !== start.mediaIndex || uploads.length > 0;
   const serverView = !!live?.draft.card.custom && !!live.draft.card.url && start.serverCard && cardSource === null && !cardTouched;
-  const bgMode = !!cardTemplate && !serverView && (cardSource ?? (start.savedDesign || start.serverCard ? "design" : "background")) === "background";
-  const bg = useBackgroundCard(bgMode ? cardTemplate : null, plainCardText(layout.headline) || item.headline, item.body, CARD_MAX_BYTES, live?.draft.id ?? item.id);
+  // The desk's shared designs (org-card-templates-contract.md) come first: BIG stories open on the one made
+  // for big_breaking, others on the one for breaking. None from the server: the X background as before.
+  const orgTemplates = (live && isX ? desk?.orgCardTemplates.data : null) ?? [];
+  // Phase 1 breaking files: BIG in the file name is Big Breaking, every other one Breaking (as shared.storyTag)
+  const liveStory = live?.draft.story;
+  const tagNow = liveStory ? (liveStory.tags ? (liveStory.tags.big ? "big_breaking" : "breaking") : priorityTag(liveStory.priority)) : storyTag(item);
+  const orgDefault = orgTemplates.find((t) => !!tagNow && t.defaultFor.includes(tagNow)) ?? orgTemplates[0] ?? null;
+  const ownPicked = bgPick === "own" && !!cardTemplate;
+  const activeOrg = ownPicked ? null : (orgTemplates.find((t) => t.slug === bgPick) ?? orgDefault);
+  const activeTemplate: DrawableCardTemplate | null = activeOrg ?? cardTemplate;
+  const activeKey = activeOrg ? activeOrg.slug : activeTemplate ? "own" : null;
+  /** How the card's design is named in sentences */
+  const bgName = activeOrg ? `the ${activeOrg.label} design` : "your X background";
+  const useBgLabel = activeOrg ? `Use ${activeOrg.label}` : "Use your X background";
+  const cardChoices: CardChoice[] = orgTemplates.length
+    ? [
+        ...orgTemplates.map((t) => ({ key: t.slug, label: t.label, note: shapeNote(t), template: t })),
+        ...(cardTemplate ? [{ key: "own", label: "Your X background", note: shapeNote(cardTemplate), template: cardTemplate }] : []),
+      ]
+    : [];
+  const bgMode = !!activeTemplate && !serverView && (cardSource ?? (start.savedDesign || start.serverCard ? "design" : "background")) === "background";
+  /** Template tab thumbnail: draw the open story on that design, and remember it for this draft in this browser. */
+  const pickCardDesign = (key: string) => {
+    setBgPick(key);
+    setCardSource("background");
+    if (live) choiceStore.write(live.draft.id, { template: key });
+  };
+  // A click on the drawn card opens the headline for typing (the drawing itself can't take text)
+  const headlineFieldRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
+  const focusHeadline = useRef(false);
+  const typeOnBgCard = () => {
+    if (!canEdit) return;
+    focusHeadline.current = true;
+    setTool("text");
+    leftPanel.setCollapsed(false);
+  };
+  useEffect(() => {
+    if (!focusHeadline.current || !bgMode || tool !== "text") return;
+    const field = headlineFieldRef.current;
+    if (!field) return;
+    focusHeadline.current = false;
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+  });
+  const bg = useBackgroundCard(bgMode ? activeTemplate : null, plainCardText(layout.headline) || item.headline, item.body, CARD_MAX_BYTES, live?.draft.id ?? item.id);
   // The drawing is on the server already: uploaded in this session, or recorded for this draft and card URL
   const bgRecord = bgMode && live?.draft.card.custom ? bgStore.read(live.draft.id) : null;
   const bgSynced =
     bg.status === "ready" &&
     ((bgUploaded?.id === item.id && bgUploaded.key === bg.key) || (!!bgRecord && bgRecord.cardUrl === live?.draft.card.url && bgRecord.hash === keyHash(bg.key)));
-  const bgFrame = { w: bg.card?.width ?? cardTemplate?.width ?? 1080, h: bg.card?.height ?? cardTemplate?.height ?? 1080 };
+  const bgFrame = { w: bg.card?.width ?? activeTemplate?.width ?? 1080, h: bg.card?.height ?? activeTemplate?.height ?? 1080 };
   const bgFrameWidth = Math.round(bgFrame.w * Math.max(0.05, Math.min(stage.w / bgFrame.w, stage.h / bgFrame.h)) * zoom);
   // Background cards are still images, so a video story posts (and downloads) the card
   const exportsVideo = isVideo && !bgMode && !phase1;
@@ -524,7 +580,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   else if (tooManyTags) blockedReason = "Too many hashtags or mentions selected";
   else if (url) blockedReason = `Remove the link "${url}" first`;
   else if (capReached) blockedReason = `Today's ${meta.short} cap of ${cap} posts is reached`;
-  else if (bgFailed) blockedReason = "The card on your X background didn't draw. Use the automatic card instead";
+  else if (bgFailed) blockedReason = `The card on ${bgName} didn't draw. Use the automatic card instead`;
 
   const patch = (changes: Partial<TemplateLayout>) => setLayout((l) => ({ ...l, ...changes }));
 
@@ -1317,7 +1373,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const menuFor = (target: Exclude<CanvasSelection, null> | "stage"): MenuEntry[] => {
     if (serverView) {
       const entries: MenuEntry[] = [];
-      if (canEdit && cardTemplate) entries.push({ label: "Use your X background", icon: <ImageIcon size={14} />, onSelect: () => setCardSource("background") });
+      if (canEdit && activeTemplate) entries.push({ label: useBgLabel, icon: <ImageIcon size={14} />, onSelect: () => setCardSource("background") });
       if (canEdit) entries.push({ label: "Design the card here", icon: <Pencil size={14} />, onSelect: () => setCardSource("design") });
       return [...entries, ...generalEntries()];
     }
@@ -1884,6 +1940,17 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             )}
 
             {panel === "template" && !bgMode && (
+              <>
+              {cardChoices.length > 0 && (
+              <OrgTemplatePicker
+                choices={cardChoices}
+                current={null}
+                headline={plainCardText(layout.headline) || item.headline}
+                body={item.body}
+                disabled={!canEdit || !!busy}
+                onPick={pickCardDesign}
+              />
+              )}
               <TemplatePicker
                 layout={layout}
                 media={media}
@@ -1893,6 +1960,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 onPick={(t) => patch(templatePatch(t, format))}
                 onAccent={(value) => patch({ accent: value })}
               />
+              </>
             )}
 
             {panel === "text" && !bgMode && (
@@ -2023,7 +2091,18 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
             {bgMode && (panel === "text" || panel === "template" || panel === "background") && (
               <>
-                <Typography sx={panelTitle}>{panel === "text" ? "Card headline" : panel === "template" ? "Template" : "Background"}</Typography>
+                {panel === "template" && cardChoices.length > 0 ? (
+                  <OrgTemplatePicker
+                    choices={cardChoices}
+                    current={activeKey}
+                    headline={plainCardText(layout.headline) || item.headline}
+                    body={item.body}
+                    disabled={!canEdit || !!busy}
+                    onPick={pickCardDesign}
+                  />
+                ) : (
+                  <Typography sx={panelTitle}>{panel === "text" ? "Card headline" : panel === "template" ? "Template" : "Background"}</Typography>
+                )}
                 {panel === "text" ? (
                   <>
                     <TextField
@@ -2031,6 +2110,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                       minRows={3}
                       maxRows={10}
                       slotProps={{ htmlInput: { maxLength: CARD_TEXT_MAX, "aria-label": "Card headline", readOnly: !canEdit } }}
+                      inputRef={headlineFieldRef}
                       helperText="Drawn in yellow above the story. The story under it comes from the FTP."
                       fullWidth
                       size="small"
@@ -2042,9 +2122,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                       Use the FTP headline
                     </Button>
                   </>
-                ) : (
+                ) : panel === "template" && cardChoices.length > 0 ? null : (
                   <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", lineHeight: 1.6 }}>
-                    This card is drawn on your X background from the Templates tab: today&apos;s date, the headline and the whole story.
+                    {activeOrg
+                      ? `This card is drawn on ${bgName}: ${activeOrg.layout.date ? "today's date, " : ""}the headline and the whole story. Pick another design in Template.`
+                      : "This card is drawn on your X background from the Templates tab: today's date, the headline and the whole story."}
                   </Typography>
                 )}
                 <Alert
@@ -2052,7 +2134,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   sx={{ mt: 2, fontSize: "0.75rem", borderRadius: "8px" }}
                   action={canEdit ? <Button color="inherit" size="small" onClick={() => void switchToAutoCard()} disabled={!!busy} sx={{ whiteSpace: "nowrap" }}>Design here</Button> : undefined}
                 >
-                  For a template, a photo or extra text, design the card here instead of using your background.
+                  For a template, a photo or extra text, design the card here instead of using {activeOrg ? "a desk design" : "your background"}.
                 </Alert>
               </>
             )}
@@ -2093,9 +2175,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                       </Typography>
                       {canEdit && (
                         <Box sx={{ display: "flex", gap: 0.5 }}>
-                          {cardTemplate && (
+                          {activeTemplate && (
                             <Button size="small" onClick={() => setCardSource("background")} disabled={!!busy} sx={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>
-                              Use your X background
+                              {useBgLabel}
                             </Button>
                           )}
                           <Button size="small" onClick={() => setCardSource("design")} disabled={!!busy} sx={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>
@@ -2106,17 +2188,21 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                     </Box>
                   </Box>
                 ) : bgMode ? (
-                  <Box sx={{ position: "relative", width: bgFrameWidth, aspectRatio: `${bgFrame.w} / ${bgFrame.h}`, flexShrink: 0, m: "auto", boxShadow: "0 8px 30px rgba(0,0,0,0.22)", backgroundColor: "#111", lineHeight: 0 }}>
+                  <Box
+                    onClick={typeOnBgCard}
+                    title={canEdit ? "Click to change the headline" : undefined}
+                    sx={{ position: "relative", width: bgFrameWidth, aspectRatio: `${bgFrame.w} / ${bgFrame.h}`, flexShrink: 0, m: "auto", boxShadow: "0 8px 30px rgba(0,0,0,0.22)", backgroundColor: "#111", lineHeight: 0, cursor: canEdit ? "text" : "default" }}
+                  >
                     {bg.card && (
                       /* eslint-disable-next-line @next/next/no-img-element */
-                      <img src={bg.card.url} alt={`Card on your X background: ${plainCardText(layout.headline) || item.headline}`} style={{ display: "block", width: "100%", height: "100%" }} />
+                      <img src={bg.card.url} alt={`Card on ${bgName}: ${plainCardText(layout.headline) || item.headline}`} style={{ display: "block", width: "100%", height: "100%" }} />
                     )}
                     {(bg.status === "drawing" || bg.status === "error") && (
                       <Box role={bg.status === "error" ? "alert" : "status"} sx={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", p: 2, backgroundColor: bg.card ? "rgba(0,0,0,0.25)" : "transparent", lineHeight: 1.5 }}>
                         {bg.status === "drawing" ? (
                           <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.25, py: 0.75, borderRadius: "8px", backgroundColor: "rgba(0,0,0,0.7)", color: "#fff" }}>
                             <CircularProgress size={14} sx={{ color: "#fff" }} />
-                            <Typography sx={{ fontSize: "0.75rem" }}>Drawing on your X background</Typography>
+                            <Typography sx={{ fontSize: "0.75rem" }}>Drawing on {bgName}</Typography>
                           </Box>
                         ) : (
                           <Alert severity="error" sx={{ maxWidth: 360, fontSize: "0.8125rem", borderRadius: "8px" }}>
@@ -2253,7 +2339,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               )}
               {!selection && (
                 <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", px: 1 }}>
-                  {bgMode ? "Drawn on your X background. Change the headline in Text." : "Click any text to type in it, or the picture to edit it. Drag to move."}
+                  {bgMode ? `Drawn on ${bgName}. Click the card to change the headline.` : "Click any text to type in it, or the picture to edit it. Drag to move."}
                 </Typography>
               )}
             </Box>
@@ -2398,7 +2484,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 <Typography sx={{ ...sectionLabel, mb: 0.5 }}>Card that will be posted</Typography>
                 <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
                   <Typography sx={{ fontSize: "0.8125rem" }}>
-                    {serverView ? "A card made elsewhere" : bgMode ? "Your X background card" : ownCard ? "Your design from this editor" : phase1 ? "The card on the left" : "The automatic card"}
+                    {serverView ? "A card made elsewhere" : bgMode ? (activeOrg ? `${activeOrg.label} card` : "Your X background card") : ownCard ? "Your design from this editor" : phase1 ? "The card on the left" : "The automatic card"}
                     {(busy === "card" || (bgMode && bg.status === "drawing")) && <CircularProgress size={12} sx={{ ml: 1, verticalAlign: "middle" }} aria-label="Working" />}
                   </Typography>
                   {ownCard && canEdit && (
@@ -2409,9 +2495,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 </Box>
                 <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.25 }}>
                   {serverView
-                    ? "Another operator or browser put this card on the draft. It posts as it is until you change the design or use your X background."
+                    ? `Another operator or browser put this card on the draft. It posts as it is until you change the design or use ${activeTemplate ? bgName : "your X background"}.`
                     : bgMode
-                    ? `Today's date, the headline and the whole story on your background${bg.card ? `, at ${bg.card.fontPx} px` : ""}.`
+                    ? `${activeTemplate?.layout.date ? "Today's date, the headline" : "The headline"} and the whole story on ${activeOrg ? bgName : "your background"}${bg.card ? `, ${bg.card.width} × ${bg.card.height} at ${bg.card.fontPx} px` : ""}.`
                     : ownCard
                       ? "The frame on the left, exactly as you see it."
                       : phase1
@@ -2423,12 +2509,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                     The story is too long for the box even at the smallest size, so its end is cut. Shorten the headline, or design the card here.
                   </Alert>
                 )}
-                {!bgMode && !serverView && cardTemplate && canEdit && (
+                {!bgMode && !serverView && activeTemplate && canEdit && (
                   <Button size="small" onClick={() => setCardSource("background")} disabled={!!busy} startIcon={<ImageIcon size={13} />} sx={{ mt: 0.5, minHeight: 30, px: 0.5, fontSize: "0.75rem" }}>
-                    Use your X background
+                    {useBgLabel}
                   </Button>
                 )}
-                {isX && cardTemplates?.data && !cardTemplate && (
+                {isX && cardTemplates?.data && !cardTemplate && !orgTemplates.length && (
                   <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.75 }}>
                     Upload your X background in Templates to have every card drawn on it.
                   </Typography>
@@ -2488,7 +2574,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             <PostMock platform={platform} text={finalText}>
               {previewOpen && bgMode && bg.card && (
                 /* eslint-disable-next-line @next/next/no-img-element */
-                <img src={bg.card.url} alt="Card on your X background" style={{ display: "block", width: `min(100%, calc(58vh * ${bgFrame.w} / ${bgFrame.h}))` }} />
+                <img src={bg.card.url} alt={`Card on ${bgName}`} style={{ display: "block", width: `min(100%, calc(58vh * ${bgFrame.w} / ${bgFrame.h}))` }} />
               )}
               {previewOpen && !bgMode && <TemplateCanvas media={media} format={format} handle={`@${meta.handle}`} tag={item.tag} layout={layout} style={{ width: `min(100%, calc(58vh * ${frame.w} / ${frame.h}))` }} />}
             </PostMock>

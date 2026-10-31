@@ -405,6 +405,33 @@ export interface UserCardTemplate {
   updatedAt: string;
 }
 
+/** An org template's layout: as the per-user one, but a design without a date slot has `date: null`. */
+export type OrgCardTemplateLayout = Omit<CardTemplateLayout, "date"> & { date: CardTemplateLayout["date"] | null };
+
+/** The desk's shared X card designs (contract: org-card-templates-contract.md). */
+export interface OrgCardTemplate {
+  slug: string;
+  label: string;
+  platform: "x";
+  /** Relative API path including ?v=<updatedAt>; fetched with the session cookie */
+  backgroundUrl: string;
+  width: number;
+  height: number;
+  layout: OrgCardTemplateLayout;
+  /** Story tags this template opens on */
+  defaultFor: ("big_breaking" | "breaking")[];
+  updatedAt: string;
+}
+
+/** What the background-card drawing needs: a per-user background or an org template. */
+export interface DrawableCardTemplate {
+  backgroundUrl: string;
+  width: number;
+  height: number;
+  layout: OrgCardTemplateLayout;
+  updatedAt: string;
+}
+
 export interface IngestStatus {
   /** null until the worker has polled once */
   mode: "samvadia" | "folder" | "ftp" | null;

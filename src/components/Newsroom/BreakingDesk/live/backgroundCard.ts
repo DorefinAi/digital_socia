@@ -2,7 +2,7 @@
 // today's date in the date slot, then inside the box the headline (bold) and the whole story body,
 // centred, at one font size shrunk from fontMaxPx to fontMinPx until both fit. Pure canvas, no React.
 
-import type { CardTemplateLayout, UserCardTemplate } from "@/lib/socia/types";
+import type { DrawableCardTemplate, OrgCardTemplateLayout } from "@/lib/socia/types";
 import { fontById } from "../templateFonts";
 
 /** Mangal is the Hindi face the cards use; Noto Sans Devanagari stands in where Mangal is not installed. */
@@ -128,7 +128,7 @@ function withEllipsis(ctx: CanvasRenderingContext2D, line: string, maxWidth: num
   return `${letters.join("").replace(/[\s.।,]+$/, "")}${ELLIPSIS}`;
 }
 
-function fitText(ctx: CanvasRenderingContext2D, headline: string, body: string, layout: CardTemplateLayout, boxW: number, boxH: number): Fitted {
+function fitText(ctx: CanvasRenderingContext2D, headline: string, body: string, layout: OrgCardTemplateLayout, boxW: number, boxH: number): Fitted {
   const max = Math.max(6, layout.fontMinPx, layout.fontMaxPx);
   const min = Math.max(6, Math.min(layout.fontMinPx, layout.fontMaxPx));
   const measure = (size: number) => {
@@ -228,26 +228,29 @@ export interface CardWords {
 }
 
 /**
- * Paints the words onto a background already drawn at W × H: the date in its slot, then the headline and
- * body in the box. Synchronous, so the Templates tab can repaint its sample on every drag frame.
+ * Paints the words onto a background already drawn at W × H: the date in its slot (none when the layout
+ * has `date: null`), then the headline and body in the box. Synchronous, so the Templates tab can repaint
+ * its sample on every drag frame.
  */
-export function paintCardText(ctx: CanvasRenderingContext2D, layout: CardTemplateLayout, words: CardWords, W: number, H: number): { fontPx: number; cut: boolean } {
+export function paintCardText(ctx: CanvasRenderingContext2D, layout: OrgCardTemplateLayout, words: CardWords, W: number, H: number): { fontPx: number; cut: boolean } {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
   // Date: one line, as large as the slot allows
   const d = layout.date;
-  const dateText = istDate(d.format, words.date);
-  const slotW = d.w * W;
-  const slotH = d.h * H;
-  let dateSize = Math.floor(slotH * 0.72);
-  ctx.font = `700 ${dateSize}px ${family()}`;
-  while (dateSize > 8 && ctx.measureText(dateText).width > slotW * 0.94) {
-    dateSize -= 1;
+  if (d) {
+    const dateText = istDate(d.format, words.date);
+    const slotW = d.w * W;
+    const slotH = d.h * H;
+    let dateSize = Math.floor(slotH * 0.72);
     ctx.font = `700 ${dateSize}px ${family()}`;
+    while (dateSize > 8 && ctx.measureText(dateText).width > slotW * 0.94) {
+      dateSize -= 1;
+      ctx.font = `700 ${dateSize}px ${family()}`;
+    }
+    ctx.fillStyle = d.color;
+    ctx.fillText(dateText, d.x * W + slotW / 2, d.y * H + slotH / 2);
   }
-  ctx.fillStyle = d.color;
-  ctx.fillText(dateText, d.x * W + slotW / 2, d.y * H + slotH / 2);
 
   // Box: headline then body, centred, one size for both
   const b = layout.box;
@@ -277,11 +280,14 @@ export function paintCardText(ctx: CanvasRenderingContext2D, layout: CardTemplat
   return { fontPx: fit.size, cut: fit.cut };
 }
 
-/** Draws the card at the background's own size and returns it as a PNG ready to upload. */
-export async function drawBackgroundCard(template: UserCardTemplate, backgroundUrl: string, words: CardWords, maxBytes: number): Promise<DrawnCard> {
+/**
+ * Draws the card at the template's own size (the background's, when the template gives none) and returns
+ * it as a PNG ready to upload.
+ */
+export async function drawBackgroundCard(template: DrawableCardTemplate, backgroundUrl: string, words: CardWords, maxBytes: number): Promise<DrawnCard> {
   const [image] = await Promise.all([loadImage(backgroundUrl), fontsReady()]);
-  const W = image.naturalWidth || template.width;
-  const H = image.naturalHeight || template.height;
+  const W = template.width > 0 ? template.width : image.naturalWidth;
+  const H = template.height > 0 ? template.height : image.naturalHeight;
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;

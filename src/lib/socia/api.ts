@@ -2,7 +2,7 @@
 
 import { ApiError, api, setCsrfToken } from "./client";
 import type {
-  CardTemplateLayout, CopyPostedResult, Counts, DraftPatch, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, UserCardTemplate,
+  CardTemplateLayout, CopyPostedResult, Counts, DraftPatch, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, OrgCardTemplate, OrgCardTemplateLayout, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, UserCardTemplate,
 } from "./types";
 
 const enc = encodeURIComponent;
@@ -88,6 +88,21 @@ export const uploadCardTemplate = (image: Blob, platform = "x") =>
 export const saveCardTemplateLayout = (layout: CardTemplateLayout, platform = "x") =>
   api<{ template: UserCardTemplate }>("PATCH", `/me/card-template?platform=${enc(platform)}`, { layout });
 export const deleteCardTemplate = (platform = "x") => api<unknown>("DELETE", `/me/card-template?platform=${enc(platform)}`);
+
+// ─── Org card templates (shared by the desk; org-card-templates-contract.md) ─
+/** The desk's shared card designs, sorted by the server. An older server without the route (404) has none: []. */
+export async function fetchOrgCardTemplates(platform = "x"): Promise<OrgCardTemplate[]> {
+  try {
+    const res = await api<{ templates?: OrgCardTemplate[] }>("GET", `/card-templates?platform=${enc(platform)}`);
+    return Array.isArray(res.templates) ? res.templates : [];
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return [];
+    throw err;
+  }
+}
+/** Moves the date slot and text box of a shared template (Settings permission). */
+export const saveOrgCardTemplateLayout = (slug: string, layout: OrgCardTemplateLayout) =>
+  api<{ template: OrgCardTemplate }>("PATCH", `/card-templates/${enc(slug)}`, { layout });
 
 // ─── Source health ───────────────────────────────────────────────────────────
 export const fetchIngestStatus = () => api<IngestStatus>("GET", "/ingest/status");

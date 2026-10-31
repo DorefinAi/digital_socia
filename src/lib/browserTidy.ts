@@ -20,6 +20,7 @@ export const DRAFT_RECORD_TTL_MS = 2 * DAY_MS;
 const DRAFT_PREFIXES = [
   "socia_card_design_", // PostEditor designStore
   "socia_bg_card_", // PostEditor bgStore
+  "socia_card_choice_", // PostEditor choiceStore (org template picked per draft)
   "studio:", // video/panels/autosave.ts studioKey()
 ];
 
