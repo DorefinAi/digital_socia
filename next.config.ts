@@ -5,6 +5,11 @@ import type { NextConfig } from "next";
 // which avoids CORS when the desk runs on an origin the API does not list. Unset: no rewrite.
 const proxyTarget = process.env.SOCIA_PROXY_TARGET?.replace(/\/+$/, "");
 
+// Only the API paths this desk calls (src/lib/socia/api.ts, apiFileUrl/fileUrl links) are forwarded. Never
+// /owner (the owner console's server-to-server API), /socket.io (the desk polls), /healthz or anything new:
+// a path the desk starts calling must be added here.
+const PROXIED_PREFIXES = ["auth", "me", "drafts", "card-templates", "trends", "x", "posts", "jobs", "ingest", "admin", "dev-files"];
+
 const nextConfig: NextConfig = {
   // Lets a second dev server run beside another one on this folder (Next allows one per build dir)
   ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
@@ -15,7 +20,11 @@ const nextConfig: NextConfig = {
     return [{ source: "/((?!_next/static|_next/image|socia-api).*)", headers: [{ key: "Cache-Control", value: "no-cache" }] }];
   },
   async rewrites() {
-    return proxyTarget ? [{ source: "/socia-api/:path*", destination: `${proxyTarget}/:path*` }] : [];
+    if (!proxyTarget) return [];
+    return PROXIED_PREFIXES.flatMap((p) => [
+      { source: `/socia-api/${p}`, destination: `${proxyTarget}/${p}` },
+      { source: `/socia-api/${p}/:path*`, destination: `${proxyTarget}/${p}/:path*` },
+    ]);
   },
 };
 
