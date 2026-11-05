@@ -193,6 +193,8 @@ export interface QueueItem {
   posted?: PostedMark | null;
   /** phase 1: the file was saved again after its post went out; this new draft updates that posted one */
   updateOfDraftId?: string | null;
+  /** The original file's path (where the story came from); null when unknown */
+  sourcePath?: string | null;
 }
 
 /** How urgent Samvadia marked a story */
@@ -298,6 +300,8 @@ export interface DraftView {
     reporter?: string | null;
     /** The .txt file's name */
     fileName?: string | null;
+    /** The original file's path; null when unknown */
+    sourcePath?: string | null;
     layout?: "breaking" | null;
     /** The desk instruction that was removed, null when none */
     deskNote?: string | null;
