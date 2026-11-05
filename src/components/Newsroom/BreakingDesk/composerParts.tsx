@@ -29,12 +29,15 @@ export function TagPicker({
   options,
   max,
   onChange,
+  disabled = false,
 }: {
   label: string;
   prefix: "#" | "@";
   options: TagOption[];
   max: number;
   onChange: (options: TagOption[]) => void;
+  /** Read-only: the ticks show what the post carries but can't be changed */
+  disabled?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const selected = options.filter((o) => o.checked).length;
@@ -71,7 +74,7 @@ export function TagPicker({
               alignItems: "center",
               gap: 0.5,
               pr: 1.25,
-              cursor: "pointer",
+              cursor: disabled ? "default" : "pointer",
               borderTop: i === 0 ? "none" : "1px solid",
               borderColor: "divider",
               "&:hover": { backgroundColor: "action.hover" },
@@ -80,6 +83,7 @@ export function TagPicker({
             <Checkbox
               size="small"
               checked={option.checked}
+              disabled={disabled}
               onChange={(e) => onChange(options.map((o) => (o === option ? { ...o, checked: e.target.checked } : o)))}
               sx={{ p: 0.75 }}
             />
@@ -98,6 +102,7 @@ export function TagPicker({
           <Box
             component="input"
             value={draft}
+            disabled={disabled}
             placeholder={prefix === "#" ? "Add hashtag" : "Add handle"}
             aria-label={prefix === "#" ? "Add hashtag" : "Add handle"}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDraft(e.target.value)}
@@ -121,7 +126,7 @@ export function TagPicker({
               "&:focus-visible": { backgroundColor: "action.hover" },
             }}
           />
-          <IconButton size="small" onClick={add} disabled={!draft.trim()} aria-label="Add" sx={{ borderRadius: 0, px: 1.25 }}>
+          <IconButton size="small" onClick={add} disabled={disabled || !draft.trim()} aria-label="Add" sx={{ borderRadius: 0, px: 1.25 }}>
             <Plus size={15} />
           </IconButton>
         </Box>

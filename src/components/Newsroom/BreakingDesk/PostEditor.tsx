@@ -81,10 +81,11 @@ import type { LiveEditing } from "./live/LiveEditor";
 import { apiFileUrl, credentialsFor, errorCode, errorText, useLiveDesk } from "./live/LiveDesk";
 import { usePhase } from "@/lib/socia/usePhase";
 import { assemblePost } from "./phase1/Phase1Editor";
-import { needsCheckHint, needsCheckLabel, Phase1Badges } from "./phase1/badges";
+import { type PostBox, type PostFormat, SERVER_HASHTAGS_MAX, SERVER_MENTIONS_MAX, checkedValues, pickerRows, readPostBox, splitPost, syncOptions, tagKey, withBody } from "./postBox";
+import { needsCheckHint, needsCheckLabel, Phase1Badges, shownNeedsCheck } from "./phase1/badges";
 import { keyHash, useBackgroundCard } from "./live/useBackgroundCard";
 import OrgTemplatePicker, { type CardChoice } from "./live/OrgTemplatePicker";
-import { cardChoiceChanged } from "./live/storyThumbs";
+import { cardChoiceChanged, defaultOrgTemplate } from "./live/storyThumbs";
 import { PostedLinkDialog } from "./actionDialogs";
 import { NUDGE, editorKeyFor, editorShortcut, isCanvasKeyTarget, isEditorTypingTarget, isTextEntryTarget, swallowNextContextMenu, withEditorShortcut } from "./editorKeys";
 import { ConfirmPostDialog, EditorShortcutsSheet, LeaveEditorDialog } from "./EditorShortcutsSheet";
@@ -304,6 +305,19 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const phase1 = !!live && !!desk?.phase1;
   const apiPosting = !phase1 || !!features?.xApiPosting;
   const copyMode = phase1 && features?.copyPosted !== false;
+  // The post box holds the whole post, body then tag line (postBox.ts). The live desk lays it out as the
+  // server assembles it (copy-posted answers with that text); the demo desk keeps its mentions-then-hashtags layout.
+  const postFormat: PostFormat = live ? assemblePost : (body, tags, handles) => composePostText(body, handles, tags);
+  const splitOpts = { strict: !!live };
+  /**
+   * A live story opens on the server's own assembled text, so opening saves nothing: until the box is edited
+   * the server's split (`pristine.save`) is what counts, even for a draft whose body already ends in tags.
+   */
+  const openLive = (d: DraftView) => {
+    const tags = liveTags(d);
+    const text = assemblePost(d.bodyText, d.hashtags, d.mentions);
+    return { text, hashtags: tags.hashtags, mentions: tags.mentions, openMentions: d.mentions, pristine: { text, save: { bodyText: d.bodyText, hashtags: d.hashtags, mentions: d.mentions } } };
+  };
 
   // Everything that belongs to one story. Reopening a saved or scheduled story picks up where the operator left off.
   const storyStart = (story: FtpNewsItem) => {
@@ -320,8 +334,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         igFormat: "ig_post" as TemplateFormat,
         mediaIndex: Math.max(0, story.media.findIndex((m) => m.fileName === saved?.mediaFile)),
         layout,
-        text: d.bodyText,
-        ...liveTags(d),
+        ...openLive(d),
         // Until the design changes, the server's card is the one that posts
         custom: !!d.card.custom,
         // A design sent from this browser wins over the operator's X background when the story reopens
@@ -344,9 +357,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       igFormat,
       mediaIndex: Math.max(0, story.media.findIndex((m) => m.fileName === draft?.mediaFile)),
       layout: draft?.layout ?? defaultLayout(defaultCardText(story), isX ? "x" : igFormat),
-      text: draft?.caption ?? story.shortText,
-      hashtags: withDraftChoices(suggestHashtags(story, hashtagRules), draft?.hashtags),
-      mentions: withDraftChoices(suggestMentions(story, platform, handleDirectory), draft?.mentions),
+      ...(() => {
+        const hashtags = withDraftChoices(suggestHashtags(story, hashtagRules), draft?.hashtags);
+        const mentions = withDraftChoices(suggestMentions(story, platform, handleDirectory), draft?.mentions);
+        const text = postFormat(draft?.caption ?? story.shortText, checkedValues(hashtags), checkedValues(mentions));
+        return { text, hashtags, mentions, openMentions: [] as string[], pristine: null as { text: string; save: PostBox["save"] } | null };
+      })(),
       custom: false,
       savedDesign: false,
       serverCard: false,
@@ -397,6 +413,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const [text, setText] = useState(start.text);
   const [hashtags, setHashtags] = useState<TagOption[]>(start.hashtags);
   const [mentions, setMentions] = useState<TagOption[]>(start.mentions);
+  // Handles the server answered bad_mention for: they stay plain text in this story
+  const [refused, setRefused] = useState<ReadonlySet<string>>(() => new Set());
   const [previewOpen, setPreviewOpen] = useState(false);
   const [videoPaused, setVideoPaused] = useState(false);
   // Plays the video's sound while editing; saved clips carry it either way
@@ -478,6 +496,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     setConfirmPost(null);
     setNotPosted(null);
     setTakenBy(null);
+    setRefused(new Set());
   }
 
   // Any change from how the story opened, so switching stories only saves real work
@@ -515,7 +534,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // Phase 1 breaking files: BIG in the file name is Big Breaking, every other one Breaking (as shared.storyTag)
   const liveStory = live?.draft.story;
   const tagNow = liveStory ? (liveStory.tags ? (liveStory.tags.big ? "big_breaking" : "breaking") : priorityTag(liveStory.priority)) : storyTag(item);
-  const orgDefault = orgTemplates.find((t) => !!tagNow && t.defaultFor.includes(tagNow)) ?? orgTemplates[0] ?? null;
+  const orgDefault = defaultOrgTemplate(orgTemplates, tagNow);
   const ownPicked = bgPick === "own" && !!cardTemplate;
   /** The design a story opens on: the one picked for it in this browser, else the one for its tag */
   const orgStart = orgTemplates.find((t) => t.slug === bgPick) ?? orgDefault;
@@ -644,13 +663,35 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // Background cards and desk templates are still images, so a video story posts (and downloads) the card
   const exportsVideo = isVideo && !bgMode && !orgMode && !phase1;
 
-  const selectedHashtags = useMemo(() => hashtags.filter((h) => h.checked).map((h) => h.value), [hashtags]);
-  const selectedMentions = useMemo(() => mentions.filter((m) => m.checked).map((m) => m.value), [mentions]);
-  // Phase 1 copies the post as the server assembles it (copy-posted answers with that text)
-  const finalText = phase1 ? assemblePost(text, selectedHashtags, selectedMentions) : composePostText(text, selectedMentions, selectedHashtags);
+  // The box is the post: its tag line is the hashtags and mentions, and what it reads as is what is copied,
+  // counted, previewed and (split back into body and tags) saved.
+  // The server takes a mention only when it was suggested for this draft or is a verified directory handle
+  // (assertVerifiedMentions); the editor knows the suggestions and the handles the draft already carries.
+  const knownHandles = new Set(
+    live ? [...live.draft.mentionSuggestions.map((m) => (m.handle.startsWith("@") ? m.handle : `@${m.handle}`)), ...live.draft.mentions, ...start.openMentions].map(tagKey) : [],
+  );
+  const accepts = (handle: string) => knownHandles.has(tagKey(handle)) && !refused.has(tagKey(handle));
+  const readBox = (value: string, take: (handle: string) => boolean = accepts) => readPostBox(value, postFormat, { strict: !!live, accepts: live ? take : undefined });
+  const pristine = start.pristine && text === start.pristine.text ? start.pristine : null;
+  const postBox: PostBox = pristine
+    ? { ...readBox(text), finalText: pristine.text, save: pristine.save, problem: null, overflow: false, unsavable: false }
+    : readBox(text);
+  const body = postBox.split.body;
+  // The tags as saved (the server's own split while the box is untouched)
+  const selectedHashtags = postBox.save.hashtags;
+  const selectedMentions = postBox.save.mentions;
+  // What the pickers show: the tag line as typed, a lone # or @ still being typed let through
+  const shown = splitPost(text, { ...splitOpts, lenient: true });
+  const hashtagRows = syncOptions(hashtags, shown.hashtags);
+  const mentionRows = syncOptions(mentions, shown.mentions);
+  const finalText = postBox.finalText;
   const used = countChars(finalText, platform);
   const overLimit = used > limits.text;
-  const tooManyTags = selectedHashtags.length > limits.hashtags || selectedMentions.length > limits.mentions;
+  // The live desk also keeps to what the server takes as tags
+  const hashtagMax = live ? Math.min(limits.hashtags, SERVER_HASHTAGS_MAX) : limits.hashtags;
+  const mentionMax = live ? Math.min(limits.mentions, SERVER_MENTIONS_MAX) : limits.mentions;
+  const tooManyTags = postBox.overflow || selectedHashtags.length > hashtagMax || selectedMentions.length > mentionMax;
+  const unsavable = !!live && postBox.unsavable;
   // Saving a post counts against the platform's daily cap
   const liveCap = desk?.counts.data?.cap ?? desk?.inbox.data?.cap;
   const cap = live && liveCap ? liveCap.cap : DAILY_CAP[platform];
@@ -664,7 +705,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const url = isX ? findUrl(finalText) : null;
   const bgFailed = bgMode && bg.status === "error";
   const orgLoading = orgMode && !orgPicture;
-  const canPost = canEdit && !busy && stale === null && !overLimit && !tooManyTags && !url && !capReached && !bgFailed && !orgLoading && !orgWaiting && !orgGone && text.trim().length > 0 && layout.headline.trim().length > 0;
+  const canPost = canEdit && !busy && stale === null && !overLimit && !tooManyTags && !url && !capReached && !bgFailed && !orgLoading && !orgWaiting && !orgGone && !unsavable && body.trim().length > 0 && layout.headline.trim().length > 0;
 
   let blockedReason = "";
   if (takenBy) blockedReason = "Already posted";
@@ -672,10 +713,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   else if (live?.lease.kind === "lost") blockedReason = "Claim the story again to post it";
   else if (live && stale !== null) blockedReason = "Someone else saved this story. Choose whose version to keep first";
   else if (!canEdit) blockedReason = "Your role can view posts but not publish them";
-  else if (!text.trim()) blockedReason = `Write the ${meta.postNoun} first`;
+  else if (!body.trim()) blockedReason = `Write the ${meta.postNoun} first`;
   else if (!layout.headline.trim()) blockedReason = "The template needs a headline";
   else if (overLimit) blockedReason = `${used - limits.text} characters over the ${meta.short} limit`;
   else if (tooManyTags) blockedReason = "Too many hashtags or mentions selected";
+  else if (unsavable) blockedReason = "The post is too long to save";
   else if (url) blockedReason = `Remove the link "${url}" first`;
   else if (capReached) blockedReason = `Today's ${meta.short} cap of ${cap} posts is reached`;
   else if (orgLoading) blockedReason = orgImage.error ? `${orgTpl.label} didn't load. Try again from the card` : `${orgTpl.label} is still loading`;
@@ -969,11 +1011,32 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     chooseMedia(mediaList.length);
   };
 
+  // ── The post box: typing in it and the pickers keep each other in step ──
+  // Typing only changes the text; the pickers' ticks (and rows for typed tags) are read from it.
+  /** Leaving the box (or copying): an edited box takes the exact layout that is copied and saved */
+  const settleBox = () => {
+    if (!canEdit || pristine) return;
+    if (text !== finalText) setText(finalText);
+  };
+  /** A picker tick or untick rewrites the tag line: tags already there keep their order, new ones go last */
+  const pickTags = (kind: "#" | "@", options: TagOption[]) => {
+    const ticked = checkedValues(options);
+    const inBox = kind === "#" ? shown.hashtags : shown.mentions;
+    const keep = new Set(ticked.map(tagKey));
+    const kept = inBox.filter((v) => keep.has(tagKey(v)));
+    const had = new Set(kept.map(tagKey));
+    const next = [...kept, ...ticked.filter((v) => !had.has(tagKey(v)))];
+    setText(postFormat(shown.body, kind === "#" ? next : shown.hashtags, kind === "@" ? next : shown.mentions));
+    if (kind === "#") setHashtags(pickerRows(options));
+    else setMentions(pickerRows(options));
+  };
+
+  /** Shortens the body only; the tag line stays exactly as it is */
   const makeCrisp = () => {
-    const tagBudget = countChars(composePostText("", selectedMentions, selectedHashtags), platform);
-    const budget = limits.text - tagBudget - (tagBudget ? 2 : 0);
-    const source = countChars(text.trim(), platform) > budget ? text : item.shortText;
-    setText(shortenToFit(source, Math.min(budget, isX ? 200 : 400), platform));
+    const tagBudget = shown.tail ? countChars(shown.tail, platform) + 2 : 0;
+    const budget = limits.text - tagBudget;
+    const source = countChars(shown.body.trim(), platform) > budget ? shown.body : item.shortText;
+    setText(withBody(text, shortenToFit(source, Math.min(budget, isX ? 200 : 400), platform), splitOpts));
   };
 
 
@@ -984,7 +1047,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       platform,
       headline: item.headline,
       text: finalText,
-      caption: text,
+      caption: body,
       hashtags: selectedHashtags,
       mentions: selectedMentions,
       mediaKind: media.kind,
@@ -1000,6 +1063,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // Operators post by hand: Copy puts the post text on the clipboard, Save downloads the card or clip
   // and marks the story posted, which is what moves it to Published and counts against the cap.
   const copyText = async () => {
+    settleBox();
     try {
       await navigator.clipboard.writeText(finalText);
       setCopied(true);
@@ -1092,11 +1156,17 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // Text and headline as the server should have them
   const cardHeadline = plainCardText(layout.headline).slice(0, 400);
   const livePatch = live
-    ? { bodyText: text, cardHeadline: cardHeadline || live.draft.cardHeadline, hashtags: selectedHashtags, mentions: selectedMentions }
+    ? { ...postBox.save, cardHeadline: cardHeadline || live.draft.cardHeadline }
     : null;
   const serverPatch = live ? { bodyText: live.draft.bodyText, cardHeadline: live.draft.cardHeadline, hashtags: live.draft.hashtags, mentions: live.draft.mentions } : null;
   const patchKey = JSON.stringify(livePatch);
-  const textDirty = !!live && patchKey !== JSON.stringify(serverPatch);
+  // Dirty when the post the server would assemble, or the headline, differs; the same words split another
+  // way (a draft whose body already ends in tags) is not a change, so opening a story saves nothing
+  const textDirty =
+    !!livePatch &&
+    !!serverPatch &&
+    (livePatch.cardHeadline !== serverPatch.cardHeadline ||
+      assemblePost(livePatch.bodyText, livePatch.hashtags, livePatch.mentions) !== assemblePost(serverPatch.bodyText, serverPatch.hashtags, serverPatch.mentions));
 
   // The card: the server's automatic card posts until the design here is changed, then this canvas does
   // On the X background the drawn card is always the one that posts; the design here does not apply
@@ -1128,7 +1198,20 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   const saveText = async () => {
     if (!live || !canEdit || !textDirty || !livePatch) return;
-    adopt(await socia.saveDraft(live.draft.id, { version: versionRef.current, ...livePatch }));
+    // Never send what the API refuses; leaving or posting stops with this reason instead
+    if (unsavable) throw new Error(postBox.problem ?? "The post is too long to save.");
+    try {
+      adopt(await socia.saveDraft(live.draft.id, { version: versionRef.current, ...livePatch }));
+    } catch (err) {
+      if (errorCode(err) !== "bad_mention" || !livePatch.mentions.length) throw err;
+      // A handle the server doesn't take: keep the tag line as plain text (same post) and save again at once
+      const named = (err as { data?: { handles?: unknown } }).data?.handles;
+      const bad = Array.isArray(named) && named.length ? named.map((h) => tagKey(`@${String(h).replace(/^@/, "")}`)) : livePatch.mentions.map(tagKey);
+      const nowRefused = new Set([...refused, ...bad]);
+      setRefused(nowRefused);
+      const plain = readBox(text, (h) => accepts(h) && !nowRefused.has(tagKey(h))).save;
+      adopt(await socia.saveDraft(live.draft.id, { version: versionRef.current, ...plain, cardHeadline: livePatch.cardHeadline }));
+    }
   };
 
   /**
@@ -1215,11 +1298,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   // Typing saves on its own after a pause
   useEffect(() => {
-    if (!live || !canEdit || stale !== null || !textDirty) return;
+    if (!live || !canEdit || stale !== null || !textDirty || unsavable) return;
     const timer = setTimeout(() => void serial(saveText).catch(liveFail), 1500);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patchKey, canEdit, stale, textDirty]);
+  }, [patchKey, canEdit, stale, textDirty, unsavable]);
 
   // The card drawn on the X background is not uploaded on its own: opening or reading a story changes
   // nothing on the server. It goes up with Post, Save draft or Save as posted, or on leaving after an edit.
@@ -1282,6 +1365,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     setNotPosted(null);
     const id = live.draft.id;
     const copiedText = finalText;
+    settleBox();
     try {
       await navigator.clipboard.writeText(copiedText);
     } catch {
@@ -1392,10 +1476,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       if (!live) return;
       const d = await socia.fetchDraft(live.draft.id);
       adopt(d);
-      const tags = liveTags(d);
-      setText(d.bodyText);
-      setHashtags(tags.hashtags);
-      setMentions(tags.mentions);
+      const box = openLive(d);
+      setText(box.text);
+      setHashtags(box.hashtags);
+      setMentions(box.mentions);
+      // Their text, untouched, is the server's own: nothing to save until it is edited
+      setStart((s) => ({ ...s, pristine: box.pristine, openMentions: box.openMentions }));
       patch({ headline: d.cardHeadline });
       setStale(null);
     });
@@ -2683,28 +2769,35 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   <Button size="small" onClick={makeCrisp} startIcon={<Scissors size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem" }}>
                     Make it crisp
                   </Button>
-                  <Button size="small" onClick={() => setText(item.shortText)} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.secondary" }}>
+                  <Button size="small" onClick={() => setText(withBody(text, item.shortText, splitOpts))} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.secondary" }}>
                     Use draft
                   </Button>
                 </Box>
               </Box>
               {live?.draft.rewrite && <RewriteNotice rewrite={live.draft.rewrite} />}
-              <TextField multiline minRows={isX ? 4 : 5} maxRows={10} fullWidth size="small" value={text} onChange={(e) => setText(e.target.value)} slotProps={{ htmlInput: { "aria-label": `${isX ? "Tweet" : platform === "Facebook" ? "Post" : "Caption"} text`, readOnly: !!live && !canEdit } }} sx={fieldSx} />
+              <TextField multiline minRows={isX ? 4 : 5} maxRows={10} fullWidth size="small" value={text} onChange={(e) => setText(e.target.value)} onBlur={settleBox} slotProps={{ htmlInput: { "aria-label": `${isX ? "Tweet" : platform === "Facebook" ? "Post" : "Caption"} text`, readOnly: !!live && !canEdit } }} sx={fieldSx} />
               <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, mt: 0.75 }}>
                 <LinearProgress variant="determinate" value={Math.min(100, (used / limits.text) * 100)} color={overLimit ? "error" : "inherit"} sx={{ flex: 1, height: 4, borderRadius: 2 }} />
                 <Typography sx={{ fontSize: "0.75rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: overLimit ? "error.main" : "text.secondary" }}>
                   {used} / {limits.text}
                 </Typography>
               </Box>
-              <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.25 }}>Count includes the selected mentions and hashtags.</Typography>
+              <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.25 }}>
+                This is the post exactly as it is copied. Hashtags and mentions on its last line are the ones ticked below.
+              </Typography>
+              {postBox.problem && (
+                <Alert severity="warning" sx={{ mt: 1, py: 0, fontSize: "0.75rem", borderRadius: "8px" }}>
+                  {postBox.problem}
+                </Alert>
+              )}
               {url && (
                 <Alert severity="error" sx={{ mt: 1, py: 0, fontSize: "0.75rem", borderRadius: "8px" }}>
                   X posts can&apos;t carry links. &ldquo;{url}&rdquo; would make this post cost about 13 times more (roughly $0.20 instead of $0.015). Remove it to post.
                 </Alert>
               )}
             </Box>
-            <TagPicker label="Hashtags" prefix="#" options={hashtags} max={limits.hashtags} onChange={setHashtags} />
-            <TagPicker label="Mentions" prefix="@" options={mentions} max={limits.mentions} onChange={setMentions} />
+            <TagPicker label="Hashtags" prefix="#" options={hashtagRows} max={hashtagMax} onChange={(o) => pickTags("#", o)} disabled={!!live && !canEdit} />
+            <TagPicker label="Mentions" prefix="@" options={mentionRows} max={mentionMax} onChange={(o) => pickTags("@", o)} disabled={!!live && !canEdit} />
             {live && (
               <Box>
                 <Typography sx={{ ...sectionLabel, mb: 0.5 }}>Card that will be posted</Typography>
@@ -2875,8 +2968,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
  * them), and the Copy & Posted banners (already posted by someone, or copied but not marked).
  */
 function Phase1Checks({ story, takenBy, notPosted, retry }: { story: DraftView["story"]; takenBy: string | null; notPosted: string | null; retry: React.ReactNode }) {
-  const reasons = [...(story.needsCheck ?? [])];
-  if (story.deskNoteRemoved && !reasons.includes("desk_note")) reasons.push("desk_note");
+  const reasons = shownNeedsCheck(story.needsCheck);
   const hasBadges = !!(story.tags?.big || story.tags?.update || story.tags?.exclusive || reasons.length);
   if (!hasBadges && !takenBy && !notPosted) return null;
   return (
@@ -2893,7 +2985,7 @@ function Phase1Checks({ story, takenBy, notPosted, retry }: { story: DraftView["
       )}
       {hasBadges && (
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, alignItems: "center" }}>
-          <Phase1Badges tags={story.tags} needsCheck={story.needsCheck} deskNoteRemoved={story.deskNoteRemoved} />
+          <Phase1Badges tags={story.tags} needsCheck={story.needsCheck} />
         </Box>
       )}
       {reasons.length > 0 && (
@@ -2905,12 +2997,6 @@ function Phase1Checks({ story, takenBy, notPosted, retry }: { story: DraftView["
               </li>
             ))}
           </Box>
-          {story.deskNote && (
-            <Box sx={{ mt: 1, pl: 1.25, borderLeft: "3px solid", borderColor: "warning.main" }}>
-              <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>Removed from the post:</Typography>
-              <Typography lang="hi" sx={{ fontSize: "0.8125rem", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{story.deskNote}</Typography>
-            </Box>
-          )}
         </Alert>
       )}
     </Box>
