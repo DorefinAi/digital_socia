@@ -55,7 +55,8 @@ const nameFromFile = (name: string) =>
 
 // ─── Text area editor ───────────────────────────────────────────────────────────────────────────────
 
-const SAMPLE: CardWords = {
+/** The sample story drawn on template previews, so the text area shows */
+export const SAMPLE: CardWords = {
   headline: "राजस्थान हाईकोर्ट का SI भर्ती-2016 को लेकर बड़ा निर्णय",
   body: "50% आरक्षण सीमा के अनुसार पदों की होगी पुनर्गणना के आदेश, 90 दिन में पदों की पुनर्गणना कर संशोधित सूची जारी करने के निर्देश।",
 };
@@ -461,6 +462,40 @@ const TAG_DEFAULTS: { tag: OrgTemplateTag; label: string }[] = [
 /** True when the server lets this user do anything to the template, so its options button shows. */
 export const hasTemplateOptions = (t: OrgCardTemplate) => !!(t.canEdit || t.canDelete || t.canSetDefault);
 
+/** The template's default tags with `tag` switched on or off (PATCH defaultFor; admin only on the server). */
+export const toggledDefaults = (t: OrgCardTemplate, tag: OrgTemplateTag): OrgTemplateTag[] =>
+  t.defaultFor.includes(tag) ? t.defaultFor.filter((x) => x !== tag) : [...t.defaultFor, tag];
+
+interface DeleteDialogProps {
+  template: OrgCardTemplate;
+  open: boolean;
+  busy: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}
+
+/** "Delete X?": the confirm step before a template goes for everyone (admin only on the server). */
+export function DeleteTemplateDialog({ template: t, open, busy, error, onCancel, onConfirm }: DeleteDialogProps) {
+  return (
+    <Dialog open={open} onClose={() => !busy && onCancel()} fullWidth maxWidth="xs" slotProps={{ paper: { sx: { borderRadius: "14px", backgroundImage: "none" } } }}>
+      <DialogTitle sx={{ fontSize: "1rem", fontWeight: 700 }}>Delete {t.label}?</DialogTitle>
+      <DialogContent>
+        <Typography sx={{ fontSize: "0.875rem", lineHeight: 1.6 }}>
+          It goes for everyone on the desk. Cards already posted keep their image; drafts on it move to the default design when opened.
+        </Typography>
+        {error && <Alert severity="error" sx={{ mt: 1.5, fontSize: "0.8125rem" }}>{error}</Alert>}
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button onClick={onCancel} disabled={busy} sx={{ color: "text.secondary" }}>Keep it</Button>
+        <Button variant="contained" color="error" disabled={busy} startIcon={busy ? <CircularProgress size={14} color="inherit" /> : <Trash2 size={15} />} onClick={onConfirm}>
+          {busy ? "Deleting" : "Delete template"}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 interface TemplateOptionsProps {
   template: OrgCardTemplate;
   /** Loads the list again after a change */
@@ -468,16 +503,18 @@ interface TemplateOptionsProps {
   /** The template was deleted */
   onDeleted?: (slug: string) => void;
   disabled?: boolean;
+  /** Only Rename and Edit text area (where defaults and delete are shown as their own buttons) */
+  editOnly?: boolean;
 }
 
 /** The "⋮" on a thumbnail: rename, move the text area, defaults, delete; each only when allowed. */
-export function TemplateOptions({ template: t, onChanged, onDeleted, disabled }: TemplateOptionsProps) {
+export function TemplateOptions({ template: t, onChanged, onDeleted, disabled, editOnly }: TemplateOptionsProps) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [dialog, setDialog] = useState<null | "rename" | "area" | "delete">(null);
   const [label, setLabel] = useState(t.label);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  if (!hasTemplateOptions(t)) return null;
+  if (editOnly ? !t.canEdit : !hasTemplateOptions(t)) return null;
 
   const run = async (fn: () => Promise<unknown>, after?: () => void) => {
     setBusy(true);
@@ -496,8 +533,7 @@ export function TemplateOptions({ template: t, onChanged, onDeleted, disabled }:
 
   const toggleDefault = (tag: OrgTemplateTag) => {
     setAnchor(null);
-    const next = t.defaultFor.includes(tag) ? t.defaultFor.filter((x) => x !== tag) : [...t.defaultFor, tag];
-    void run(() => socia.updateOrgCardTemplate(t.slug, { defaultFor: next }));
+    void run(() => socia.updateOrgCardTemplate(t.slug, { defaultFor: toggledDefaults(t, tag) }));
   };
 
   const name = label.trim();
@@ -543,6 +579,7 @@ export function TemplateOptions({ template: t, onChanged, onDeleted, disabled }:
           </MenuItem>
         )}
         {t.canSetDefault &&
+          !editOnly &&
           TAG_DEFAULTS.map(({ tag, label: text }) => {
             const on = t.defaultFor.includes(tag);
             return (
@@ -552,7 +589,7 @@ export function TemplateOptions({ template: t, onChanged, onDeleted, disabled }:
               </MenuItem>
             );
           })}
-        {t.canDelete && (
+        {t.canDelete && !editOnly && (
           <MenuItem
             onClick={() => {
               setAnchor(null);
@@ -614,21 +651,14 @@ export function TemplateOptions({ template: t, onChanged, onDeleted, disabled }:
         )}
       </Dialog>
 
-      <Dialog open={dialog === "delete"} onClose={() => !busy && setDialog(null)} fullWidth maxWidth="xs" slotProps={{ paper: { sx: { borderRadius: "14px", backgroundImage: "none" } } }}>
-        <DialogTitle sx={{ fontSize: "1rem", fontWeight: 700 }}>Delete {t.label}?</DialogTitle>
-        <DialogContent>
-          <Typography sx={{ fontSize: "0.875rem", lineHeight: 1.6 }}>
-            It goes for everyone on the desk. Cards already posted keep their image; drafts on it move to the default design when opened.
-          </Typography>
-          {error && <Alert severity="error" sx={{ mt: 1.5, fontSize: "0.8125rem" }}>{error}</Alert>}
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setDialog(null)} disabled={busy} sx={{ color: "text.secondary" }}>Keep it</Button>
-          <Button variant="contained" color="error" disabled={busy} startIcon={busy ? <CircularProgress size={14} color="inherit" /> : <Trash2 size={15} />} onClick={() => void run(() => socia.deleteOrgCardTemplate(t.slug), () => onDeleted?.(t.slug))}>
-            {busy ? "Deleting" : "Delete template"}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <DeleteTemplateDialog
+        template={t}
+        open={dialog === "delete"}
+        busy={busy}
+        error={error}
+        onCancel={() => setDialog(null)}
+        onConfirm={() => void run(() => socia.deleteOrgCardTemplate(t.slug), () => onDeleted?.(t.slug))}
+      />
     </>
   );
 }

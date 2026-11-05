@@ -16,12 +16,13 @@ import { RejectDialog } from "./actionDialogs";
 import { ScheduledList } from "./DraftLists";
 import TemplatesPanel from "./TemplatesPanel";
 import CardBackgroundPanel from "./live/CardBackgroundPanel";
+import OrgTemplateGallery from "./live/OrgTemplateGallery";
 import UndoToast from "./UndoToast";
 import { FtpRefresh } from "./FtpStatus";
 import { countMedia, QueueCards, QueueTable } from "./QueueViews";
 import NewStoriesPill from "./NewStoriesPill";
 import { CONTROL_HEIGHT, EmptyState, isRejectedNotice, PLATFORM_META, PlatformIcon, rejectedNotice, SegmentedControl, storyCategory, storyTag, TAG_TINT } from "./shared";
-import { activeFilterCount, ActiveFilterChips, type FilterFacts, matchesOtherFilters, matchesPriority, QueueFiltersButton, type QueueFilterState, readQueueFilters, saveQueueFilters, sortStories, toQueueQuery } from "./QueueFilters";
+import { activeFilterCount, ActiveFilterChips, type FilterFacts, matchesOtherFilters, matchesPriority, phase1Filters, QueueFiltersButton, type QueueFilterState, readQueueFilters, saveQueueFilters, sortStories, toQueueQuery } from "./QueueFilters";
 import { Phase1PostedList, Phase1QueueList } from "./phase1/Phase1Queue";
 import SourceStatus from "./phase1/SourceStatus";
 import { stableQueueToNews } from "./live/LiveDesk";
@@ -65,6 +66,21 @@ function trendToNews(p: TrendPrefill): FtpNewsItem {
   };
 }
 
+/** A priority choice: the tag's colour dot (yellow Big breaking, red Breaking), its name and count */
+function PriorityLabel({ value, count }: { value: "all" | BreakingTag; count?: number }) {
+  return (
+    <>
+      {value !== "all" && <Box component="span" aria-hidden sx={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, backgroundColor: `rgb(${TAG_TINT[value].rgb})`, boxShadow: "0 0 0 1px rgba(0,0,0,0.18)" }} />}
+      {value === "all" ? "All" : TAG_TINT[value].label}
+      {typeof count === "number" && (
+        <Box component="span" sx={{ fontVariantNumeric: "tabular-nums", opacity: 0.65 }}>
+          {count}
+        </Box>
+      )}
+    </>
+  );
+}
+
 const tileSx = { backgroundColor: "background.paper", borderRadius: "12px", px: 2, py: 1.5, border: "1px solid", borderColor: "divider", boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.03)" };
 
 export default function BreakingDesk({ platform }: { platform: SocialPlatform }) {
@@ -99,7 +115,10 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     } catch {}
   };
   // More filters (Filters button), remembered in this browser
-  const [filters, setFiltersState] = useState<QueueFilterState>(readQueueFilters);
+  const [savedFilters, setFiltersState] = useState<QueueFilterState>(readQueueFilters);
+  // Phase 1 reads them through phase1Filters: priority is the All / Big breaking / Breaking tabs (an old
+  // BIG-only choice becomes Big breaking) and a remembered desk code is dropped, as that filter is gone
+  const filters = p1 ? phase1Filters(savedFilters) : savedFilters;
   // The clock the "received" filters read; ticks each minute so "last hour" keeps moving
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -110,7 +129,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     setFiltersState(next);
     saveQueueFilters(next);
   };
-  // Phase 1: district, desk, BIG, UPDATE and needs-check are applied by the server
+  // Phase 1: district, priority (BIG or not), UPDATE and needs-check are applied by the server
   const serverQuery = JSON.stringify(toQueueQuery(filters));
   const setQueueQuery = desk?.setQueueQuery;
   useEffect(() => {
@@ -224,8 +243,13 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     filters.sort,
   );
   const narrowed = !!q || activeFilterCount(filters) > 0;
-  // The quick priority switch mirrors a single-priority choice made in Filters
+  // The priority tabs mirror a single-priority choice made in Filters (phase 1 has no priority in Filters)
   const quickPriority: "all" | BreakingTag | null = !filters.priority.length ? "all" : filters.priority.length === 1 && filters.priority[0] !== "normal" ? filters.priority[0] : null;
+  // Phase 1 counts the whole day from the server's facets (BIG files are Big breaking, the rest Breaking)
+  const tabFacets = p1 ? (tab === "published" ? desk?.facets.posted.data : desk?.facets.inbox.data) : null;
+  const tabCounts: Record<"all" | BreakingTag, number | undefined> = p1
+    ? { all: tabFacets?.total, big_breaking: tabFacets?.big, breaking: tabFacets ? Math.max(0, tabFacets.total - tabFacets.big) : undefined }
+    : priorityCounts;
   const categoriesInQueue = [...new Set(queue.map(storyCategory).filter((c): c is string => !!c))].sort((a, b) => a.localeCompare(b));
   const districtsInQueue = [...new Set(queue.map((n) => n.area).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 
@@ -442,47 +466,12 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
         />
         {(tab === "queue" || (p1 && tab === "published")) && (
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, ml: { xs: 0, sm: "auto" }, width: { xs: "100%", sm: "auto" }, pb: 0.75, flexWrap: "wrap" }}>
-            {p1 ? (
-              <SegmentedControl<"all" | "big">
-                ariaLabel="BIG files only"
-                value={filters.big ? "big" : "all"}
-                onChange={(v) => setFilters({ ...filters, big: v === "big" })}
-                options={(["all", "big"] as const).map((v) => {
-                  const f = tab === "published" ? facetsPosted : facetsInbox;
-                  const n = v === "all" ? f?.total : f?.big;
-                  return {
-                    value: v,
-                    label: (
-                      <>
-                        {v === "all" ? "All" : "BIG"}
-                        {typeof n === "number" && (
-                          <Box component="span" sx={{ fontVariantNumeric: "tabular-nums", opacity: 0.65 }}>
-                            {n}
-                          </Box>
-                        )}
-                      </>
-                    ),
-                  };
-                })}
-              />
-            ) : (
             <SegmentedControl<"all" | BreakingTag>
               ariaLabel="Filter by priority"
               value={quickPriority}
               onChange={(v) => setFilters({ ...filters, priority: v === "all" ? [] : [v] })}
-              options={(["all", "big_breaking", "breaking"] as const).map((v) => ({
-                value: v,
-                label: (
-                  <>
-                    {v === "all" ? "All" : TAG_TINT[v].label}
-                    <Box component="span" sx={{ fontVariantNumeric: "tabular-nums", opacity: 0.65 }}>
-                      {priorityCounts[v]}
-                    </Box>
-                  </>
-                ),
-              }))}
+              options={(["all", "big_breaking", "breaking"] as const).map((v) => ({ value: v, label: <PriorityLabel value={v} count={tabCounts[v]} /> }))}
             />
-            )}
             <TextField
               placeholder={p1 ? "Search headline, district, post" : "Search headline, area, category"}
               value={query}
@@ -587,8 +576,9 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       {tab === "templates" &&
         (desk ? (
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
+            <OrgTemplateGallery onNotice={setNotice} />
+            {/* The operator's own background: offered in the editor as "Your X background" beside the desk's designs */}
             <CardBackgroundPanel />
-            <EmptyState title="Hashtag rules and handles live on the server" hint="The live desk suggests hashtags and @handles from the Socia library. Editing that library from this screen is not wired up yet." />
           </Box>
         ) : (
           <TemplatesPanel />
@@ -629,7 +619,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
         action={
           isRejectedNotice(notice) ? (
             <Button component={Link} href={REJECTED_NEWS_PATH} size="small" sx={{ color: "inherit", fontWeight: 700, textDecoration: "underline" }}>
-              Open Rejected news
+              Open News - Desk Rejected
             </Button>
           ) : undefined
         }

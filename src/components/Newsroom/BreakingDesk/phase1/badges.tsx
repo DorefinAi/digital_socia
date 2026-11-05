@@ -14,7 +14,6 @@ const NEEDS_CHECK_LABEL: Record<string, string> = {
   no_hindi: "No Hindi text",
   very_long: "Very long file",
   no_district: "No district, check",
-  desk_note: "Desk note removed",
   headline_cut: "Headline cut to fit",
   no_headline: "No headline",
   resaved: "File re-saved, check text",
@@ -27,7 +26,6 @@ const NEEDS_CHECK_HINT: Record<string, string> = {
   no_hindi: "The file has no Hindi text. It may be in a legacy font or the wrong file.",
   very_long: "The file is over 25 lines. Check that the post kept the main points.",
   no_district: "No district was found, so the post has no #District tag. Add one if the story is local.",
-  desk_note: "A desk instruction (नोट) was taken out of the text. Check that nothing else went with it.",
   headline_cut: "The headline alone was too long for 280 and was cut.",
   no_headline: "No headline line was found.",
   resaved: "The desk saved this file again with new text, and the post was rewritten from it. Check it against the source.",
@@ -36,6 +34,10 @@ const NEEDS_CHECK_HINT: Record<string, string> = {
 
 export const needsCheckLabel = (code: NeedsCheckCode) => NEEDS_CHECK_LABEL[code] ?? code.replace(/_/g, " ");
 export const needsCheckHint = (code: NeedsCheckCode) => NEEDS_CHECK_HINT[code] ?? null;
+
+/** The needs-check reasons the desk sees. The server still strips desk instructions (नोट lines) from the post
+ * and may still report "desk_note"; the desk decided not to be told about it, so that reason is never shown. */
+export const shownNeedsCheck = (codes: NeedsCheckCode[] | undefined): NeedsCheckCode[] => (codes ?? []).filter((c) => c !== "desk_note");
 
 type Tone = "big" | "update" | "warn" | "plain";
 
@@ -61,13 +63,13 @@ export function Badge({ tone, children, title }: { tone: Tone; children: React.R
 interface Phase1BadgesProps {
   tags?: FileTags | null;
   needsCheck?: NeedsCheckCode[];
+  /** Ignored: the desk-note reason is not shown (kept so older callers still compile) */
   deskNoteRemoved?: boolean;
 }
 
-/** BIG, UPDATE, then each needs-check reason (the desk note once, whichever way the server sent it). */
-export function Phase1Badges({ tags, needsCheck = [], deskNoteRemoved }: Phase1BadgesProps) {
-  const reasons = [...needsCheck];
-  if (deskNoteRemoved && !reasons.includes("desk_note")) reasons.push("desk_note");
+/** BIG, UPDATE, then each needs-check reason (never the desk note). */
+export function Phase1Badges({ tags, needsCheck }: Phase1BadgesProps) {
+  const reasons = shownNeedsCheck(needsCheck);
   if (!tags?.big && !tags?.update && !tags?.exclusive && !reasons.length) return null;
   return (
     <>

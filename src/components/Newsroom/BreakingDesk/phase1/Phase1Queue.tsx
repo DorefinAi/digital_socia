@@ -27,9 +27,8 @@ function RowMeta({ live }: { live: QueueItem }) {
   const place = [live.district, live.town].filter(Boolean).join(" · ");
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap", fontSize: "0.75rem", color: "text.secondary" }}>
-      <Phase1Badges tags={live.tags} needsCheck={live.needsCheck} deskNoteRemoved={live.deskNoteRemoved} />
+      <Phase1Badges tags={live.tags} needsCheck={live.needsCheck} />
       {place && <span>{place}</span>}
-      {live.desk && <span>Desk {live.desk}</span>}
       {live.card?.state === "ready" && <Badge tone="plain">Card</Badge>}
     </Box>
   );

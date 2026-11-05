@@ -26,7 +26,8 @@ export interface CardChoice {
   org?: OrgCardTemplate;
 }
 
-function Thumb({ template, headline, body, label }: { template: DrawableCardTemplate; headline: string; body: string; label: string }) {
+/** A template drawn small with the given words; `ariaLabel` overrides "<label> with this story". */
+export function Thumb({ template, headline, body, label, ariaLabel }: { template: DrawableCardTemplate; headline: string; body: string; label: string; ariaLabel?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [image, setImage] = useState<{ url: string; img: HTMLImageElement } | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
@@ -75,7 +76,7 @@ function Thumb({ template, headline, body, label }: { template: DrawableCardTemp
   return (
     <Box sx={{ position: "relative", aspectRatio: ratio, lineHeight: 0 }}>
       {!ready && <Skeleton variant="rectangular" sx={{ position: "absolute", inset: 0, height: "100%", bgcolor: "#1A1A1D" }} />}
-      <canvas ref={canvasRef} role="img" aria-label={`${label} with this story`} style={{ display: "block", width: "100%", height: "100%" }} />
+      <canvas ref={canvasRef} role="img" aria-label={ariaLabel ?? `${label} with this story`} style={{ display: "block", width: "100%", height: "100%" }} />
     </Box>
   );
 }

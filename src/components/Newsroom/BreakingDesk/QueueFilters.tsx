@@ -2,8 +2,9 @@
 
 // More filters for the draft console's queue: priority, category, district, media, received time, status
 // and sort. Everything runs in the browser on the stories already loaded; the last choice is remembered here.
-// Phase 1 (breaking files) swaps in district, desk/shift, BIG, UPDATE and needs-check, which the server applies
-// (GET /x/queue filters, counts from /x/queue/facets) so a whole day stays quick to narrow.
+// Phase 1 (breaking files) swaps in district, UPDATE and needs-check, plus the priority tabs (BIG in the file
+// name is Big breaking, every other file Breaking), which the server applies (GET /x/queue filters, counts
+// from /x/queue/facets) so a whole day stays quick to narrow.
 
 import React from "react";
 import { Box, TextField } from "@mui/material";
@@ -28,11 +29,12 @@ export interface QueueFilterState {
   to: string;
   status: StatusValue[];
   sort: "newest" | "oldest";
-  /** Phase 1: BIG in the file name */
+  /** Phase 1, before the priority tabs: BIG in the file name. Read from older saved filters and folded into
+   * `priority` by phase1Filters; nothing sets it now. */
   big: boolean;
   /** Phase 1: UPDATE in the file name */
   update: boolean;
-  /** Phase 1: desk/shift code (one at a time, as the server takes it) */
+  /** Phase 1, no longer offered: desk/shift code. Older saved filters may hold one; phase1Filters drops it. */
   desks: string[];
   /** Phase 1: only posts with a needs-check reason */
   needsCheck: boolean;
@@ -43,12 +45,29 @@ export const EMPTY_FILTERS: QueueFilterState = { priority: [], categories: [], d
 /** "No district" in phase 1's district filter (the server's `district=none`) */
 export const NO_DISTRICT = "none";
 
-/** The phase 1 filters the server applies */
+/** The phase 1 priority tab: one of Big breaking / Breaking, or null for All */
+export const phase1Priority = (f: QueueFilterState): BreakingTag | null =>
+  f.big || (f.priority.length === 1 && f.priority[0] === "big_breaking") ? "big_breaking" : f.priority.length === 1 && f.priority[0] === "breaking" ? "breaking" : null;
+
+/**
+ * Phase 1's view of the filters: the priority tab as a single priority (an old BIG-only choice becomes Big
+ * breaking; "normal" or a mix becomes All, since every breaking file is one of the two), and no desk code
+ * (that filter is gone, so a remembered one must not keep narrowing the list unseen). Returns `f` itself
+ * when nothing changes.
+ */
+export function phase1Filters(f: QueueFilterState): QueueFilterState {
+  const tab = phase1Priority(f);
+  if (!f.big && !f.desks.length && (tab ? f.priority.length === 1 : !f.priority.length)) return f;
+  return { ...f, priority: tab ? [tab] : [], big: false, desks: [] };
+}
+
+/** The phase 1 filters the server applies (pass phase1Filters' result) */
 export function toQueueQuery(f: QueueFilterState): QueueQuery {
+  const tab = phase1Priority(f);
   return {
     ...(f.districts[0] ? { district: f.districts[0] } : {}),
-    ...(f.desks[0] ? { desk: f.desks[0] } : {}),
-    ...(f.big ? { big: true } : {}),
+    // Big breaking = BIG in the file name, Breaking = the rest (the server's big=false)
+    ...(tab ? { big: tab === "big_breaking" } : {}),
     ...(f.update ? { update: true } : {}),
     ...(f.needsCheck ? { needsCheck: true } : {}),
   };
@@ -111,7 +130,7 @@ export interface FilterFacts {
 
 /**
  * Everything but priority, so the priority switch can count what each choice would show. `serverSide`
- * (phase 1): the server already applied district, desk, BIG, UPDATE and needs-check.
+ * (phase 1): the server already applied district, BIG (the priority tab), UPDATE and needs-check.
  */
 export function matchesOtherFilters(item: FtpNewsItem, f: QueueFilterState, facts: FilterFacts, now: number, serverSide = false): boolean {
   if (f.categories.length && !f.categories.includes(storyCategory(item) ?? "")) return false;
@@ -158,8 +177,6 @@ export function ActiveFilterChips({ filters, onChange, live }: { filters: QueueF
     ...filters.priority.map((p) => chip(`p-${p}`, PRIORITY_LABEL[p], { ...filters, priority: filters.priority.filter((x) => x !== p) })),
     ...filters.categories.map((c) => chip(`c-${c}`, c, { ...filters, categories: filters.categories.filter((x) => x !== c) })),
     ...filters.districts.map((d) => chip(`d-${d}`, !d || d === NO_DISTRICT ? "No district" : d, { ...filters, districts: filters.districts.filter((x) => x !== d) })),
-    ...filters.desks.map((d) => chip(`k-${d}`, `Desk ${d}`, { ...filters, desks: [] })),
-    ...(filters.big ? [chip("big", "BIG only", { ...filters, big: false })] : []),
     ...(filters.update ? [chip("update", "UPDATE only", { ...filters, update: false })] : []),
     ...(filters.needsCheck ? [chip("check", "Needs check", { ...filters, needsCheck: false })] : []),
     ...filters.media.map((m) => chip(`m-${m}`, MEDIA_LABEL[m], { ...filters, media: filters.media.filter((x) => x !== m) })),
@@ -277,13 +294,12 @@ export function QueueFiltersButton({ filters: f, onChange, categories, districts
   );
 }
 
-/** Phase 1's menu: one district and one desk at a time (as the server filters), the file-name flags and needs-check. */
+/** Phase 1's menu: one district at a time (as the server filters), UPDATE and needs-check. Priority (BIG) is the tabs beside it. */
 function Phase1FiltersMenu({ filters: f, onChange, facets }: { filters: QueueFilterState; onChange: (f: QueueFilterState) => void; facets: QueueFacets | null }) {
   const set = (patch: Partial<QueueFilterState>) => onChange({ ...f, ...patch });
   const pickOne = (list: string[], value: string) => (list[0] === value ? [] : [value]);
   // Busiest first; "No district" last
   const districts = [...(facets?.districts ?? [])].sort((a, b) => (a.name === null ? 1 : b.name === null ? -1 : b.n - a.n || a.name.localeCompare(b.name)));
-  const desks = [...(facets?.desks ?? [])].sort((a, b) => b.n - a.n || a.code.localeCompare(b.code));
   return (
     <FiltersButton activeCount={activeFilterCount(f)} onClearAll={() => onChange({ ...EMPTY_FILTERS, sort: f.sort })}>
       <FilterSection title="Sort">
@@ -298,9 +314,6 @@ function Phase1FiltersMenu({ filters: f, onChange, facets }: { filters: QueueFil
         />
       </FilterSection>
       <FilterSection title="File">
-        <FilterOption on={f.big} onClick={() => set({ big: !f.big })}>
-          {counted("BIG only", facets?.big)}
-        </FilterOption>
         <FilterOption on={f.update} onClick={() => set({ update: !f.update })}>
           {counted("UPDATE only", facets?.update)}
         </FilterOption>
@@ -320,17 +333,6 @@ function Phase1FiltersMenu({ filters: f, onChange, facets }: { filters: QueueFil
           })
         ) : (
           <FilterEmpty>{facets ? "No district in this view." : "Loading districts."}</FilterEmpty>
-        )}
-      </FilterSection>
-      <FilterSection title="Desk / shift">
-        {desks.length ? (
-          desks.map((d) => (
-            <FilterOption key={d.code} on={f.desks[0] === d.code} onClick={() => set({ desks: pickOne(f.desks, d.code) })}>
-              {counted(d.code, d.n)}
-            </FilterOption>
-          ))
-        ) : (
-          <FilterEmpty>{facets ? "No desk code in this view." : "Loading desks."}</FilterEmpty>
         )}
       </FilterSection>
       <FilterSection title="Received (IST)">
