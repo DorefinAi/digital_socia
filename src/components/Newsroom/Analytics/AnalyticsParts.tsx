@@ -4,7 +4,6 @@ import React from "react";
 import { Box, IconButton, Typography, Tooltip } from "@mui/material";
 import type { SxProps, Theme } from "@mui/material";
 import { ArrowDownRight, ArrowUpRight, Info } from "lucide-react";
-import { Area, AreaChart, ResponsiveContainer } from "recharts";
 
 export const cardSx = {
   backgroundColor: "background.paper",
@@ -56,14 +55,9 @@ export function InfoTip({ text, label, sx }: { text: string; label: string; sx?:
   );
 }
 
-export interface SparkSeries {
-  key: string;
-  color: string;
-}
-
 /**
- * Metric tile: big number, change against the previous period, the previous figure,
- * and a sparkline tinted in the platform colour(s). Click selects it for the main chart.
+ * Metric tile: big number, change against the previous period and the previous figure.
+ * Click selects it for the main chart.
  */
 export function KpiTile({
   label,
@@ -72,9 +66,6 @@ export function KpiTile({
   display,
   compare,
   help,
-  spark,
-  series,
-  stacked,
   color,
   active,
   onClick,
@@ -86,10 +77,6 @@ export function KpiTile({
   /** "vs 2.01 Cr, previous 7 days" */
   compare: string;
   help: string;
-  spark: Record<string, number>[];
-  series: SparkSeries[];
-  /** Stack the platforms (sums); off for rates, which overlap instead */
-  stacked: boolean;
   color: string;
   active: boolean;
   onClick: () => void;
@@ -124,15 +111,6 @@ export function KpiTile({
           <Delta current={value} previous={previous} />
         </Box>
         <Typography component="span" sx={{ fontSize: "0.6875rem", color: "text.secondary", fontVariantNumeric: "tabular-nums", lineHeight: 1.35 }}>{compare}</Typography>
-        <Box aria-hidden sx={{ height: 34, mx: -0.5, mt: "auto" }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={spark} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
-              {series.map((s) => (
-                <Area key={s.key} type="monotone" dataKey={s.key} stackId={stacked ? "a" : undefined} stroke={`${s.color}A6`} fill={`${s.color}2E`} strokeWidth={1.25} isAnimationActive={false} />
-              ))}
-            </AreaChart>
-          </ResponsiveContainer>
-        </Box>
       </Box>
       <InfoTip text={help} label={`How ${label.toLowerCase()} is counted`} sx={{ position: "absolute", top: 6, right: 6 }} />
     </Box>

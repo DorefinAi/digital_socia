@@ -140,11 +140,11 @@ export default function TrendChart({
             {view === "all"
               ? visible.flatMap((p) => [
                   ...(showPrev ? [<Line key={`prev-${p}`} type="monotone" dataKey={`prev_${p}`} stroke={tone(p, mode)} strokeOpacity={0.45} strokeDasharray="5 4" strokeWidth={1.5} dot={false} activeDot={false} isAnimationActive={false} />] : []),
-                  <Line key={p} type="monotone" dataKey={`cur_${p}`} stroke={tone(p, mode)} strokeWidth={2} dot={bucket !== "day"} isAnimationActive={false} />,
+                  <Line key={p} type="monotone" dataKey={`cur_${p}`} stroke={tone(p, mode)} strokeWidth={2} dot={bucket !== "day" || points.length === 1} isAnimationActive={false} />,
                 ])
               : [
                   ...(showPrev ? [<Line key="prev" type="monotone" dataKey="prev_total" stroke={PREV_GREY[mode]} strokeDasharray="5 4" strokeWidth={1.5} dot={false} activeDot={false} isAnimationActive={false} />] : []),
-                  <Area key="cur" type="monotone" dataKey="cur_total" stroke={color} fill="url(#trendFill)" strokeWidth={2} dot={bucket !== "day"} isAnimationActive={false} />,
+                  <Area key="cur" type="monotone" dataKey="cur_total" stroke={color} fill="url(#trendFill)" strokeWidth={2} dot={bucket !== "day" || points.length === 1} isAnimationActive={false} />,
                 ]}
           </ComposedChart>
         </ResponsiveContainer>

@@ -2,7 +2,7 @@
 // the backend replaces this with the platforms' own insights APIs.
 
 export type AnalyticsPlatform = "X" | "YouTube" | "Instagram" | "Facebook";
-export type RangeKey = "7d" | "4w" | "1m";
+export type RangeKey = "1d" | "7d" | "4w" | "1m";
 export type BucketKind = "day" | "week" | "month";
 
 export const ANALYTICS_PLATFORMS: AnalyticsPlatform[] = ["X", "YouTube", "Instagram", "Facebook"];
@@ -10,6 +10,7 @@ export const ANALYTICS_PLATFORMS: AnalyticsPlatform[] = ["X", "YouTube", "Instag
 export const PLATFORM_COLOR: Record<AnalyticsPlatform, string> = { X: "#111111", YouTube: "#FF0000", Instagram: "#D62976", Facebook: "#1877F2" };
 
 export const RANGES: Record<RangeKey, { label: string; days: number; bucket: BucketKind }> = {
+  "1d": { label: "Today", days: 1, bucket: "day" },
   "7d": { label: "Last 7 days", days: 7, bucket: "day" },
   "4w": { label: "Last 4 weeks", days: 28, bucket: "week" },
   "1m": { label: "Last 1 month", days: 30, bucket: "day" },
@@ -82,6 +83,7 @@ const fmtDay = (d: Date, year = false) => d.toLocaleDateString("en-IN", { day: "
 
 /** "23 Oct – 29 Oct 2026" */
 export function periodText(p: Period) {
+  if (p.start.getTime() === p.end.getTime()) return fmtDay(p.end, true);
   return `${fmtDay(p.start, p.start.getFullYear() !== p.end.getFullYear())} – ${fmtDay(p.end, true)}`;
 }
 

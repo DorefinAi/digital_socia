@@ -7,7 +7,7 @@ import { MAX_RANGE_DAYS, RangeKey, customRangeError, isoDay, startOfToday } from
 
 export type RangeChoice = RangeKey | "custom";
 
-/** 7 days / 4 weeks / 1 month, plus Custom: two dates, at most a year apart, none in the future. */
+/** Today / 7 days / 4 weeks / 1 month, plus Custom: two dates, at most a year apart, none in the future. */
 export default function RangePicker({
   value,
   custom,
@@ -62,6 +62,7 @@ export default function RangePicker({
         aria-label="Date range"
         sx={{ height: 36, ...segmentSx }}
       >
+        <ToggleButton value="1d">Today</ToggleButton>
         <ToggleButton value="7d">7 days</ToggleButton>
         <ToggleButton value="4w">4 weeks</ToggleButton>
         <ToggleButton value="1m">1 month</ToggleButton>

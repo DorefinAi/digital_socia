@@ -5,6 +5,7 @@ import ResponsiveTabs from "@/components/Layout/ResponsiveTabs";
 import { Box, Typography, Button, CircularProgress, Snackbar, Chip } from "@mui/material";
 import { Download, LayoutGrid } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import type { PieLabelRenderProps } from "recharts";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { useThemeMode } from "@/providers/MuiProvider";
 import {
@@ -37,6 +38,9 @@ const ALL_COLOR = "#3B82F6";
 const BREAKDOWN_COLORS = ["#3B82F6", "#F59E0B", "#10B981", "#8B5CF6", "#EF4444"];
 
 const pdfDay = (d: Date) => d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+const dayCount = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
+/** "the day before" for a single day, "the 7 days before" otherwise */
+const priorSpan = (n: number) => (n === 1 ? "day" : dayCount(n));
 
 export default function DigitalDashboard() {
   const { socialPosts } = useNewsroom();
@@ -44,7 +48,7 @@ export default function DigitalDashboard() {
   const reportRef = useRef<HTMLDivElement>(null);
 
   const [view, setView] = useState<View>("all");
-  const [range, setRange] = useState<RangeChoice>("7d");
+  const [range, setRange] = useState<RangeChoice>("1d");
   const [custom, setCustom] = useState<{ from: string; to: string } | null>(null);
   const [metric, setMetric] = useState<MetricKey>("reach");
   const [hidden, setHidden] = useState<AnalyticsPlatform[]>([]);
@@ -56,7 +60,7 @@ export default function DigitalDashboard() {
   const period = useMemo(() => {
     const from = custom && parseIsoDay(custom.from);
     const to = custom && parseIsoDay(custom.to);
-    return range === "custom" && from && to ? customPeriod(from, to) : presetPeriod(range === "custom" ? "7d" : range);
+    return range === "custom" && from && to ? customPeriod(from, to) : presetPeriod(range === "custom" ? "1d" : range);
   }, [range, custom]);
 
   const platforms = view === "all" ? ANALYTICS_PLATFORMS : [view];
@@ -104,10 +108,6 @@ export default function DigitalDashboard() {
     return pt;
   });
 
-  // Sparklines: one tinted band per platform in view (stacked for sums)
-  const sparkFor = (key: MetricKey) => buckets.X.cur.map((_, i) => Object.fromEntries(platforms.map((p) => [p, bucketValue(p, buckets[p].cur[i], key)])));
-  const sparkSeries = platforms.map((p) => ({ key: p, color: tone(p, mode) }));
-
   // Engagement breakdown: by platform in the overall view, by signal inside a platform
   const breakdown =
     view === "all"
@@ -115,6 +115,9 @@ export default function DigitalDashboard() {
       : METRICS[view]
           .filter((m) => m.key !== REACH_KEY[view] && m.key !== "followers" && m.key !== "watchHours")
           .map((m, i) => ({ name: m.label, value: sumMetric(periods[view].current, m.key), color: BREAKDOWN_COLORS[i % BREAKDOWN_COLORS.length] }));
+  const breakdownTotal = breakdown.reduce((s, b) => s + b.value, 0);
+  const shareOf = (v: number) => (breakdownTotal ? (v / breakdownTotal) * 100 : 0);
+  const pieLabelFill = mode === "light" ? "#333333" : "#E0E0E0";
 
   const comparison = ANALYTICS_PLATFORMS.map((p) => ({ name: p, rate: +valueOf(p, periods[p].current, "rate").toFixed(2), followers: valueOf(p, periods[p].current, "followers") }));
 
@@ -146,7 +149,7 @@ export default function DigitalDashboard() {
         // e.g. socia-digital-report_facebook_last-7-days_2026-10-23_to_2026-10-29.pdf
         fileName: `socia-digital-report_${slug(viewLabel)}_${slug(period.label)}_${isoDay(period.start)}_to_${isoDay(period.end)}.pdf`,
         title: `Digital report · ${viewLabel} · ${datesPdf}`,
-        subtitle: `${period.label} (${period.days} days), compared with the ${period.days} days before. Demo data. Generated ${new Date().toLocaleString("en-IN", { hour12: false })}`,
+        subtitle: `${period.label} (${dayCount(period.days)}), compared with the ${priorSpan(period.days)} before. Demo data. Generated ${new Date().toLocaleString("en-IN", { hour12: false })}`,
         background: mode === "light" ? "#f8f9fa" : "#121212",
       });
     } catch {
@@ -173,7 +176,7 @@ export default function DigitalDashboard() {
             />
           </Box>
           <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary" }}>
-            {period.label}, {dates}, compared with the {period.days} days before.
+            {period.label}, {dates}, compared with the {priorSpan(period.days)} before.
           </Typography>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
@@ -221,11 +224,8 @@ export default function DigitalDashboard() {
                 value={cur}
                 previous={prev}
                 display={display(k, cur)}
-                compare={`vs previous ${period.days} days: ${display(k, prev)}`}
+                compare={`vs ${period.days === 1 ? "previous day" : `previous ${period.days} days`}: ${display(k, prev)}`}
                 help={metricHelp(view, k, { reach: total("reach", "current"), engagements: total("engagements", "current") })}
-                spark={sparkFor(k)}
-                series={sparkSeries}
-                stacked={k !== "rate"}
                 color={color}
                 active={metric === k}
                 onClick={() => setMetric(k)}
@@ -285,10 +285,25 @@ export default function DigitalDashboard() {
                     data={breakdown}
                     dataKey="value"
                     nameKey="name"
-                    innerRadius={58}
-                    outerRadius={92}
+                    innerRadius={50}
+                    outerRadius={78}
                     paddingAngle={3}
                     isAnimationActive={false}
+                    labelLine={false}
+                    label={({ cx, cy, midAngle, outerRadius, percent }: PieLabelRenderProps) => {
+                      const pct = Number(percent ?? 0) * 100;
+                      // Tiny slices stay unlabelled so their labels don't collide; the tooltip still has them
+                      if (pct < 3) return null;
+                      const rad = (-Number(midAngle ?? 0) * Math.PI) / 180;
+                      const r = Number(outerRadius) + 12;
+                      const x = Number(cx) + r * Math.cos(rad);
+                      const y = Number(cy) + r * Math.sin(rad);
+                      return (
+                        <text x={x} y={y} fill={pieLabelFill} textAnchor={x >= Number(cx) ? "start" : "end"} dominantBaseline="central" fontSize={12} fontWeight={600} style={{ fontVariantNumeric: "tabular-nums" }}>
+                          {`${pct.toFixed(pct < 10 ? 1 : 0)}%`}
+                        </text>
+                      );
+                    }}
                     onClick={(d) => view === "all" && ANALYTICS_PLATFORMS.includes(d.name as AnalyticsPlatform) && (setView(d.name as AnalyticsPlatform), setHeatPlatform(d.name as AnalyticsPlatform))}
                     style={{ cursor: view === "all" ? "pointer" : "default" }}
                   >
@@ -296,7 +311,7 @@ export default function DigitalDashboard() {
                       <Cell key={b.name} fill={b.color} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(v, name) => [formatIndian(Number(v)), name]} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
+                  <Tooltip formatter={(v, name) => [`${formatIndian(Number(v))} (${shareOf(Number(v)).toFixed(1)}%)`, name]} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
                   <Legend formatter={(value) => <span style={{ fontSize: 12 }}>{value}</span>} iconType="circle" iconSize={8} />
                 </PieChart>
               </ResponsiveContainer>
