@@ -125,7 +125,7 @@ export const tagTint = (tag: BreakingTag, mode: "light" | "dark", boost = 1) => 
 };
 
 /** The toast after a reject, which points to the Rejected news page. */
-const REJECTED_NOTICE_END = "Find it in Rejected news.";
+const REJECTED_NOTICE_END = "Find it in News - Desk Rejected.";
 export const rejectedNotice = (headline: string) => `Rejected "${headline}". ${REJECTED_NOTICE_END}`;
 export const isRejectedNotice = (notice: string) => notice.endsWith(REJECTED_NOTICE_END);
 

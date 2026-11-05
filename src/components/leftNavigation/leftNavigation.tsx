@@ -14,8 +14,7 @@ import {
 import {
   Menu,
   Lock,
-  LayoutDashboard,
-  XCircle,
+  Archive,
   BarChart3,
   Sparkles,
   LogOut,
@@ -156,8 +155,7 @@ const LeftNavigation: React.FC = () => {
   const canManageAccess = can("page.settings") && canAny(["roles.manage", "users.manage"]);
 
   const navItems = [
-    { label: "Dashboard", icon: <LayoutDashboard size={20} />, path: "/dashboard", accessible: can("page.dashboard") },
-    { label: REJECTED_NEWS_LABEL, icon: <XCircle size={20} />, path: REJECTED_NEWS_PATH, accessible: can(REJECTED_NEWS_PERMISSION) },
+    { label: REJECTED_NEWS_LABEL, icon: <Archive size={20} />, path: REJECTED_NEWS_PATH, accessible: can(REJECTED_NEWS_PERMISSION) },
     { label: "Digital Dashboard", icon: <BarChart3 size={20} />, path: "/digital", accessible: can("page.dashboard") },
     { label: "Web Scraper", icon: <Globe size={20} />, path: "/web-scraper", accessible: can("page.web_scraper") },
     {

@@ -39,7 +39,7 @@ export interface Permission {
 
 export const PERMISSION_CATALOGUE: Permission[] = [
   { key: "page.dashboard", group: "Pages", label: "Dashboard", description: "The desk's dashboard and the Digital Dashboard." },
-  { key: "page.rejected_news", group: "Pages", label: "Rejected news", description: "Stories rejected on the platform desks." },
+  { key: "page.rejected_news", group: "Pages", label: "News - Desk Rejected", description: "Stories rejected on the platform desks." },
   { key: "page.post_studio.x", group: "Pages", label: "Post Studio: X", description: "The X desk and its editor." },
   { key: "page.post_studio.instagram", group: "Pages", label: "Post Studio: Instagram", description: "The Instagram desk and its editor." },
   { key: "page.post_studio.facebook", group: "Pages", label: "Post Studio: Facebook", description: "The Facebook desk and its editor." },
@@ -150,7 +150,7 @@ export const platformLabel = (key: string) => PLATFORM_OPTIONS.find((p) => p.key
 export const ROUTE_ACCESS: { prefix: string; any: string[]; title: string }[] = [
   { prefix: "/dashboard", any: ["page.dashboard"], title: "Dashboard" },
   { prefix: "/digital", any: ["page.dashboard"], title: "Digital Dashboard" },
-  { prefix: "/rejected-news", any: ["page.rejected_news"], title: "Rejected news" },
+  { prefix: "/rejected-news", any: ["page.rejected_news"], title: "News - Desk Rejected" },
   { prefix: "/ai-content", any: POST_STUDIO_PAGES, title: "Post Studio" },
   { prefix: "/ai-content/x", any: ["page.post_studio.x"], title: "Post Studio: X" },
   { prefix: "/ai-content/instagram", any: ["page.post_studio.instagram"], title: "Post Studio: Instagram" },

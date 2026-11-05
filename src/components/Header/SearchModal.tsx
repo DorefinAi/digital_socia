@@ -17,7 +17,7 @@ import {
   Search,
   LayoutDashboard,
   ClipboardList,
-  XCircle,
+  Archive,
   BarChart3,
   Sparkles,
   Filter,
@@ -54,8 +54,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ open, onClose }) => {
   const { mode } = useThemeMode();
 
   const navItems = [
-    { label: "Dashboard", path: "/dashboard", icon: <LayoutDashboard size={18} />, accessible: can("page.dashboard") },
-    { label: REJECTED_NEWS_LABEL, path: REJECTED_NEWS_PATH, icon: <XCircle size={18} />, accessible: can(REJECTED_NEWS_PERMISSION) },
+    { label: REJECTED_NEWS_LABEL, path: REJECTED_NEWS_PATH, icon: <Archive size={18} />, accessible: can(REJECTED_NEWS_PERMISSION) },
     { label: "Digital Dashboard", path: "/digital", icon: <BarChart3 size={18} />, accessible: can("page.dashboard") },
     { label: "Post Studio", path: "/ai-content", icon: <Sparkles size={18} />, accessible: canAny(["page.post_studio.x", "page.post_studio.instagram", "page.post_studio.facebook", "page.post_studio.youtube"]) },
     { label: "Web Scraper", path: "/web-scraper", icon: <Globe size={18} />, accessible: can("page.web_scraper") },

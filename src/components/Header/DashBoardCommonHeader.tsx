@@ -134,8 +134,8 @@ const DashBoardCommonHeader: React.FC = () => {
     const lastPart = path[path.length - 1];
     const titles: Record<string, string> = {
       dashboard: "Dashboard",
-      approval: "Rejected news",
-      "rejected-news": "Rejected news",
+      approval: "News - Desk Rejected",
+      "rejected-news": "News - Desk Rejected",
       digital: "Digital Dashboard",
       "ai-content": "Post Studio",
       "web-scraper": "Web Scraper",

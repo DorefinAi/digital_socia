@@ -41,7 +41,7 @@ export default function LiveActivity({ formatTime, onNavigate }: { formatTime: (
     };
   }, [allowed]);
 
-  if (!allowed) return <HeaderEmpty title="No recent activity to show" text="The desk's activity feed isn't available yet. Posts and rejections are listed under Published and Rejected news." />;
+  if (!allowed) return <HeaderEmpty title="No recent activity to show" text="The desk's activity feed isn't available yet. Posts and rejections are listed under Published and News - Desk Rejected." />;
   if (error) return <HeaderEmpty title="Activity didn't load" text="Close this panel and open it again to retry." />;
   if (!items)
     return (

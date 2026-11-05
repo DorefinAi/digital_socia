@@ -29,6 +29,7 @@ import { USE_MOCKS } from "@/lib/socia/config";
 import { enableTotp, login, startTotpSetup, verifyTotp } from "@/lib/socia/api";
 import { ApiError } from "@/lib/socia/client";
 import { useSociaSession } from "@/providers/SociaSessionProvider";
+import { PREFERRED_HOME, useHomePath } from "@/lib/access/useHomePath";
 
 // Follows the app theme (useThemeMode), so the choice made here carries into
 // the desk. Status colours are darker in light mode to keep AA contrast.
@@ -208,16 +209,18 @@ const LoginForm: React.FC = () => {
     return true;
   };
 
-  // Someone with a live session (or one just made) goes straight to the desk
+  // Where people land after signing in: the X desk if their role may open it, else the first page they may
+  const home = useHomePath();
+  // Someone with a live session (or one just made) goes straight there, once their permissions are known
   useEffect(() => {
-    if (session.status === "signed_in") router.replace("/dashboard");
-  }, [session.status, router]);
+    if (session.status === "signed_in" && home) router.replace(home);
+  }, [session.status, home, router]);
 
   const enterDesk = async () => {
     const me = await session.refresh();
     if (me?.verified) {
+      // The refresh signs the session in; the effect above then opens the landing page
       dispatch(loginUser({ user: { id: me.user.id, name: me.user.name, email: me.user.email }, token: "socia-session" }));
-      router.push("/dashboard");
     } else {
       setFormError("Your session did not start. Try signing in again.");
     }
@@ -273,7 +276,7 @@ const LoginForm: React.FC = () => {
             token: "static-token-for-demo",
           })
         );
-        router.push("/dashboard");
+        router.push(home ?? PREFERRED_HOME);
       } else {
         setPasswordError("Invalid credentials. Use admin@dashb.com / password123");
       }
