@@ -7,13 +7,15 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Button, Chip, CircularProgress, IconButton, InputAdornment, Popover, Snackbar, TextField, Typography } from "@mui/material";
-import { ExternalLink, Flame, Globe, Hash, ImageOff, LayoutGrid, List, Newspaper, PlusCircle, RefreshCw, Search, TrendingUp, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ExternalLink, Flame, Globe, Hash, ImageOff, LayoutGrid, List, Newspaper, Pencil, PlusCircle, RefreshCw, Search, TrendingUp, X } from "lucide-react";
+import { api } from "@/lib/socia/client";
 import ResponsiveTabs from "@/components/Layout/ResponsiveTabs";
 import { DEMO_SCRAPER_TOPICS } from "@/data/scraperData";
 import { USE_MOCKS } from "@/lib/socia/config";
 import { usePolled } from "@/lib/socia/usePolled";
 import { usePermissions } from "@/lib/access/usePermissions";
-import { fetchTrendDistricts, fetchTrends, refreshTrends, searchTrends, type TrendItem, type TrendSource, type TrendsResponse, type TrendType, type TrendWindow } from "@/lib/socia/trends";
+import { draftFromTrend, fetchTrendDistricts, refreshTrends, searchTrends, type TrendItem, type TrendSource, type TrendsResponse, type TrendType, type TrendWindow } from "@/lib/socia/trends";
 import { errorText, LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
 import { CONTROL_HEIGHT, SegmentedControl } from "./ui/controls";
 import { FilterChips, type FilterChip, FilterEmpty, FilterOption, FiltersButton, FilterSection, toggleValue } from "./ui/FilterKit";
@@ -22,7 +24,7 @@ import { apiFileUrl } from "./BreakingDesk/live/LiveDesk";
 import CreateDraftDialog from "./CreateDraftDialog";
 import type { ScraperItem } from "@/types/newsroom";
 import { DEMO_CHANNEL, DEMO_DISTRICT, demoSources } from "@/data/scraperDemoExtras";
-import { KeywordWatchButton, NewMatchesBadge, useTrendWatches, WatchHits } from "./WebScraper/KeywordWatch";
+import { KeywordWatchSection, NewMatchesBadge, useTrendWatches, WatchHits } from "./WebScraper/KeywordWatch";
 import { ClusterSources, sourceCountOf } from "./WebScraper/ClusterSources";
 
 const POLL_MS = 60_000;
@@ -39,22 +41,24 @@ interface TrendFilters {
   sort: SortValue;
 }
 interface Remembered {
-  type: TrendType;
+  tab: TabKey;
   window: TrendWindow;
   view: "cards" | "list";
   filters: TrendFilters;
 }
 const EMPTY_FILTERS: TrendFilters = { sources: [], categories: [], districts: [], watched: false, sort: "rank" };
-const DEFAULTS: Remembered = { type: "topics", window: "24h", view: "cards", filters: EMPTY_FILTERS };
+const DEFAULTS: Remembered = { tab: "articles", window: "24h", view: "cards", filters: EMPTY_FILTERS };
 
 function readRemembered(): Remembered {
   try {
-    const raw = JSON.parse(localStorage.getItem(STORE_KEY) ?? "null") as Partial<Remembered> | null;
+    const raw = JSON.parse(localStorage.getItem(STORE_KEY) ?? "null") as (Partial<Remembered> & { type?: unknown }) | null;
     if (!raw || typeof raw !== "object") return DEFAULTS;
     const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
     const f = (raw.filters ?? {}) as Partial<TrendFilters>;
     return {
-      type: (["topics", "articles", "hashtags"] as const).find((t) => t === raw.type) ?? "topics",
+      // `tab` replaced the old `type` (topics | articles | hashtags). Only "articles" carries over: most people
+      // have "topics" stored just because it was the default, and the tabs changed.
+      tab: TABS.find((t) => t.value === raw.tab)?.value ?? (raw.type === "articles" ? "articles" : DEFAULTS.tab),
       window: (["12h", "24h", "7d"] as const).find((w) => w === raw.window) ?? "24h",
       view: raw.view === "list" ? "list" : "cards",
       filters: { sources: list(f.sources).filter(isGroup), categories: list(f.categories), districts: list(f.districts), watched: f.watched === true, sort: (["rank", "newest", "growth"] as const).find((s) => s === f.sort) ?? "rank" },
@@ -64,11 +68,33 @@ function readRemembered(): Remembered {
   }
 }
 
-const TYPE_TABS: { value: TrendType; label: string; icon: React.ReactNode; noun: [string, string] }[] = [
-  { value: "topics", label: "Topics", icon: <Flame size={14} />, noun: ["topic", "topics"] },
-  { value: "articles", label: "Articles", icon: <Newspaper size={14} />, noun: ["article", "articles"] },
-  { value: "hashtags", label: "Hashtags", icon: <Hash size={14} />, noun: ["hashtag", "hashtags"] },
+type TabKey = "rss" | "articles" | "competitors" | "x-hashtags" | "topics";
+interface TabDef {
+  value: TabKey;
+  label: string;
+  /** One / many of what the tab lists, for the empty states and the new-items pill */
+  noun: [string, string];
+  /** What GET /trends is asked for; null: no data source yet (X), and the API is not called */
+  source: { type: TrendType; platform?: "RSS" } | null;
+  /** Shown instead of the list when there is no source */
+  comingSoon?: string;
+}
+/**
+ * RSS Feed: articles from the publishers' own feeds (platform RSS; PIB and Bing News are other
+ * platforms). Articles: every article from every source, RSS included. The API filters by one platform
+ * only and folds same-story copies into one row (an RSS copy leads), so leaving RSS out here would hide
+ * stories. Topics (Google Trends and Hindi Wikipedia, ranked) is reachable nowhere else, so it stays, last.
+ * The old Hashtags tab is dropped: its tags are made from those topics, and "Hashtags" now means X.
+ */
+const TABS: TabDef[] = [
+  { value: "rss", label: "RSS Feed", noun: ["RSS article", "RSS articles"], source: { type: "articles", platform: "RSS" } },
+  { value: "articles", label: "Articles", noun: ["article", "articles"], source: { type: "articles" } },
+  { value: "competitors", label: "Competitors (X)", noun: ["post", "posts"], source: null, comingSoon: "Posts from rival outlets' X accounts will show here, so the desk sees what they cover first." },
+  { value: "x-hashtags", label: "Hashtags (X)", noun: ["hashtag", "hashtags"], source: null, comingSoon: "Hashtags trending on X in Rajasthan and India will show here." },
+  { value: "topics", label: "Topics", noun: ["topic", "topics"], source: { type: "topics" } },
 ];
+const fetchTabTrends = (src: NonNullable<TabDef["source"]>, win: TrendWindow) =>
+  api<TrendsResponse>("GET", `/trends?type=${src.type}&window=${win}${src.platform ? `&platform=${encodeURIComponent(src.platform)}` : ""}`);
 const WINDOW_HOURS: Record<TrendWindow, number> = { "12h": 12, "24h": 24, "7d": 168 };
 
 /** "+180% in 6h" as a number for sorting; unknown sorts last. */
@@ -104,8 +130,13 @@ const ago = (iso: string, now: number) => {
   return h < 24 ? `${h} h ago` : new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 };
 
-/** Demo mode: the demo topics, plus article and hashtag versions of them, with districts, same-story groups and channel names. */
-function demoItems(type: TrendType): TrendItem[] {
+/** Publisher feeds the demo RSS items are credited to */
+const DEMO_FEEDS = ["Dainik Bhaskar", "Rajasthan Patrika", "First India"];
+
+/** Demo mode: the demo topics, plus article and RSS versions of them, with districts, same-story groups and channel names. */
+function demoItems(source: TabDef["source"]): TrendItem[] {
+  if (!source) return [];
+  const type = source.type;
   let channel = 0;
   return DEMO_SCRAPER_TOPICS.map((base): TrendItem => {
     const sources = demoSources(base.id);
@@ -120,6 +151,10 @@ function demoItems(type: TrendType): TrendItem[] {
     if (type === "articles") return { ...item, id: `${item.id}-a`, type, title: `${item.title}: the latest coverage` };
     if (type === "hashtags") return { ...item, id: `${item.id}-h`, type, title: "#" + item.subTag.replace(/[^\p{L}\p{M}\p{N}]+/gu, "") };
     return item;
+  }).flatMap((item, i): TrendItem[] => {
+    if (source.platform !== "RSS") return [item];
+    // Every other article, as if a publisher's own feed carried it
+    return i % 2 ? [] : [{ ...item, id: `${item.id}-r`, platform: "RSS", sourceName: DEMO_FEEDS[(i / 2) % DEMO_FEEDS.length] }];
   });
 }
 
@@ -137,7 +172,9 @@ export default function WebScraperPage() {
       localStorage.setItem(STORE_KEY, JSON.stringify(next));
     } catch {}
   };
-  const { type, window: win, view, filters } = remembered;
+  const { tab: tabKey, window: win, view, filters } = remembered;
+  const tab = TABS.find((t) => t.value === tabKey) ?? TABS[1];
+  const source = tab.source;
   const setFilters = (f: TrendFilters) => remember({ filters: f });
 
   const [now, setNow] = useState(() => Date.now());
@@ -147,15 +184,19 @@ export default function WebScraperPage() {
   }, []);
 
   // ─── Data ──────────────────────────────────────────────────────────────────
-  const trends = usePolled<TrendsResponse>(() => fetchTrends(type, win), POLL_MS, `trends-${type}-${win}`, live);
+  // Tabs without a source (X) never call the API
+  const trends = usePolled<TrendsResponse>(() => (source ? fetchTabTrends(source, win) : Promise.reject(new Error("This tab has no source yet."))), POLL_MS, `trends-${tab.value}-${win}`, live && !!source);
+  const reloadTrends = () => (source ? trends.refresh() : Promise.resolve());
   const [demoFetchedAt, setDemoFetchedAt] = useState(() => new Date().toISOString());
-  const all: TrendItem[] | null = live
-    ? (trends.data?.items ?? null)
-    : demoItems(type).filter((i) => new Date(demoFetchedAt).getTime() - new Date(i.scrapedAt).getTime() <= WINDOW_HOURS[win] * 3600_000);
+  const all: TrendItem[] | null = !source
+    ? null
+    : live
+      ? (trends.data?.items ?? null)
+      : demoItems(source).filter((i) => new Date(demoFetchedAt).getTime() - new Date(i.scrapedAt).getTime() <= WINDOW_HOURS[win] * 3600_000);
   const fetchedAt = live ? (trends.data?.fetchedAt ?? null) : demoFetchedAt;
 
   // New items from a poll wait behind the pill, so the list does not reorder under the operator
-  const listKey = `${type}-${win}`;
+  const listKey = `${tab.value}-${win}`;
   const [shown, setShown] = useState<{ key: string; ids: ReadonlySet<string> } | null>(null);
   if (all && shown?.key !== listKey) setShown({ key: listKey, ids: new Set(all.map((i) => i.id)) });
   const shownIds = shown?.key === listKey ? shown.ids : null;
@@ -175,7 +216,7 @@ export default function WebScraperPage() {
   }, []);
 
   // ─── Keyword watch ─────────────────────────────────────────────────────────
-  const watch = useTrendWatches(live, live ? [] : demoItems("topics"), () => void trends.refresh());
+  const watch = useTrendWatches(live, live ? [] : demoItems({ type: "topics" }), () => void reloadTrends());
   const showWatched = () => {
     watch.markSeen();
     setFilters({ ...filters, watched: true });
@@ -248,7 +289,7 @@ export default function WebScraperPage() {
     }
     setRefreshing(true);
     if (!canRunSources) {
-      await trends.refresh();
+      await reloadTrends();
       setNotice({ text: "Reloaded. The sources are checked every 15 minutes." });
       setRefreshing(false);
       return;
@@ -257,8 +298,8 @@ export default function WebScraperPage() {
       await refreshTrends();
       setNotice({ text: "Checking the sources now. New items appear here in a minute or two." });
       // The run takes a while; look again shortly
-      setTimeout(() => void trends.refresh(), 8000);
-      setTimeout(() => void trends.refresh(), 30000);
+      setTimeout(() => void reloadTrends(), 8000);
+      setTimeout(() => void reloadTrends(), 30000);
     } catch (err) {
       setNotice({ text: errorText(err) });
     }
@@ -267,8 +308,8 @@ export default function WebScraperPage() {
 
   // "Create draft" asks which platform (CreateDraftDialog), then opens that platform's editor on the trend
   const [drafting, setDrafting] = useState<TrendItem | null>(null);
-  const cardProps: CardActions = { onDraft: can("trends.draft") ? setDrafting : null, now, hitsOf: watch.hitsOf };
-  const tab = TYPE_TABS.find((t) => t.value === type)!;
+  // Edit opens the X editor, which only opens ?compose= for people who may edit drafts
+  const cardProps: CardActions = { onDraft: can("trends.draft") ? setDrafting : null, canEdit: can("trends.draft") && can("draft.edit"), now, hitsOf: watch.hitsOf };
   const loadError = live && !trends.data ? trends.error : null;
   const staleError = live && trends.data ? trends.error : null;
 
@@ -318,11 +359,11 @@ export default function WebScraperPage() {
 
       {/* Tabs + window, search, filters */}
       <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap", borderBottom: "1px solid", borderColor: "divider" }}>
-        <ResponsiveTabs<TrendType>
-          value={type}
-          onChange={(t) => remember({ type: t })}
-          ariaLabel="Trend types"
-          items={TYPE_TABS.map((t) => ({ value: t.value, label: t.value === type && all ? `${t.label} (${visible.length})` : t.label }))}
+        <ResponsiveTabs<TabKey>
+          value={tab.value}
+          onChange={(t) => remember({ tab: t })}
+          ariaLabel="Trend sources"
+          items={TABS.map((t) => ({ value: t.value, label: t.value === tab.value && all ? `${t.label} (${visible.length})` : t.label }))}
           tabsSx={{ minHeight: 40, maxWidth: "100%", "& .MuiTab-root": { minHeight: 40, textTransform: "none", fontWeight: 600, fontSize: "0.875rem", px: 1.5, minWidth: 0 } }}
         />
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, ml: { xs: 0, sm: "auto" }, width: { xs: "100%", sm: "auto" }, pb: 0.75, flexWrap: "wrap" }}>
@@ -361,7 +402,6 @@ export default function WebScraperPage() {
             }}
             sx={{ order: { xs: -1, sm: 0 }, flex: { xs: "1 1 100%", sm: "none" }, minWidth: 0, width: { sm: 270 }, "& .MuiOutlinedInput-root": { borderRadius: "8px", fontSize: "0.8125rem", height: CONTROL_HEIGHT } }}
           />
-          <KeywordWatchButton watch={watch} />
           <FiltersButton activeCount={activeCount} onClearAll={() => setFilters({ ...EMPTY_FILTERS, sort: filters.sort })}>
             <FilterSection title="Sort">
               <SegmentedControl<SortValue>
@@ -375,15 +415,7 @@ export default function WebScraperPage() {
                 ]}
               />
             </FilterSection>
-            <FilterSection title="Watched">
-              {watch.keywords.length ? (
-                <FilterOption on={filters.watched} onClick={() => setFilters({ ...filters, watched: !filters.watched })}>
-                  Only items with my keywords
-                </FilterOption>
-              ) : (
-                <FilterEmpty>Add keywords under Keyword watch to use this.</FilterEmpty>
-              )}
-            </FilterSection>
+            <KeywordWatchSection watch={watch} watched={filters.watched} onWatchedChange={(watched) => setFilters({ ...filters, watched })} />
             <FilterSection title="Source">
               {sources.length ? sources.map((s) => (
                 <FilterOption key={s} on={filters.sources.includes(s)} onClick={() => setFilters({ ...filters, sources: toggleValue(filters.sources, s) })}>
@@ -452,14 +484,19 @@ export default function WebScraperPage() {
       {/* Trends */}
       <Box ref={listRef} onPointerEnter={() => setPointerInList(true)} onPointerLeave={() => setPointerInList(false)} sx={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
         <NewStoriesPill count={waiting.length} onShow={showWaiting} top={12} noun={tab.noun} />
-        {loadError ? (
+        {tab.comingSoon ? (
+          <ComingSoon label={tab.label} hint={tab.comingSoon} />
+        ) : loadError ? (
           <LoadError error={loadError} onRetry={() => void trends.refresh()} />
         ) : !all ? (
           <LoadingRows rows={3} height={140} />
         ) : !all.length ? (
-          <EmptyBox title={`No trending ${tab.label.toLowerCase()} yet`} hint={live ? "The sources are checked every 15 minutes. Refresh to check now." : "Pick a longer time window."} />
+          <EmptyBox
+            title={`No ${tab.noun[1]} yet`}
+            hint={tab.value === "rss" ? "Nothing from the publishers' feeds in this window. Pick a longer window, or see every source under Articles." : live ? "The sources are checked every 15 minutes. Refresh to check now." : "Pick a longer time window."}
+          />
         ) : !visible.length ? (
-          <EmptyBox title={`No ${tab.label.toLowerCase()} match`} hint={filters.watched && !q ? "Nothing here names your keywords. Add more under Keyword watch, or turn off the Watched filter." : live && q ? "Clear the search or the filters, or press Enter to search Google News." : "Clear the search or the filters to see more."} />
+          <EmptyBox title={`No ${tab.noun[1]} match`} hint={filters.watched && !q ? "Nothing here names your keywords. Add more under Filters, Keyword watch, or turn off the Watched filter." : live && q ? "Clear the search or the filters, or press Enter to search Google News." : "Clear the search or the filters to see more."} />
         ) : view === "cards" ? (
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", lg: "repeat(3, 1fr)" }, gap: 2.5 }}>
             {visible.map((i) => (
@@ -481,6 +518,18 @@ export default function WebScraperPage() {
 }
 
 // ─── Pieces ──────────────────────────────────────────────────────────────────
+/** A tab whose source does not exist yet (X). Nothing is fetched for it. */
+function ComingSoon({ label, hint }: { label: string; hint: string }) {
+  return (
+    <Box role="status" sx={{ py: 6, px: 2, textAlign: "center", border: "1px dashed", borderColor: "divider", borderRadius: "12px" }}>
+      <Typography sx={{ fontSize: "0.9375rem", fontWeight: 600 }}>Coming soon — needs X (Twitter) data access</Typography>
+      <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", mt: 0.5, maxWidth: 440, mx: "auto" }}>
+        {hint} {label} needs a way to read X, which Socia does not have yet.
+      </Typography>
+    </Box>
+  );
+}
+
 function EmptyBox({ title, hint }: { title: string; hint: string }) {
   return (
     <Box sx={{ py: 6, px: 2, textAlign: "center", border: "1px dashed", borderColor: "divider", borderRadius: "12px" }}>
@@ -778,31 +827,79 @@ function Stats({ item }: { item: TrendItem }) {
 interface CardActions {
   /** Null when the person can't create drafts from trends (trends.draft): the button is hidden */
   onDraft: ((item: TrendItem) => void) | null;
+  /** Edit (straight into the X editor) needs trends.draft and draft.edit */
+  canEdit: boolean;
   now: number;
   hitsOf: (item: TrendItem) => string[];
 }
 
-function Actions({ item, onDraft, compact }: Pick<CardActions, "onDraft"> & { item: TrendItem; compact?: boolean }) {
+function Actions({ item, onDraft, canEdit, compact }: Pick<CardActions, "onDraft" | "canEdit"> & { item: TrendItem; compact?: boolean }) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  // One request per card: a ref, so a double click cannot start a second one before the re-render
+  const inFlight = useRef(false);
+  const [editError, setEditError] = useState<string | null>(null);
   const btn = { minHeight: 32, px: 1.25, fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" } as const;
+
+  // Edit: straight into the X editor on a new draft (the Create draft dialog's X path, without the dialog).
+  // On the demo data there is no draft to make, so it opens the dialog instead.
+  const edit = async () => {
+    if (!onDraft || !canEdit || inFlight.current) return;
+    if (USE_MOCKS) return onDraft(item);
+    inFlight.current = true;
+    setEditing(true);
+    setEditError(null);
+    try {
+      const { draftId } = await draftFromTrend(item.id, "x");
+      router.push(`/ai-content/x?compose=${encodeURIComponent(draftId)}`);
+    } catch (err) {
+      setEditError(errorText(err));
+      setEditing(false);
+      inFlight.current = false;
+    }
+  };
+
   return (
-    <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap", justifyContent: compact ? "flex-end" : "flex-start" }}>
-      {onDraft && (
-      <Button
-        size="small"
-        variant="contained"
-        disableElevation
-        aria-haspopup="dialog"
-        onClick={() => onDraft(item)}
-        startIcon={<PlusCircle size={13} />}
-        sx={{ ...btn, fontWeight: 700, backgroundColor: "text.primary", color: "background.paper", "&:hover": { backgroundColor: "text.primary", opacity: 0.9 } }}
-      >
-        Create draft
-      </Button>
-      )}
-      {item.url && (
-        <Button size="small" variant="outlined" component="a" href={item.url} target="_blank" rel="noopener noreferrer" startIcon={<ExternalLink size={13} />} sx={{ ...btn, borderColor: "divider", color: "text.primary" }}>
-          Source
-        </Button>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75, alignItems: compact ? "flex-end" : "stretch" }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap", justifyContent: compact ? "flex-end" : "flex-start" }}>
+        {onDraft && (
+          <Button
+            size="small"
+            variant="contained"
+            disableElevation
+            aria-haspopup="dialog"
+            onClick={() => onDraft(item)}
+            disabled={editing}
+            startIcon={<PlusCircle size={13} />}
+            sx={{ ...btn, fontWeight: 700, backgroundColor: "text.primary", color: "background.paper", "&:hover": { backgroundColor: "text.primary", opacity: 0.9 } }}
+          >
+            Create draft
+          </Button>
+        )}
+        {onDraft && canEdit && (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => void edit()}
+            disabled={editing}
+            aria-busy={editing || undefined}
+            aria-label={`Edit in the X editor: ${item.title}`}
+            startIcon={editing ? <CircularProgress size={12} color="inherit" /> : <Pencil size={13} />}
+            sx={{ ...btn, borderColor: "divider", color: "text.primary" }}
+          >
+            {editing ? "Opening" : "Edit"}
+          </Button>
+        )}
+        {item.url && (
+          <Button size="small" variant="outlined" component="a" href={item.url} target="_blank" rel="noopener noreferrer" startIcon={<ExternalLink size={13} />} sx={{ ...btn, borderColor: "divider", color: "text.primary" }}>
+            Source
+          </Button>
+        )}
+      </Box>
+      {editError && (
+        <Typography role="alert" sx={{ fontSize: "0.75rem", color: "error.main", lineHeight: 1.45, overflowWrap: "anywhere", textAlign: compact ? "right" : "left", maxWidth: compact ? 280 : "none" }}>
+          Couldn’t open the X editor. {editError}
+        </Typography>
       )}
     </Box>
   );

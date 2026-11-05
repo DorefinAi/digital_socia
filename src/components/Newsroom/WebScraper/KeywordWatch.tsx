@@ -1,18 +1,18 @@
 "use client";
 
 // Keyword watch for the Web Scraper (contract: handoff/scraper-analytics-contract.md, A4 and C).
-// Each user keeps up to 50 keywords; items naming one come back with `watchHits`, the Watched filter
-// shows only those, and a "N new matches" pill counts matches that arrived since the user last looked.
+// Each user keeps up to 50 keywords (managed in the Filters panel); items naming one come back with
+// `watchHits`, the Watched filter shows only those, and a "N new matches" pill counts matches that arrived since the user last looked.
 // Live it uses /me/trend-watches; in demo mode the keywords live in this browser.
 
-import React, { useEffect, useState } from "react";
-import { Box, Button, IconButton, Popover, TextField, Typography } from "@mui/material";
+import React, { useEffect, useId, useState } from "react";
+import { Box, Button, IconButton, TextField, Typography } from "@mui/material";
 import { BellRing, Eye, X } from "lucide-react";
 import { usePolled } from "@/lib/socia/usePolled";
 import { addTrendWatch, fetchTrendWatchHits, listTrendWatches, MAX_WATCHES, MAX_WATCH_LENGTH, removeTrendWatch, watchHitsFor, type TrendItem, type TrendWatch } from "@/lib/socia/trends";
 import { DEMO_WATCH_KEYWORDS } from "@/data/scraperDemoExtras";
 import { errorText } from "@/components/Newsroom/SociaDesk/liveShared";
-import { CONTROL_HEIGHT } from "../ui/controls";
+import { FilterOption } from "../ui/FilterKit";
 
 const DEMO_KEY = "socia_trend_watches_demo_v1";
 const SEEN_KEY = "socia_trend_watch_seen_v1";
@@ -136,17 +136,23 @@ export function useTrendWatches(live: boolean, pool: TrendItem[], onChange?: () 
   return { watches, keywords, loadError, add, remove, newCount, markSeen, hitsOf };
 }
 
-/** "Keyword watch" button with the number of keywords; opens the panel to add and remove them. */
-export function KeywordWatchButton({ watch }: { watch: TrendWatches }) {
-  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+/**
+ * The "Keyword watch" section of the Filters panel: the Watched filter, the field to add a keyword and the
+ * list of keywords with remove. The panel is a Popover (or a bottom Drawer on phones), not a Menu, so typing
+ * in the field has no type-ahead to fight; Enter submits the small form, Escape still closes the panel.
+ */
+export function KeywordWatchSection({ watch, watched, onWatchedChange }: { watch: TrendWatches; watched: boolean; onWatchedChange: (on: boolean) => void }) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const count = watch.keywords.length;
   const full = count >= MAX_WATCHES;
+  const fieldId = useId();
+  const listLabelId = useId();
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (busy) return;
     setBusy(true);
     const err = await watch.add(draft);
     setBusy(false);
@@ -154,98 +160,87 @@ export function KeywordWatchButton({ watch }: { watch: TrendWatches }) {
     if (!err) setDraft("");
   };
   const remove = async (w: TrendWatch) => {
-    setError(await watch.remove(w.id));
+    const err = await watch.remove(w.id);
+    setError(err);
+    // Nothing left to match: the Watched filter would only empty the list
+    if (!err && count === 1 && watched) onWatchedChange(false);
   };
 
   return (
-    <>
-      <Button
-        variant="outlined"
-        onClick={(e) => setAnchor(e.currentTarget)}
-        aria-haspopup="dialog"
-        aria-expanded={!!anchor}
-        aria-label={`Keyword watch, ${count} ${count === 1 ? "keyword" : "keywords"}`}
-        startIcon={<Eye size={14} />}
-        sx={{ height: CONTROL_HEIGHT, flexShrink: 0, px: 1.5, fontWeight: 600, fontSize: "0.8125rem", borderColor: "divider", color: "text.primary", whiteSpace: "nowrap" }}
-      >
-        Keyword watch
+    <Box component="fieldset" sx={{ border: 0, m: 0, p: 0, minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
+      <Box component="legend" sx={{ p: 0, mb: 0.25, width: "100%", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 1 }}>
+        <Typography component="span" sx={{ fontSize: "0.75rem", fontWeight: 700, color: "text.secondary" }}>
+          Keyword watch
+        </Typography>
         {count > 0 && (
-          <Box component="span" aria-hidden sx={{ ml: 0.75, minWidth: 18, height: 18, px: 0.5, borderRadius: "9px", display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid", borderColor: "divider", fontSize: "0.6875rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-            {count}
-          </Box>
+          <Typography component="span" sx={{ fontSize: "0.6875rem", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
+            {count} of {MAX_WATCHES}
+          </Typography>
         )}
-      </Button>
-      <Popover
-        open={!!anchor}
-        anchorEl={anchor}
-        onClose={() => setAnchor(null)}
-        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-        transformOrigin={{ vertical: "top", horizontal: "right" }}
-        slotProps={{ paper: { sx: { mt: 0.75, width: 380, maxWidth: "calc(100vw - 32px)", maxHeight: "min(560px, 80vh)", borderRadius: "12px", border: "1px solid", borderColor: "divider", backgroundImage: "none" } } }}
-      >
-        <Box role="dialog" aria-label="Keyword watch" sx={{ display: "flex", flexDirection: "column" }}>
-          <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1, px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ fontSize: "0.9375rem", fontWeight: 700 }}>Keyword watch</Typography>
-              <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.25 }}>
-                Items that name one of your keywords are marked, and the Watched filter shows only them. Hindi and English both work.
-              </Typography>
-            </Box>
-            <IconButton size="small" aria-label="Close keyword watch" onClick={() => setAnchor(null)} sx={{ borderRadius: "8px" }}>
-              <X size={16} />
-            </IconButton>
-          </Box>
-          <Box component="form" onSubmit={submit} noValidate sx={{ display: "flex", gap: 1, alignItems: "flex-start", px: 2, pt: 1.5 }}>
-            <TextField
-              label="Add a keyword"
-              value={draft}
-              onChange={(e) => {
-                setDraft(e.target.value);
-                if (error) setError(null);
-              }}
-              size="small"
-              disabled={full}
-              error={!!error}
-              helperText={error ?? (full ? `You watch ${MAX_WATCHES}, the most allowed. Remove one to add another.` : "A place, a name or a topic, e.g. Jaipur Metro")}
-              slotProps={{ htmlInput: { maxLength: MAX_WATCH_LENGTH } }}
-              sx={{ flex: 1, minWidth: 0, "& .MuiOutlinedInput-root": { borderRadius: "8px", fontSize: "0.8125rem" } }}
-            />
-            <Button type="submit" variant="contained" disableElevation disabled={busy || full || !draft.trim()} sx={{ height: 40, fontWeight: 600, flexShrink: 0 }}>
-              Add
-            </Button>
-          </Box>
-          <Box sx={{ px: 2, py: 1.5, overflowY: "auto" }}>
-            {watch.loadError ? (
-              <Typography role="alert" sx={{ fontSize: "0.8125rem", color: "error.main" }}>
-                Could not load your keywords: {watch.loadError}
-              </Typography>
-            ) : !watch.watches ? (
-              <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary" }}>Loading your keywords…</Typography>
-            ) : !watch.watches.length ? (
-              <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary" }}>You don&apos;t watch any keywords yet. Add one above to get marked items and a count of new matches.</Typography>
-            ) : (
-              <>
-                <Typography sx={{ fontSize: "0.6875rem", fontWeight: 700, color: "text.secondary", mb: 0.75 }}>
-                  Watching {count} of {MAX_WATCHES}
-                </Typography>
-                <Box component="ul" aria-label="Watched keywords" sx={{ listStyle: "none", m: 0, p: 0, display: "flex", flexWrap: "wrap", gap: 0.75 }}>
-                  {watch.watches.map((w) => (
-                    <Box component="li" key={w.id} sx={{ display: "inline-flex", alignItems: "center", gap: 0.25, maxWidth: "100%", height: 28, pl: 1, pr: 0.25, borderRadius: "6px", backgroundColor: "action.selected" }}>
-                      <Box component="span" sx={{ fontSize: "0.75rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {w.keyword}
-                      </Box>
-                      <IconButton size="small" aria-label={`Stop watching ${w.keyword}`} onClick={() => void remove(w)} sx={{ p: 0.4, borderRadius: "4px" }}>
-                        <X size={13} />
-                      </IconButton>
-                    </Box>
-                  ))}
-                </Box>
-              </>
-            )}
-          </Box>
+      </Box>
+      <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", lineHeight: 1.5 }}>
+        Items that name one of your keywords are marked on their card. Hindi and English both work.
+      </Typography>
+
+      {count > 0 && (
+        <Box>
+          <FilterOption on={watched} onClick={() => onWatchedChange(!watched)}>
+            Only items with my keywords
+          </FilterOption>
         </Box>
-      </Popover>
-    </>
+      )}
+
+      <Box component="form" onSubmit={submit} noValidate sx={{ display: "flex", gap: 1, alignItems: "flex-start", mt: 0.5 }}>
+        <TextField
+          id={fieldId}
+          label="Add a keyword"
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (error) setError(null);
+          }}
+          size="small"
+          disabled={full || !!watch.loadError}
+          error={!!error}
+          helperText={error ?? (full ? `You watch ${MAX_WATCHES}, the most allowed. Remove one to add another.` : "A place, a name or a topic, e.g. Jaipur Metro")}
+          slotProps={{ htmlInput: { maxLength: MAX_WATCH_LENGTH, autoComplete: "off" }, formHelperText: { role: error ? "alert" : undefined } }}
+          sx={{ flex: 1, minWidth: 0, "& .MuiOutlinedInput-root": { borderRadius: "8px", fontSize: "0.8125rem" } }}
+        />
+        <Button type="submit" variant="contained" disableElevation disabled={busy || full || !draft.trim() || !!watch.loadError} sx={{ height: 40, fontWeight: 600, flexShrink: 0 }}>
+          {busy ? "Adding" : "Add"}
+        </Button>
+      </Box>
+
+      {watch.loadError ? (
+        <Typography role="alert" sx={{ fontSize: "0.75rem", color: "error.main" }}>
+          Could not load your keywords: {watch.loadError} Reload the page to try again.
+        </Typography>
+      ) : !watch.watches ? (
+        <Typography role="status" sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
+          Loading your keywords…
+        </Typography>
+      ) : !watch.watches.length ? (
+        <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>You don&apos;t watch any keywords yet. Add one to mark matching items and count new matches.</Typography>
+      ) : (
+        <>
+          <Typography id={listLabelId} sx={{ position: "absolute", width: "1px", height: "1px", overflow: "hidden", clip: "rect(0 0 0 0)" }}>
+            Watched keywords
+          </Typography>
+          <Box component="ul" aria-labelledby={listLabelId} sx={{ listStyle: "none", m: 0, p: 0, display: "flex", flexWrap: "wrap", gap: 0.75 }}>
+            {watch.watches.map((w) => (
+              <Box component="li" key={w.id} sx={{ display: "inline-flex", alignItems: "center", gap: 0.25, maxWidth: "100%", height: 28, pl: 1, pr: 0.25, borderRadius: "6px", backgroundColor: "action.selected" }}>
+                <Box component="span" sx={{ fontSize: "0.75rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {w.keyword}
+                </Box>
+                <IconButton size="small" aria-label={`Stop watching ${w.keyword}`} onClick={() => void remove(w)} sx={{ p: 0.4, borderRadius: "4px" }}>
+                  <X size={13} />
+                </IconButton>
+              </Box>
+            ))}
+          </Box>
+        </>
+      )}
+    </Box>
   );
 }
 
