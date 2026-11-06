@@ -11,6 +11,9 @@ import { usePolled } from "@/lib/socia/usePolled";
 import type { IngestStatus } from "@/lib/socia/types";
 
 const POLL_MS = 5000;
+/** The worker polls every few seconds; a last poll older than this means it has stopped (same limit as the API) */
+const STOPPED_AFTER_MS = 90_000;
+const STOPPED_LINE = "Intake stopped — new files are not being read. Tell the tech team.";
 
 async function ingestOrNull(): Promise<IngestStatus | null> {
   try {
@@ -41,7 +44,7 @@ export default function SourceStatus() {
   const [now, setNow] = useState(() => Date.now());
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 30_000);
+    const t = setInterval(() => setNow(Date.now()), 10_000);
     return () => clearInterval(t);
   }, []);
 
@@ -57,6 +60,12 @@ export default function SourceStatus() {
         : null;
   const badData = (status?.dataFiles ?? []).filter((f) => !f.ok);
   const dataProblem = status?.state === "data_file_problem" || badData.length > 0;
+  // The server decides (it counts the worker's heartbeat, so a long scan is not "stopped", and its clock is the
+  // worker's). Only a server too old to send `state` is judged by this browser's clock.
+  const lastPoll = status?.workerLastSeenAt ?? status?.lastPollAt ?? src?.checkedAt ?? null;
+  const stopped = status?.state
+    ? status.state === "stopped"
+    : lastPoll !== null && now - new Date(lastPoll).getTime() > STOPPED_AFTER_MS;
   let level: Level = "ok";
   let line: string;
   if (polled.error) {
@@ -65,6 +74,9 @@ export default function SourceStatus() {
   } else if (!status) {
     level = "wait";
     line = polled.loading ? "Checking the share" : "Source status unknown";
+  } else if (stopped) {
+    level = "bad";
+    line = STOPPED_LINE;
   } else if (!src) {
     level = status.lastError ? "bad" : "wait";
     line = status.lastError ? "Intake error" : "No share configured";
@@ -125,6 +137,12 @@ export default function SourceStatus() {
         <Typography component="h2" sx={{ fontSize: "0.875rem", fontWeight: 700, mb: 1 }}>
           Newsroom share
         </Typography>
+        {stopped && !polled.error && (
+          <Typography sx={{ mb: 1.25, fontSize: "0.8125rem", fontWeight: 600, color: "error.main" }}>
+            {STOPPED_LINE}
+            {lastPoll ? ` Last check ${clock(lastPoll)}.` : ""}
+          </Typography>
+        )}
         {rows.length ? (
           <Box component="dl" sx={{ m: 0, display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", columnGap: 1.5, rowGap: 0.5, fontSize: "0.8125rem" }}>
             {rows.map(([k, v]) => (
@@ -134,7 +152,7 @@ export default function SourceStatus() {
               </React.Fragment>
             ))}
           </Box>
-        ) : (
+        ) : stopped && !polled.error ? null : (
           <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary" }}>{line}.</Typography>
         )}
         {error && (

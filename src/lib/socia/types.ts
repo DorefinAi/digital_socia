@@ -469,8 +469,13 @@ export interface IngestStatus {
   phase?: SociaPhase;
   /** The newsroom share; null unless the server reads breaking files */
   source?: SourceHealth | null;
-  /** Overall intake state (phase1-contract.md §6) */
-  state?: "ok" | "share_unreachable" | "folder_missing" | "data_file_problem" | "error" | "not_polled" | (string & {});
+  /**
+   * Overall intake state (phase1-contract.md §6). "stopped": no poll or worker heartbeat for 90 s, or no finished
+   * poll for 15 min, so nothing new is being read
+   */
+  state?: "ok" | "share_unreachable" | "folder_missing" | "data_file_problem" | "error" | "not_polled" | "stopped" | (string & {});
+  /** The worker's last sign of life (newer of its last poll and heartbeat); null if it never ran */
+  workerLastSeenAt?: string | null;
   /** The places/handles data files the worker reads; message and skipped for Settings users only */
   dataFiles?: { file: string; ok: boolean; at?: string; message?: string; skipped?: number }[];
 }
