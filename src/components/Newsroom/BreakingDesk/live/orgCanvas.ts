@@ -129,8 +129,10 @@ const measure = () => {
   return measurer;
 };
 
+// A layer without its own font draws in the desk-template face (Mangal), so it is measured in it too; measuring
+// in the general fallback (Noto, wider) sized the date about 10% under its slot and the words under their box
 const fontFor = (fontId: string | undefined, weight: number, px: number) => {
-  const font = fontById(fontId);
+  const font = fontById(fontId ?? ORG_CARD_FONT);
   return `${nearestWeight(font, weight)} ${px}px ${font.family}, "Nirmala UI", sans-serif`;
 };
 
