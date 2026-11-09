@@ -129,8 +129,9 @@ export function readPostBox(text: string, format: PostFormat, { strict, accepts 
   } else if (strict) {
     const unknown = accepts ? split.mentions.find((m) => !accepts(m)) : undefined;
     if (unknown) {
+      // The server refuses unverified handles (422 bad_mention), so the tag line is saved as plain text.
+      // No warning: the post reads the same and the handle still tags on X once posted.
       fallback = true;
-      problem = `${unknown} isn’t in the handle directory for this story, so the tag line is saved as plain text. It still tags on X once posted.`;
     } else if (split.hashtags.length > SERVER_HASHTAGS_MAX || split.mentions.length > SERVER_MENTIONS_MAX) {
       fallback = true;
       overflow = true;

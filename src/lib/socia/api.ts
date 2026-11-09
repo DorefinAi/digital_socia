@@ -2,7 +2,7 @@
 
 import { ApiError, api, setCsrfToken } from "./client";
 import type {
-  CardTemplateLayout, CopyPostedResult, Counts, DraftPatch, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, OrgCardTemplate, OrgCardTemplateLayout, OrgCardTemplatePatch, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, UserCardTemplate,
+  CardTemplateLayout, CopyPostedResult, Counts, DeskHandle, DraftPatch, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, OrgCardTemplate, OrgCardTemplateLayout, OrgCardTemplatePatch, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, UserCardTemplate,
 } from "./types";
 
 const enc = encodeURIComponent;
@@ -53,6 +53,12 @@ export const claimDraft = (id: string) => api<DraftView>("POST", `/drafts/${enc(
 export const heartbeat = (id: string) => api<{ until: string }>("POST", `/drafts/${enc(id)}/heartbeat`);
 export const releaseDraft = (id: string) => api<{ ok: true }>("POST", `/drafts/${enc(id)}/release`);
 export const saveDraft = (id: string, patch: DraftPatch) => api<DraftView>("PATCH", `/drafts/${enc(id)}`, patch);
+/**
+ * Adds an X handle to the desk's handle directory (verified, source "desk") so drafts may carry it as a
+ * mention. 201 when new, 200 when it was already there (`created` says which). 400 bad handle, 403 without
+ * draft.edit, 409 handle_unverified, 429 rate_limited (20 new handles per person per 10 minutes).
+ */
+export const addDeskHandle = (handle: string) => api<DeskHandle>("POST", "/handles/desk", { handle });
 export const checkPost = (bodyText: string, hashtags: string[], mentions: string[]) => api<PostCheck>("POST", "/x/check", { bodyText, hashtags, mentions });
 export const approveDraft = (id: string, version: number) => api<{ jobId: string; sendAt: string }>("POST", `/drafts/${enc(id)}/approve`, { version });
 export const undoJob = (jobId: string) => api<DraftView>("POST", `/jobs/${enc(jobId)}/undo`);

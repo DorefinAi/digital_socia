@@ -8,7 +8,7 @@ const proxyTarget = process.env.SOCIA_PROXY_TARGET?.replace(/\/+$/, "");
 // Only the API paths this desk calls (src/lib/socia/api.ts, apiFileUrl/fileUrl links) are forwarded. Never
 // /owner (the owner console's server-to-server API), /socket.io (the desk polls), /healthz or anything new:
 // a path the desk starts calling must be added here.
-const PROXIED_PREFIXES = ["auth", "me", "drafts", "card-templates", "trends", "x", "posts", "jobs", "ingest", "admin", "dev-files"];
+const PROXIED_PREFIXES = ["auth", "me", "drafts", "handles", "card-templates", "trends", "x", "posts", "jobs", "ingest", "admin", "dev-files"];
 
 // Sent on every response. The CSP is deliberately partial: a full one (script/style/img/connect/media/worker
 // sources) would have to allow Next's inline scripts, emotion's injected styles, blob:/data: card and video

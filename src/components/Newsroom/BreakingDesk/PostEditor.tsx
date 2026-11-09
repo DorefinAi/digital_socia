@@ -71,14 +71,15 @@ import VideoTimeline, { CLIP_SPEEDS, TimelineText, clock, outputLength } from ".
 import TextControls, { ALIGN_ICONS, FontSelect } from "./TextControls";
 import TemplatePicker from "./TemplatePicker";
 import { ENTER_SECONDS, MEDIA_LOOKS, TEXT_ANIMATIONS, accentFor, inkOn, mediaFilter, mediaWarmth, resolveHeadlineStyle, resolveLayerStyle, templateById, templatePatch, textSpan, warmthColor } from "./cardRender";
-import { BODY_STYLE, ORG_BODY_ID, ORG_DATE_ID, orgBodyText, orgLayout, orgPlacement, refreshOrgDate, switchOrgTemplate, useBackdrop, useTemplateImage } from "./live/orgCanvas";
-import { fontById, nearestWeight } from "./templateFonts";
+import { BODY_STYLE, ORG_BODY_ID, ORG_DATE_ID, orgBodyText, orgLayout, orgPlacement, refreshOrgDate, switchOrgTemplate, useBackdrop, useOrgFontsReady, useTemplateImage } from "./live/orgCanvas";
+import { ORG_CARD_FONT, fontById, nearestWeight } from "./templateFonts";
 import FtpFeedPanel from "./FtpFeedPanel";
 import { DAILY_CAP, isLiveOn } from "@/data/socialDesk";
 import * as socia from "@/lib/socia/api";
 import type { DraftView, DrawableCardTemplate, OrgCardTemplate } from "@/lib/socia/types";
 import type { LiveEditing } from "./live/LiveEditor";
 import { apiFileUrl, credentialsFor, errorCode, errorText, useLiveDesk } from "./live/LiveDesk";
+import { cardHeadlineText } from "./cardWords";
 import { usePhase } from "@/lib/socia/usePhase";
 import { assemblePost } from "./phase1/Phase1Editor";
 import { type PostBox, type PostFormat, SERVER_HASHTAGS_MAX, SERVER_MENTIONS_MAX, checkedValues, pickerRows, readPostBox, splitPost, syncOptions, tagKey, withBody } from "./postBox";
@@ -287,6 +288,9 @@ function liveTags(d: DraftView) {
   return { hashtags, mentions };
 }
 
+/** A handle whose add to the directory failed lately (`until` per tag key); only called from event handlers */
+const addCoolingDown = (until: ReadonlyMap<string, number>, key: string) => (until.get(key) ?? 0) > Date.now();
+
 export default function PostEditor({ item, platform, onClose, onSwitch, onSaved, live }: PostEditorProps) {
   const { publishSocialPost, saveDraft, scheduleDraft, rejectDraft, socialDrafts, socialPosts, hashtagRules, handleDirectory } = useNewsroom();
   const { can, roleLabel } = usePermissions();
@@ -325,9 +329,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const d = live.draft;
       // Reopening shows the design that was last sent for this draft, if this browser sent it and nobody replaced it since
       const record = d.card.custom ? designStore.read(d.id) : null;
-      const saved = record && (!record.cardUrl || record.cardUrl === d.card.url) ? record : null;
+      const kept = record && (!record.cardUrl || record.cardUrl === d.card.url) ? record : null;
+      // A design saved before card headlines were cleaned (leading hashtags, district prefix) reads as it is
+      // saved now, so reopening it is not an edit
+      const saved = kept ? { ...kept, layout: { ...kept.layout, headline: cardHeadlineText(kept.layout.headline, d.story.district) } } : null;
       const ownBg = d.card.custom ? bgStore.read(d.id) : null;
-      const layout = saved?.layout ?? defaultLayout(d.cardHeadline, "x");
+      const layout = saved?.layout ?? defaultLayout(cardHeadlineText(d.cardHeadline, d.story.district), "x");
       return {
         id: story.id,
         draft: undefined,
@@ -415,6 +422,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const [mentions, setMentions] = useState<TagOption[]>(start.mentions);
   // Handles the server answered bad_mention for: they stay plain text in this story
   const [refused, setRefused] = useState<ReadonlySet<string>>(() => new Set());
+  // Tag-line handles this session added to the handle directory (POST /handles/desk): real mentions from then on
+  const [added, setAdded] = useState<ReadonlySet<string>>(() => new Set());
+  // Handles whose add failed, and until when not to try again (400/403: not in this session)
+  const addFailed = useRef(new Map<string, number>());
+  // The same set as `added`, up to date between renders, so a save queued behind another doesn't add them again
+  const addedNow = useRef(new Set<string>());
   const [previewOpen, setPreviewOpen] = useState(false);
   const [videoPaused, setVideoPaused] = useState(false);
   // Plays the video's sound while editing; saved clips carry it either way
@@ -570,6 +583,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // One decoded picture per template, shared with the Template tab and the feed; the canvas repaints only
   // when it arrives or the design changes, never on the desk's polls
   const orgImage = useTemplateImage(orgMode ? orgTpl.backgroundUrl : null);
+  // Words go onto a desk template only once Mangal is in (or has failed), so they are measured in it
+  const orgFontsIn = useOrgFontsReady();
   const orgW = orgMode ? orgTpl.width || orgImage.image?.naturalWidth || 1080 : 0;
   const orgH = orgMode ? orgTpl.height || orgImage.image?.naturalHeight || 1080 : 0;
   const orgPicture = orgImage.image;
@@ -583,14 +598,14 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   };
   // Opening a story (or the list arriving): an untouched card moves onto its desk template; a design whose
   // template was deleted moves onto the default one; a design from another day shows today's date
-  if (orgList?.length && orgStart && !start.noOrg && layout === start.layout) {
+  if (orgList?.length && orgStart && orgFontsIn && !start.noOrg && layout === start.layout) {
     if (!layout.orgTemplate && !start.savedDesign) adoptStartLayout(orgLayout(orgStart, { headline: layout.headline, body: item.body }, layout));
     else if (layout.orgTemplate && !orgTpl) adoptStartLayout(switchOrgTemplate(layout, null, orgStart, item.body));
     else if (orgTpl && !start.dateStale) {
       const dated = refreshOrgDate(layout, orgTpl);
       if (dated !== layout) adoptStartLayout(dated, { dateStale: true });
     }
-  } else if (orgList && orgStart && layout.orgTemplate && !orgTpl && !serverView) {
+  } else if (orgList && orgStart && orgFontsIn && layout.orgTemplate && !orgTpl && !serverView) {
     // Its template was deleted while the card was being edited: onto the default design too, edits kept
     setLayout(switchOrgTemplate(layout, null, orgStart, item.body));
   }
@@ -666,9 +681,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // The box is the post: its tag line is the hashtags and mentions, and what it reads as is what is copied,
   // counted, previewed and (split back into body and tags) saved.
   // The server takes a mention only when it was suggested for this draft or is a verified directory handle
-  // (assertVerifiedMentions); the editor knows the suggestions and the handles the draft already carries.
+  // (assertVerifiedMentions); the editor knows the suggestions, the handles the draft already carries, and the
+  // handles this session added to the directory.
   const knownHandles = new Set(
-    live ? [...live.draft.mentionSuggestions.map((m) => (m.handle.startsWith("@") ? m.handle : `@${m.handle}`)), ...live.draft.mentions, ...start.openMentions].map(tagKey) : [],
+    live ? [...live.draft.mentionSuggestions.map((m) => (m.handle.startsWith("@") ? m.handle : `@${m.handle}`)), ...live.draft.mentions, ...start.openMentions, ...added].map(tagKey) : [],
   );
   const accepts = (handle: string) => knownHandles.has(tagKey(handle)) && !refused.has(tagKey(handle));
   const readBox = (value: string, take: (handle: string) => boolean = accepts) => readPostBox(value, postFormat, { strict: !!live, accepts: live ? take : undefined });
@@ -969,7 +985,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   };
   /** Where the template puts the headline, story and date for the words on the card now */
   const orgHome = () =>
-    orgTpl ? orgPlacement(orgTpl, { headline: layout.headline, body: orgBodyText(layout, item.body) }, { head: layout.headlineStyle?.font, body: layout.layers?.find((l) => l.id === ORG_BODY_ID)?.style.font }) : null;
+    orgTpl ? orgPlacement(orgTpl, { headline: layout.headline, body: orgBodyText(layout, item.body) }, { head: layout.headlineStyle?.font ?? ORG_CARD_FONT, body: layout.layers?.find((l) => l.id === ORG_BODY_ID)?.style.font, date: layout.layers?.find((l) => l.id === ORG_DATE_ID)?.style.font, headWeight: layout.headlineStyle?.weight, bodyWeight: layout.layers?.find((l) => l.id === ORG_BODY_ID)?.style.weight }) : null;
 
   const handleDuration = (seconds: number) => {
     setDuration(seconds);
@@ -1156,9 +1172,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // Text and headline as the server should have them
   const cardHeadline = plainCardText(layout.headline).slice(0, 400);
   const livePatch = live
-    ? { ...postBox.save, cardHeadline: cardHeadline || live.draft.cardHeadline }
+    ? { ...postBox.save, cardHeadline: cardHeadline || cardHeadlineText(live.draft.cardHeadline, live.draft.story.district) }
     : null;
-  const serverPatch = live ? { bodyText: live.draft.bodyText, cardHeadline: live.draft.cardHeadline, hashtags: live.draft.hashtags, mentions: live.draft.mentions } : null;
+  const serverPatch = live ? { bodyText: live.draft.bodyText, cardHeadline: cardHeadlineText(live.draft.cardHeadline, live.draft.story.district), hashtags: live.draft.hashtags, mentions: live.draft.mentions } : null;
   const patchKey = JSON.stringify(livePatch);
   // Dirty when the post the server would assemble, or the headline, differs; the same words split another
   // way (a draft whose body already ends in tags) is not a change, so opening a story saves nothing
@@ -1196,20 +1212,74 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     return next;
   };
 
-  const saveText = async () => {
-    if (!live || !canEdit || !textDirty || !livePatch) return;
+  /** Tag-line handles the directory doesn't have yet, once each (refused ones and recent failures left out) */
+  const newHandles = () => {
+    // Not during a version clash, and only handles typed here: one already on the server's tag line (kept as
+    // plain text by an earlier save) is left alone, so opening a story and leaving adds nothing
+    if (!live || postBox.overflow || stale !== null) return [];
+    const onServer = new Set(splitPost(start.pristine?.text ?? start.text, splitOpts).mentions.map(tagKey));
+    const fresh = new Map<string, string>();
+    for (const m of postBox.split.mentions) {
+      const k = tagKey(m);
+      if (!accepts(m) && !onServer.has(k) && !addedNow.current.has(k) && !refused.has(k) && !addCoolingDown(addFailed.current, k)) fresh.set(k, m);
+    }
+    return [...fresh.values()];
+  };
+
+  /**
+   * Adds handles to the handle directory, in parallel; resolves to the keys that went in. A failure is silent:
+   * that handle stays plain text on the tag line, as before (400/403 not retried this session, others after a minute).
+   */
+  const addHandles = async (handles: string[]): Promise<Set<string>> => {
+    const results = await Promise.all(
+      handles.map(async (h) => {
+        const k = tagKey(h);
+        try {
+          await socia.addDeskHandle(h);
+          return k;
+        } catch (err) {
+          const status = (err as { status?: unknown }).status;
+          addFailed.current.set(k, status === 400 || status === 403 ? Infinity : Date.now() + 60_000);
+          return null;
+        }
+      }),
+    );
+    const ok = new Set(results.filter((k): k is string => k !== null));
+    ok.forEach((k) => addedNow.current.add(k));
+    if (ok.size) setAdded((prev) => new Set([...prev, ...ok]));
+    return ok;
+  };
+
+  /**
+   * `addNew`: a handle on the tag line that Socia doesn't know goes into the handle directory first, so the
+   * post keeps it as a mention. Only on a deliberate save (Post, Save draft, leaving); the typing autosave
+   * passes false so a half-typed handle never lands in the directory.
+   */
+  const saveText = async (addNew = true) => {
+    if (!live || !canEdit || !livePatch) return;
+    const fresh = addNew ? newHandles() : [];
+    // Handles an earlier (or queued) save added count as known even before this render has them
+    const inDirectory = (h: string) => addedNow.current.has(tagKey(h)) && !refused.has(tagKey(h));
+    const lifts = () => postBox.split.mentions.some((m) => !accepts(m) && inDirectory(m));
+    // The autosave may already have saved the tag line as plain text: still worth a save to make it mentions
+    if (!textDirty && !fresh.length && !lifts()) return;
     // Never send what the API refuses; leaving or posting stops with this reason instead
     if (unsavable) throw new Error(postBox.problem ?? "The post is too long to save.");
+    if (fresh.length) await addHandles(fresh);
+    const take = (h: string) => accepts(h) || inDirectory(h);
+    const lifted = !postBox.overflow && lifts();
+    if (!textDirty && !lifted) return;
+    const patch = lifted ? { ...readBox(text, take).save, cardHeadline: livePatch.cardHeadline } : livePatch;
     try {
-      adopt(await socia.saveDraft(live.draft.id, { version: versionRef.current, ...livePatch }));
+      adopt(await socia.saveDraft(live.draft.id, { version: versionRef.current, ...patch }));
     } catch (err) {
-      if (errorCode(err) !== "bad_mention" || !livePatch.mentions.length) throw err;
+      if (errorCode(err) !== "bad_mention" || !patch.mentions.length) throw err;
       // A handle the server doesn't take: keep the tag line as plain text (same post) and save again at once
       const named = (err as { data?: { handles?: unknown } }).data?.handles;
-      const bad = Array.isArray(named) && named.length ? named.map((h) => tagKey(`@${String(h).replace(/^@/, "")}`)) : livePatch.mentions.map(tagKey);
+      const bad = Array.isArray(named) && named.length ? named.map((h) => tagKey(`@${String(h).replace(/^@/, "")}`)) : patch.mentions.map(tagKey);
       const nowRefused = new Set([...refused, ...bad]);
       setRefused(nowRefused);
-      const plain = readBox(text, (h) => accepts(h) && !nowRefused.has(tagKey(h))).save;
+      const plain = readBox(text, (h) => take(h) && !nowRefused.has(tagKey(h))).save;
       adopt(await socia.saveDraft(live.draft.id, { version: versionRef.current, ...plain, cardHeadline: livePatch.cardHeadline }));
     }
   };
@@ -1296,10 +1366,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     }
   };
 
-  // Typing saves on its own after a pause
+  // Typing saves on its own after a pause (new handles wait for a deliberate save: they may be half-typed)
   useEffect(() => {
     if (!live || !canEdit || stale !== null || !textDirty || unsavable) return;
-    const timer = setTimeout(() => void serial(saveText).catch(liveFail), 1500);
+    const timer = setTimeout(() => void serial(() => saveText(false)).catch(liveFail), 1500);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patchKey, canEdit, stale, textDirty, unsavable]);
@@ -1458,7 +1528,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       });
       designStore.write(d.id, null);
       bgStore.write(d.id, null);
-      const fresh = defaultLayout(d.cardHeadline, "x");
+      const fresh = defaultLayout(cardHeadlineText(d.cardHeadline, d.story.district), "x");
       setCardSource("design");
       setBgUploaded(null);
       // The automatic card stays: the design is not moved back onto a desk template
@@ -1482,7 +1552,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       setMentions(box.mentions);
       // Their text, untouched, is the server's own: nothing to save until it is edited
       setStart((s) => ({ ...s, pristine: box.pristine, openMentions: box.openMentions }));
-      patch({ headline: d.cardHeadline });
+      patch({ headline: cardHeadlineText(d.cardHeadline, d.story.district) });
       setStale(null);
     });
   const keepMine = () =>
@@ -1496,7 +1566,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   /** Leaving the editor sends what is not saved yet, so nothing typed is lost. */
   const close = async () => {
-    if (live && canEdit && (textDirty || cardUnsent)) {
+    // New tag-line handles too: the autosave kept them as plain text until this deliberate save
+    if (live && canEdit && (textDirty || cardUnsent || newHandles().length > 0)) {
       setBusy("save");
       let cardProblem: string | null = null;
       try {
@@ -2430,7 +2501,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                     />
                     <Box sx={{ ...floatingSx, display: "flex", alignItems: "center", flexWrap: "wrap", justifyContent: "center", gap: 1, px: 1.5, py: 1, borderRadius: "10px", maxWidth: 520 }}>
                       <Typography sx={{ fontSize: "0.75rem", flex: "1 1 220px", lineHeight: 1.5 }}>
-                        This draft already has a card made elsewhere. It posts as it is unless you change it.
+                        A card for this story was already made on another screen. That card will go out with the post unless you make a new one here.
                       </Typography>
                       {canEdit && (
                         <Box sx={{ display: "flex", gap: 0.5 }}>
@@ -2803,7 +2874,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 <Typography sx={{ ...sectionLabel, mb: 0.5 }}>Card that will be posted</Typography>
                 <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
                   <Typography sx={{ fontSize: "0.8125rem" }}>
-                    {serverView ? "A card made elsewhere" : bgMode ? "Your X background card" : orgMode ? `${orgTpl.label} card, ${frame.w} × ${frame.h}` : ownCard ? "Your design from this editor" : phase1 ? "The card on the left" : "The automatic card"}
+                    {serverView ? "Card made on another screen" : bgMode ? "Your X background card" : orgMode ? `${orgTpl.label} card, ${frame.w} × ${frame.h}` : ownCard ? "Your design from this editor" : phase1 ? "The card on the left" : "The automatic card"}
                     {(busy === "card" || (bgMode && bg.status === "drawing")) && <CircularProgress size={12} sx={{ ml: 1, verticalAlign: "middle" }} aria-label="Working" />}
                   </Typography>
                   {ownCard && canEdit && (
