@@ -70,10 +70,12 @@ interface XPostPreviewProps {
   media?: React.ReactNode;
   /** Footer row inside the post (counter, switches, the main button) */
   footer?: React.ReactNode;
+  /** When it went out, after the handle; "now" for a post still being written */
+  when?: string;
 }
 
 /** A light-timeline X post by First India News. */
-export default function XPostPreview({ text, used, media, footer }: XPostPreviewProps) {
+export default function XPostPreview({ text, used, media, footer, when = "now" }: XPostPreviewProps) {
   const [expanded, setExpanded] = useState(false);
   const over = used > X_LIMIT;
   // The timeline shows up to 280 weighted characters, then "Show more"
@@ -90,7 +92,7 @@ export default function XPostPreview({ text, used, media, footer }: XPostPreview
           </Box>
           <BadgeCheck size={17} color="#fff" fill={X_COLORS.blue} aria-label="Verified account" />
           <Box component="span" sx={{ color: X_COLORS.muted }}>
-            @{CHANNEL.xHandle} · now
+            @{CHANNEL.xHandle} · {when}
           </Box>
         </Box>
         <Typography component="div" lang="hi" sx={{ fontSize: "0.9375rem", lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere", mt: 0.5, color: X_COLORS.text, fontFamily: "inherit" }}>

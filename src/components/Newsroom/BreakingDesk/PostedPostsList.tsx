@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
-import { Box, Typography, IconButton, Tooltip, Link as MuiLink, Chip, Button } from "@mui/material";
-import { Check, Copy, ExternalLink, Film, Undo2 } from "lucide-react";
+import { Box, Typography, IconButton, Tooltip, Link as MuiLink, Chip, Button, ButtonBase } from "@mui/material";
+import { Check, Copy, ExternalLink, Eye, Film, Undo2 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { usePermissions } from "@/lib/access/usePermissions";
 import { SocialPlatform, SocialPost } from "@/types/newsroom";
@@ -10,6 +10,7 @@ import { RecallDialog } from "./actionDialogs";
 import { PLATFORM_META, PlatformIcon, timeAgo } from "./shared";
 import { postToSocial, useLiveDesk } from "./live/LiveDesk";
 import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
+import PostedPreviewDialog from "./PostedPreviewDialog";
 
 interface PostedPostsListProps {
   platform?: SocialPlatform;
@@ -28,6 +29,7 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare, allo
   const [recalling, setRecalling] = useState<SocialPost | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [recallError, setRecallError] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState<SocialPost | null>(null);
 
   // Live: the real X posts from the server
   const source = desk ? (desk.posts.data?.items ?? []).map(postToSocial) : socialPosts;
@@ -75,7 +77,13 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare, allo
             borderColor: "divider",
           }}
         >
-          <Box sx={{ position: "relative", width: "100%", aspectRatio: "7 / 5", borderRadius: "4px", overflow: "hidden", backgroundColor: "#111" }}>
+          {/* The tile opens the read-only preview of what went out (card and exact text) */}
+          <ButtonBase
+            onClick={() => setPreviewing(post)}
+            aria-label={`Preview the post: ${post.headline}`}
+            aria-haspopup="dialog"
+            sx={{ position: "relative", display: "block", width: "100%", aspectRatio: "7 / 5", borderRadius: "4px", overflow: "hidden", backgroundColor: "#111", "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: 2 } }}
+          >
             {/* A post copied by hand without a card has no picture: leave the dark tile empty */}
             {post.thumbUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -86,12 +94,23 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare, allo
                 <Film size={11} />
               </Box>
             )}
-          </Box>
+            <Box aria-hidden sx={{ position: "absolute", left: 0, right: 0, bottom: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: "3px", py: "2px", backgroundColor: "rgba(0,0,0,0.62)", color: "#fff", fontSize: "0.625rem", fontWeight: 600, lineHeight: 1.3 }}>
+              <Eye size={10} />
+              Preview
+            </Box>
+          </ButtonBase>
 
           <Box sx={{ minWidth: 0 }}>
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
               <PlatformIcon platform={post.platform} size={13} />
-              <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: post.status === "recalled" ? "text.secondary" : "text.primary" }}>
+              {/* Also opens the preview by mouse; the tile is the keyboard stop for it */}
+              <Typography
+                component="button"
+                type="button"
+                tabIndex={-1}
+                onClick={() => setPreviewing(post)}
+                sx={{ minWidth: 0, p: 0, border: 0, background: "none", font: "inherit", textAlign: "left", cursor: "pointer", fontSize: "0.8125rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: post.status === "recalled" ? "text.secondary" : "text.primary", "&:hover": { textDecoration: "underline" } }}
+              >
                 {post.headline}
               </Typography>
               {post.status === "recalled" && <Chip label="Recalled" size="small" color="error" variant="outlined" sx={{ height: 18, fontSize: "0.625rem", borderRadius: "5px", flexShrink: 0 }} />}
@@ -163,6 +182,7 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare, allo
           }}
         />
       )}
+      {previewing && <PostedPreviewDialog post={previewing} onClose={() => setPreviewing(null)} />}
       {recallError && (
         <Typography role="alert" sx={{ px: 1.25, py: 1, fontSize: "0.75rem", color: "error.main", borderTop: "1px solid", borderColor: "divider" }}>
           {recallError}

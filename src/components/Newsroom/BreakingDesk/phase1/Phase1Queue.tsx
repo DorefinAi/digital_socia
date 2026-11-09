@@ -3,13 +3,14 @@
 // Phase 1's queue and Posted list: text-first rows (most posts have no picture), each showing the ready post
 // as X will read it, with the file's badges. Rows are plain and light so a day of ~700 files stays quick.
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, IconButton, Tooltip, Typography } from "@mui/material";
-import { Ban, Check, Copy, Lock, PenLine, Undo2 } from "lucide-react";
-import type { QueueItem } from "@/lib/socia/types";
+import { Ban, Check, Copy, Eye, Lock, PenLine, Undo2 } from "lucide-react";
+import type { PublishedPost, QueueItem } from "@/lib/socia/types";
 import { usePermissions } from "@/lib/access/usePermissions";
-import type { FtpNewsItem } from "@/types/newsroom";
-import { isLiveItem, useLiveDesk } from "../live/LiveDesk";
+import type { FtpNewsItem, SocialPost } from "@/types/newsroom";
+import { fileUrl, isLiveItem, postToSocial, useLiveDesk } from "../live/LiveDesk";
+import PostedPreviewDialog from "../PostedPreviewDialog";
 import type { QueueViewProps } from "../QueueViews";
 import { freshHighlightSx } from "../NewStoriesPill";
 import { timeAgo } from "../shared";
@@ -157,6 +158,52 @@ export function Phase1QueueList({ items, focusedId, onFocus, onOpen, onReject, c
   );
 }
 
+const previewSx = { minHeight: 44, minWidth: 44, borderRadius: "8px", textTransform: "none", fontSize: "0.8125rem", fontWeight: 600, whiteSpace: "nowrap" } as const;
+
+/**
+ * What the preview shows for a Posted row, best source first: the post record the queue row carries
+ * (`posted.text`, exactly what went out, with its card and link); from an older server without it, the matching
+ * record among the desk's loaded GET /posts; failing that, the draft's own postText and card, which is what
+ * Copy & Posted recorded unless the draft changed afterwards.
+ */
+function postedPreview(item: FtpNewsItem, live: QueueItem | null, loaded: PublishedPost | undefined): SocialPost {
+  const posted = live?.posted;
+  const record: PublishedPost | undefined =
+    posted?.text !== undefined
+      ? {
+          id: item.id,
+          draftId: item.id,
+          platform: "x",
+          text: posted.text,
+          permalink: posted.permalink ?? null,
+          publishedAt: posted.publishedAt ?? posted.at,
+          publishedBy: posted.publishedBy ?? posted.by?.name ?? null,
+          recalled: posted.recalled ? { at: posted.recalled.at, reason: posted.recalled.reason ?? "" } : null,
+          cardUrl: posted.cardUrl ?? null,
+          manual: posted.manual,
+          copied: posted.copied,
+        }
+      : loaded;
+  if (record) return { ...postToSocial(record), headline: item.headline || record.headline || record.text };
+  return {
+    id: item.id,
+    newsId: item.id,
+    platform: "X (Twitter)",
+    headline: item.headline || "No headline",
+    text: live?.postText ?? "",
+    hashtags: [],
+    mentions: [],
+    mediaKind: "image",
+    thumbUrl: fileUrl(live?.cardUrl),
+    postUrl: "",
+    postedAt: posted?.at ?? item.receivedAt,
+    postedBy: posted?.by?.name ?? "Posted by hand",
+    status: "live",
+    byHand: true,
+    postedByName: posted?.by?.name ?? null,
+  };
+}
+
 /** Phase 1 Posted tab: posts marked with Copy & Posted, newest first, with Undo inside the server's window. */
 export function Phase1PostedList({ items, onNotice }: { items: FtpNewsItem[]; onNotice: (message: string) => void }) {
   const desk = useLiveDesk();
@@ -165,6 +212,13 @@ export function Phase1PostedList({ items, onNotice }: { items: FtpNewsItem[]; on
   const [now, setNow] = useState(() => Date.now());
   const [copied, setCopied] = useState<string | null>(null);
   const [undoing, setUndoing] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState<SocialPost | null>(null);
+  // The newest post record per draft (GET /posts is newest first)
+  const records = useMemo(() => {
+    const byDraft = new Map<string, PublishedPost>();
+    for (const p of desk?.posts.data?.items ?? []) if (!byDraft.has(p.draftId)) byDraft.set(p.draftId, p);
+    return byDraft;
+  }, [desk?.posts.data]);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(copiedTimer.current), []);
   // Undo buttons disappear when their window closes
@@ -196,7 +250,7 @@ export function Phase1PostedList({ items, onNotice }: { items: FtpNewsItem[]; on
       {items.map((item) => {
         const live = isLiveItem(item) ? item.live : null;
         const posted = live?.posted;
-        const canUndo = mayUndo && !!posted && new Date(posted.undoUntil).getTime() > now;
+        const canUndo = mayUndo && !!posted?.undoUntil && new Date(posted.undoUntil).getTime() > now;
         return (
           <Box key={item.id} role="listitem" sx={rowSx}>
             <Box sx={{ display: { xs: "none", md: "block" }, pt: 0.25 }}>
@@ -211,11 +265,22 @@ export function Phase1PostedList({ items, onNotice }: { items: FtpNewsItem[]; on
               {live?.postText && <PostText text={live.postText} />}
               {posted && (
                 <Typography sx={{ mt: 0.5, fontSize: "0.75rem", color: "text.secondary" }}>
-                  Copied by {posted.by.name} at {clock(posted.at)}, file in at {clock(item.receivedAt)}
+                  {posted.by ? `Copied by ${posted.by.name}` : "Copied"} at {clock(posted.at)}, file in at {clock(item.receivedAt)}
                 </Typography>
               )}
             </Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, justifyContent: { xs: "flex-start", md: "flex-end" } }}>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => setPreviewing(postedPreview(item, live, records.get(item.id)))}
+                startIcon={<Eye size={14} />}
+                aria-label={`Preview what was posted: ${item.headline || "No headline"}`}
+                aria-haspopup="dialog"
+                sx={previewSx}
+              >
+                Preview
+              </Button>
               {live?.postText && (
                 <Tooltip title={copied === item.id ? "Copied" : "Copy the post again"}>
                   <IconButton size="small" onClick={() => void copy(item.id, live.postText ?? "")} aria-label={`Copy the post again: ${item.headline}`} sx={{ width: 36, height: 36, borderRadius: "8px" }}>
@@ -236,6 +301,7 @@ export function Phase1PostedList({ items, onNotice }: { items: FtpNewsItem[]; on
           </Box>
         );
       })}
+      {previewing && <PostedPreviewDialog post={previewing} onClose={() => setPreviewing(null)} />}
     </Box>
   );
 }

@@ -97,7 +97,7 @@ export interface FileTags {
 }
 
 /** Why a ready post needs a second look (phase1-contract.md §1) */
-export type NeedsCheckCode = "empty" | "no_hindi" | "very_long" | "no_district" | "desk_note" | "headline_cut" | "no_headline" | "resaved" | "update_of_posted" | (string & {});
+export type NeedsCheckCode = "empty" | "no_hindi" | "very_long" | "no_district" | "desk_note" | "headline_cut" | "no_headline" | "resaved" | "update_of_posted" | "place_conflict" | (string & {});
 
 export type CardState = "none" | "rendering" | "ready" | "failed";
 
@@ -107,6 +107,25 @@ export interface PostedMark {
   by: { id: string; name: string };
   /** Copy & Posted can be undone until then (5 minutes) */
   undoUntil: string;
+}
+
+/**
+ * GET /x/queue?view=posted: the mark plus the post record that went out. The record's fields are optional so
+ * an older server (mark only) still type-checks; `by` is null when the user is unknown.
+ */
+export interface QueuePosted extends Omit<PostedMark, "by" | "undoUntil"> {
+  by: { id: string; name: string } | null;
+  /** Null when the record shown was recalled: nothing left to undo */
+  undoUntil: string | null;
+  /** Exactly the text that was posted (published_posts.text) */
+  text?: string;
+  cardUrl?: string | null;
+  permalink?: string | null;
+  publishedAt?: string;
+  publishedBy?: string | null;
+  manual?: boolean;
+  copied?: boolean;
+  recalled?: { at: string; reason: string | null } | null;
 }
 
 /** Numbers for the queue filters, over the whole view (GET /x/queue/facets) */
@@ -152,6 +171,11 @@ export interface QueueItem {
   slug: string;
   headline: string;
   bodyText: string;
+  /**
+   * The story's own text (stories.body, the points one per line), so list cards are drawn from the story like
+   * the editor's card. Optional: an older server without it leaves cards falling back to bodyText.
+   */
+  storyBody?: string;
   receivedAt: string;
   cardUrl: string | null;
   claim: Claim | null;
@@ -190,7 +214,7 @@ export interface QueueItem {
   /** phase 1 */
   card?: { state: CardState };
   /** phase 1, view=posted */
-  posted?: PostedMark | null;
+  posted?: QueuePosted | null;
   /** phase 1: the file was saved again after its post went out; this new draft updates that posted one */
   updateOfDraftId?: string | null;
   /** The original file's path (where the story came from); null when unknown */
@@ -212,6 +236,22 @@ export interface Counts {
   byView: Record<Exclude<QueueView, "posted">, number> & { posted?: number };
   publishedToday: number;
   cap: CapUsage;
+}
+
+/** POST /handles/desk: a handle the desk added to the handle directory */
+export interface DeskHandle {
+  id: string;
+  /** "@JhalawarUpdates" */
+  handle: string;
+  entityName: string;
+  keywords: string[];
+  /** "desk" for one added here; a handle already in the directory keeps its own source (e.g. "manual") */
+  source: string;
+  verified: true;
+  /** Why the directory keeps no keywords for it (null: it has them) */
+  keywordsWithheld: "file_handle" | "lookalike" | "party" | "official" | "files_unavailable" | null;
+  /** false when the handle was already in the directory (200) */
+  created: boolean;
 }
 
 export interface MentionSuggestion {

@@ -177,6 +177,10 @@ export interface SocialPost {
   status?: "live" | "recalled";
   recalledAt?: string;
   recallReason?: string;
+  /** Live desk: pasted into X by hand (Copy & Posted, or recorded with Save as posted) */
+  byHand?: boolean;
+  /** Live desk: who posted or marked it, when the server knows (postedBy falls back to a label) */
+  postedByName?: string | null;
 }
 
 /** Everything about how a story was laid out on the template; mirrors the render job the backend receives. */
