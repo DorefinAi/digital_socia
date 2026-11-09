@@ -40,12 +40,14 @@ interface LiveEditorProps {
   onClose: () => void;
   onSwitch: (item: FtpNewsItem) => void;
   onSaved: (message: string) => void;
+  /** The open draft's readable link name, once the server has sent it (absent on older servers) */
+  onLinkSlug?: (id: string, linkSlug: string) => void;
 }
 
 const leaseOf = (d: DraftView): Lease =>
   d.status === "claimed" && d.claim?.mine ? { kind: "mine" } : d.claim && !d.claim.mine ? { kind: "held", name: d.claim.name } : { kind: "read" };
 
-export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved }: LiveEditorProps) {
+export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved, onLinkSlug }: LiveEditorProps) {
   const desk = useLiveDesk();
   const canAct = !!desk?.canAct;
   const [opened, setOpened] = useState<Opened | null>(null);
@@ -103,6 +105,12 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved 
 
   const current = opened && opened.draft.id === item.id ? opened : null;
   const mine = current?.lease.kind === "mine";
+  // The desk's URL reads ?story=<linkSlug> once the draft says what its slug is
+  const openedId = current?.draft.id;
+  const openedSlug = current?.draft.linkSlug;
+  useEffect(() => {
+    if (openedId && openedSlug) onLinkSlug?.(openedId, openedSlug);
+  }, [openedId, openedSlug, onLinkSlug]);
 
   // ─── Heartbeat: keeps the 5-minute claim alive while the story is open ─────
   useEffect(() => {

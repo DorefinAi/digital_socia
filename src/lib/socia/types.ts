@@ -136,6 +136,8 @@ export interface QueueFacets {
   update: number;
   needsCheck: number;
   total: number;
+  /** Stories received today (IST) in this view: the desk's "To post" and "Needs check". Absent on older servers. */
+  today?: { total: number; needsCheck: number };
 }
 
 /** POST /drafts/:id/copy-posted */
@@ -219,6 +221,10 @@ export interface QueueItem {
   updateOfDraftId?: string | null;
   /** The original file's path (where the story came from); null when unknown */
   sourcePath?: string | null;
+  /** Readable link name for ?story= ("jaipur-sms-aspatal-...-2241"). Absent on older servers. */
+  linkSlug?: string;
+  /** Readable download name without extension ("Jaipur-SMS-aspatal-...-09Nov-2241"). Absent on older servers. */
+  fileStem?: string;
 }
 
 /** How urgent Samvadia marked a story */
@@ -279,6 +285,10 @@ export interface DraftMedia {
 
 export interface DraftView {
   id: string;
+  /** Same as QueueItem.linkSlug. Absent on older servers. */
+  linkSlug?: string;
+  /** Same as QueueItem.fileStem. Absent on older servers. */
+  fileStem?: string;
   platform: string;
   status: DraftStatus;
   version: number;

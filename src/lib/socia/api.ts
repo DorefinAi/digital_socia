@@ -49,6 +49,8 @@ export const fetchCounts = () => api<Counts>("GET", "/x/counts");
 
 // ─── Draft ───────────────────────────────────────────────────────────────────
 export const fetchDraft = (id: string) => api<DraftView>("GET", `/drafts/${enc(id)}`);
+/** The draft id behind a readable ?story=<linkSlug> link; 404 when no draft has that slug (or on an older server) */
+export const resolveStory = (linkSlug: string) => api<{ id: string }>("GET", `/drafts/resolve?story=${enc(linkSlug)}`);
 export const claimDraft = (id: string) => api<DraftView>("POST", `/drafts/${enc(id)}/claim`);
 export const heartbeat = (id: string) => api<{ until: string }>("POST", `/drafts/${enc(id)}/heartbeat`);
 export const releaseDraft = (id: string) => api<{ ok: true }>("POST", `/drafts/${enc(id)}/release`);

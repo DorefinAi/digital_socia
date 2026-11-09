@@ -36,7 +36,7 @@ import { SocialPlatform } from "@/types/newsroom";
 import PostedPostsList from "./BreakingDesk/PostedPostsList";
 import FtpStatus from "./BreakingDesk/FtpStatus";
 import { PLATFORM_META, PlatformIcon, TagChip, timeAgo } from "./BreakingDesk/shared";
-import { useLiveDesk } from "./BreakingDesk/live/LiveDesk";
+import { isLiveItem, useLiveDesk } from "./BreakingDesk/live/LiveDesk";
 
 function AnimatedCounter({ value, duration = 1200 }: { value: number; duration?: number }) {
   const [display, setDisplay] = useState(0);
@@ -294,7 +294,7 @@ const NewsroomDashboard: React.FC = () => {
                       <Button
                         key={platform}
                         component={Link}
-                        href={`${PLATFORM_META[platform].path}?compose=${item.id}`}
+                        href={`${PLATFORM_META[platform].path}?${isLiveItem(item) && item.live.linkSlug ? `story=${encodeURIComponent(item.live.linkSlug)}` : `compose=${encodeURIComponent(item.id)}`}`}
                         size="small"
                         variant="outlined"
                         disabled={done || !canPost(platform)}

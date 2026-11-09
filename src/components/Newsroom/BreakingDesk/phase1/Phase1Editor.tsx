@@ -328,7 +328,7 @@ export default function Phase1Editor({ item, onClose, onSaved, live }: Phase1Edi
   /** Saves the card next to the post; false when the browser couldn't. */
   const downloadCard = async (): Promise<boolean> => {
     if (!d.card.url) return false;
-    const name = `${d.story.slug || d.id}-card.png`;
+    const name = d.fileStem ? `${d.fileStem}.png` : `${d.story.slug || d.id}-card.png`;
     try {
       const src = fileUrl(d.card.url);
       const res = await fetch(src, { credentials: credentialsFor(src) });

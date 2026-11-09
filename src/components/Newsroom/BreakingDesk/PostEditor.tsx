@@ -399,6 +399,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const media = mediaList[mediaIndex] ?? mediaList[0];
   const [igFormat, setIgFormat] = useState<TemplateFormat>(start.igFormat);
   const format: TemplateFormat = isX ? "x" : igFormat;
+  // Downloads take the story's readable name from the server ("Jaipur-...-09Nov-2241.png"); the draft id on an older server
+  const fileStem = live?.draft.fileStem;
+  const downloadName = (ext: string, fmt: TemplateFormat = "x") => (fileStem ? `${fileStem}${fmt === "x" ? "" : `-${fmt}`}.${ext}` : `${item.id}-${fmt}.${ext}`);
 
   const [layout, setLayout] = useState<TemplateLayout>(start.layout);
   // Card versions for undo and redo; a version is kept once the card has been still for a moment
@@ -1006,7 +1009,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${item.id}-${format}.${blob.type.includes("mp4") ? "mp4" : "webm"}`;
+    link.download = downloadName(blob.type.includes("mp4") ? "mp4" : "webm", format);
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
     return true;
@@ -1095,7 +1098,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const { card } = await bg.whenReady();
       const link = document.createElement("a");
       link.href = card.url;
-      link.download = `${item.id}-x.png`;
+      link.download = downloadName("png");
       link.click();
       return true;
     } catch {
@@ -1115,12 +1118,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const saveAsPostedNow = async () => {
     // Live: the operator posts the downloaded card by hand, then gives the desk the post's link
     if (live) {
-      const ok = exportsVideo ? await exportVideo() : bgMode ? await downloadBackgroundCard() : canvasRef.current?.download(`${item.id}-${format}.png`) ?? false;
+      const ok = exportsVideo ? await exportVideo() : bgMode ? await downloadBackgroundCard() : canvasRef.current?.download(downloadName("png", format)) ?? false;
       if (!ok && !exportsVideo) setNotice("This media file does not allow image export from the browser. Download the card from Preview, or post with Post to X.");
       setLinkOpen(true);
       return;
     }
-    const ok = isVideo ? await exportVideo() : canvasRef.current?.download(`${item.id}-${format}.png`) ?? false;
+    const ok = isVideo ? await exportVideo() : canvasRef.current?.download(downloadName("png", format)) ?? false;
     if (!ok) {
       if (!isVideo) setNotice("This media file does not allow image export from the browser, so nothing was saved.");
       return;
@@ -1415,7 +1418,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const href = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = href;
-      link.download = `${item.id}-x.png`;
+      link.download = downloadName("png");
       link.click();
       setTimeout(() => URL.revokeObjectURL(href), 4000);
       return true;

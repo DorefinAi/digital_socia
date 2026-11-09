@@ -308,7 +308,8 @@ export default function WebScraperPage() {
 
   // "Create draft" asks which platform (CreateDraftDialog), then opens that platform's editor on the trend
   const [drafting, setDrafting] = useState<TrendItem | null>(null);
-  // Edit opens the X editor, which only opens ?compose= for people who may edit drafts
+  // Edit opens the X editor, which only opens ?compose= (or ?story=) links for people who may edit drafts. The desk
+  // swaps ?compose=<id> for the readable ?story=<linkSlug> once the draft says its slug.
   const cardProps: CardActions = { onDraft: can("trends.draft") ? setDrafting : null, canEdit: can("trends.draft") && can("draft.edit"), now, hitsOf: watch.hitsOf };
   const loadError = live && !trends.data ? trends.error : null;
   const staleError = live && trends.data ? trends.error : null;
