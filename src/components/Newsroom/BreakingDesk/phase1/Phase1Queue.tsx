@@ -83,10 +83,10 @@ const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, can
   return (
     <Box
       id={phase1RowId(item.id)}
-      role="listitem"
-      // Roving focus: the current row is the one Tab lands on; J/K move it
+      // A listbox option: the selected row is the one the preview panel shows and Tab lands on; J/K or the arrows move it
+      role="option"
       tabIndex={focused ? 0 : -1}
-      aria-current={focused || undefined}
+      aria-selected={focused}
       onClick={() => onFocusId(item.id)}
       onFocus={(e: React.FocusEvent) => e.target === e.currentTarget && onFocusId(item.id)}
       onDoubleClick={() => canAct && onOpen(item)}
@@ -126,7 +126,7 @@ const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, can
   );
 });
 
-/** Phase 1 queue: one row per ready post. Same props as the cards and table, so J/K/Enter/R keep working. */
+/** Phase 1 queue: one row per ready post, a listbox whose selection the preview panel shows. Same props as the cards and table, so J/K/Enter/R keep working. */
 export function Phase1QueueList({ items, focusedId, onFocus, onOpen, onReject, canAct, canReject = canAct, heldBy, highlightIds }: QueueViewProps) {
   // Rows report focus by id; the desk keeps an index. Read through refs so the callback never changes.
   const latest = useRef({ items, onFocus });
@@ -139,7 +139,7 @@ export function Phase1QueueList({ items, focusedId, onFocus, onOpen, onReject, c
     if (i >= 0) focus(i);
   }, []);
   return (
-    <Box role="list" aria-label="Ready posts" sx={frameSx}>
+    <Box role="listbox" aria-label="Ready posts" aria-orientation="vertical" sx={frameSx}>
       {items.map((item) => (
         <QueueRow
           key={item.id}

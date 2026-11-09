@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Box, Button, Typography, TextField, InputAdornment, Snackbar, LinearProgress } from "@mui/material";
@@ -25,6 +25,8 @@ import { CONTROL_HEIGHT, EmptyState, isRejectedNotice, PLATFORM_META, PlatformIc
 import { activeFilterCount, ActiveFilterChips, type FilterFacts, matchesOtherFilters, matchesPriority, phase1Filters, QueueFiltersButton, type QueueFilterState, readQueueFilters, saveQueueFilters, sortStories, toQueueQuery } from "./QueueFilters";
 import { Phase1PostedList, Phase1QueueList } from "./phase1/Phase1Queue";
 import SourceStatus from "./phase1/SourceStatus";
+import QueuePreviewPanel from "./phase1/QueuePreviewPanel";
+import * as socia from "@/lib/socia/api";
 import { stableQueueToNews } from "./live/LiveDesk";
 import { phase1RowId } from "./phase1/Phase1Queue";
 import { REJECTED_NEWS_PATH } from "@/lib/rejectedNews";
@@ -81,6 +83,12 @@ function PriorityLabel({ value, count }: { value: "all" | BreakingTag; count?: n
   );
 }
 
+// Phase 1 on wide screens: the list (about 63%) beside the "As it will read on X" panel; one column below lg (1200px)
+const queueGridSx = { display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", lg: "minmax(0, 63fr) minmax(0, 37fr)" }, gap: 2 } as const;
+const panelCellSx = { display: { xs: "none", lg: "block" }, minWidth: 0 } as const;
+// Arrow keys belong to these widgets (tabs, menus, segmented controls) when they hold focus
+const ARROW_OWNERS = "[role='tablist'], [role='menu'], [role='menubar'], [role='radiogroup'], [role='slider'], [role='combobox'], select";
+
 const tileSx = { backgroundColor: "background.paper", borderRadius: "12px", px: 2, py: 1.5, border: "1px solid", borderColor: "divider", boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.03)" };
 
 export default function BreakingDesk({ platform }: { platform: SocialPlatform }) {
@@ -136,9 +144,10 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     if (p1 && setQueueQuery) setQueueQuery(JSON.parse(serverQuery));
   }, [p1, serverQuery, setQueueQuery]);
   const [query, setQuery] = useState("");
-  // The dashboard links straight into the editor with ?compose=<news id>
+  // Links into the editor: ?story=<linkSlug> (readable, resolved to a draft below) or the older ?compose=<news id>
   const searchParams = useSearchParams();
   const composeId = searchParams.get("compose");
+  const storyParam = searchParams.get("story");
   // The Web Scraper's "Create draft for…" opens platforms without a Socia backend on a trend (?prefill=)
   const prefill = readPrefill(searchParams);
   const [composing, setComposing] = useState<FtpNewsItem | null>(() => {
@@ -150,6 +159,30 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   });
   // An open editor holds back the nightly reload (lib/browserTidy)
   useTabBusy(!!composing);
+  // A ?story= link still being matched to its draft (live desk only), and whether the server could not match it
+  const [storyLink, setStoryLink] = useState<string | null>(() => (desk && canAct && !composeId ? storyParam : null));
+  const [storyLookupFailed, setStoryLookupFailed] = useState(false);
+  useEffect(() => {
+    if (!storyLink) return;
+    let gone = false;
+    socia.resolveStory(storyLink).then(
+      ({ id }) => {
+        if (gone) return;
+        setStoryLink(null);
+        setComposing((c) => c ?? ({ id } as FtpNewsItem));
+      },
+      // 404, or an older server without /drafts/resolve: the loaded lists may still hold it (checked while rendering)
+      () => {
+        if (!gone) setStoryLookupFailed(true);
+      },
+    );
+    return () => {
+      gone = true;
+    };
+  }, [storyLink]);
+  // Link names the editor learnt from the drafts it opened (a story not in the loaded lists)
+  const [learntSlugs, setLearntSlugs] = useState<Record<string, string>>({});
+  const onLinkSlug = useCallback((id: string, slug: string) => setLearntSlugs((m) => (m[id] === slug ? m : { ...m, [id]: slug })), []);
   const [rejecting, setRejecting] = useState<FtpNewsItem | null>(null);
   const [focusIndex, setFocusIndex] = useState(0);
   // Stories the operator has already seen; new arrivals wait behind the "new stories" pill so the list never moves under the cursor
@@ -282,18 +315,27 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     };
   };
 
-  // Queue shortcuts from the spec: J/K move, Enter or E opens, R rejects
+  // Queue shortcuts from the spec: J/K move (phase 1 also the up and down arrows), Enter or E opens, R rejects
   useEffect(() => {
     if (tab !== "queue" || composing || rejecting) return;
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (e.metaKey || e.ctrlKey || e.altKey || target.closest("input, textarea, [contenteditable='true'], [role='dialog']")) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || target.closest("input, textarea, select, [contenteditable='true'], [role='dialog']")) return;
       const key = e.key.toLowerCase();
       // Enter on a focused button or link (the new-stories pill, card actions) presses that control instead
       if (key === "enter" && target.closest("button, a, [role='button']")) return;
-      if (key === "j" || key === "k") {
+      const arrow = p1 && (key === "arrowdown" || key === "arrowup") && !target.closest(ARROW_OWNERS);
+      if (key === "j" || key === "k" || arrow) {
         e.preventDefault();
-        setFocusIndex((i) => Math.max(0, Math.min(visible.length - 1, i + (key === "j" ? 1 : -1))));
+        if (!visible.length) return;
+        const next = Math.max(0, Math.min(visible.length - 1, Math.min(focusIndex, visible.length - 1) + (key === "j" || key === "arrowdown" ? 1 : -1)));
+        setFocusIndex(next);
+        // Phase 1: keep the selected row in view, and move keyboard focus with it when a row holds focus
+        const row = p1 ? document.getElementById(phase1RowId(visible[next].id)) : null;
+        if (row) {
+          if (target.getAttribute("role") === "option") row.focus({ preventScroll: true });
+          row.scrollIntoView({ block: "nearest" });
+        }
       } else if ((key === "enter" || key === "e") && focused && canAct) {
         e.preventDefault();
         setComposing(focused);
@@ -304,7 +346,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tab, composing, rejecting, visible.length, focused, canAct, canReject]);
+  }, [tab, composing, rejecting, visible, focusIndex, focused, canAct, canReject, p1]);
 
 
   // Phase 1: when the editor closes, focus goes back to the queue: the story's row if it is still there,
@@ -340,12 +382,13 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   };
 
   const facetsInbox = desk?.facets.inbox.data ?? null;
+  const inboxToday = facetsInbox?.today ?? null;
   const facetsPosted = desk?.facets.posted.data ?? null;
   const stats = p1
     ? [
-        // The whole day's count from the facets; the loaded page as a fallback
-        { label: "To post", value: facetsInbox?.total ?? queue.length, tone: "text.primary" },
-        { label: "Needs check", value: facetsInbox?.needsCheck ?? 0, tone: (facetsInbox?.needsCheck ?? 0) > 0 ? "warning.main" : "text.primary" },
+        // Today's stories (IST) from the facets; the whole view on an older server, the loaded page as a last fallback
+        { label: "To post", value: inboxToday?.total ?? facetsInbox?.total ?? queue.length, tone: "text.primary" },
+        { label: "Needs check", value: inboxToday?.needsCheck ?? facetsInbox?.needsCheck ?? 0, tone: (inboxToday?.needsCheck ?? facetsInbox?.needsCheck ?? 0) > 0 ? "warning.main" : "text.primary" },
         { label: "Posted today", value: publishedToday, tone: "success.main" },
       ]
     : [
@@ -361,6 +404,42 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const postedItems = postedNews.filter(matchesSearchAndFilters);
   const postedTotal = facetsPosted?.total ?? desk?.postedView.data?.items.length ?? 0;
   const p1Narrowed = activeFilterCount(filters) > 0 || !!q;
+
+  // ?story=<linkSlug>: the loaded queue and Posted list first; failing those, /drafts/resolve (the effect above).
+  // Matched while rendering (as mergeArrived does) so a link to a loaded story opens without a round trip.
+  if (storyLink && desk) {
+    const hit = desk.queue.find((n) => n.live.linkSlug === storyLink) ?? postedNews.find((n) => n.live.linkSlug === storyLink);
+    if (hit) {
+      setStoryLink(null);
+      setComposing(hit);
+    } else if (storyLookupFailed && desk.inbox.data) {
+      setStoryLink(null);
+      setStoryLookupFailed(false);
+      setNotice("That story link didn't match a story on the desk. It may have been posted, rejected or removed.");
+    }
+  }
+  // The open story's readable link name: from its row, from the draft the editor loaded, else from the loaded lists
+  const composingId = composing?.id ?? null;
+  const composingSlug = composing
+    ? ((isLiveItem(composing) ? composing.live.linkSlug : undefined) ?? learntSlugs[composing.id] ?? desk?.queue.find((n) => n.id === composing.id)?.live.linkSlug ?? postedNews.find((n) => n.id === composing.id)?.live.linkSlug)
+    : undefined;
+  // The address bar follows the editor: ?story=<linkSlug> while a story is open (?compose=<id> on an older server
+  // without slugs), nothing once it closes. Left alone until the editor has opened, so a link is never stripped early.
+  const liveDesk = !!desk;
+  const urlOwned = useRef(false);
+  useEffect(() => {
+    if (!liveDesk || storyLink) return;
+    if (composingId) urlOwned.current = true;
+    if (!urlOwned.current) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("compose");
+    url.searchParams.delete("story");
+    if (composingId) url.searchParams.set(composingSlug ? "story" : "compose", composingSlug ?? composingId);
+    if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url.href);
+  }, [liveDesk, storyLink, composingId, composingSlug]);
+  // The panel beside the list (wide screens): the selected story, and who else holds it
+  const focusedHeld = focused && isLiveItem(focused) && focused.live.claim && !focused.live.claim.mine ? focused.live.claim.name : null;
+  const showPanel = p1 && !!desk?.inbox.data && visible.length > 0;
 
   // Until /me has said which phase this is, show neither desk (phase 2 must not flash on a phase 1 desk)
   if (desk && !desk.phaseKnown) {
@@ -451,7 +530,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
           items={
             p1
               ? [
-                  { value: "queue", label: p1Narrowed ? `New (${visible.length} shown)` : `New (${facetsInbox?.total ?? queue.length})` },
+                  { value: "queue", label: p1Narrowed ? `New (${visible.length} shown)` : `New (${inboxToday?.total ?? facetsInbox?.total ?? queue.length})` },
                   { value: "published", label: p1Narrowed ? `Posted today (${postedItems.length} shown)` : `Posted today (${postedTotal})` },
                   { value: "templates", label: "Templates" },
                 ]
@@ -504,6 +583,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       {tab === "queue" && (
         <>
           <ActiveFilterChips filters={filters} onChange={setFilters} live={!!desk} />
+          <Box sx={showPanel ? queueGridSx : { display: "contents" }}>
           <Box ref={listRef} onPointerEnter={() => setPointerInList(true)} onPointerLeave={() => setPointerInList(false)} sx={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
           <NewStoriesPill count={arrived.length} onShow={showArrived} top={12} />
           {desk && !desk.inbox.data ? (
@@ -550,8 +630,14 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
             })()
           )}
           </Box>
+          {showPanel && (
+            <Box sx={panelCellSx}>
+              <QueuePreviewPanel item={focused} held={focusedHeld} canAct={canAct} canReject={canReject} onOpen={setComposing} onReject={setRejecting} />
+            </Box>
+          )}
+          </Box>
           <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", display: { xs: "none", md: "block" } }}>
-            Keyboard: J / K to move, Enter or E to open, R to reject.
+            {p1 ? "Keyboard: J / K or ↑ / ↓ to move, Enter or E to open, R to reject." : "Keyboard: J / K to move, Enter or E to open, R to reject."}
           </Typography>
         </>
       )}
@@ -586,7 +672,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
 
       {composing &&
         (desk ? (
-          <LiveEditor item={composing} platform={platform} onClose={closeEditor} onSwitch={setComposing} onSaved={setNotice} />
+          <LiveEditor item={composing} platform={platform} onClose={closeEditor} onSwitch={setComposing} onSaved={setNotice} onLinkSlug={onLinkSlug} />
         ) : (
           <PostEditor item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />
         ))}
