@@ -36,8 +36,11 @@ import { useSociaSession } from "@/providers/SociaSessionProvider";
 import { LoadError, errorText } from "@/components/Newsroom/SociaDesk/liveShared";
 import { Avatar, ConfirmDialog, LosingAccess, effectiveSet, formatDateTime, labelOf, lostKeys, tileSx, useLoad, type Loaded } from "./shared";
 import UserPermissionsDrawer from "./UserPermissionsDrawer";
-import AddPersonDialog from "./AddPersonDialog";
+import AddPersonDialog, { type ActorScope } from "./AddPersonDialog";
 import SetPasswordDialog from "./SetPasswordDialog";
+
+/** Read by screen readers, not shown */
+const visuallyHidden = { position: "absolute", width: 1, height: 1, p: 0, m: -1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap", border: 0 } as const;
 
 interface RoleOption {
   key: string;
@@ -100,7 +103,7 @@ function RoleSelect({ user, options, disabled, onChange }: { user: AccessUser; o
 
 export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
   const users = useLoad(() => accessService.listUsers());
-  const { user: self, allowed, overrides, catalogue } = usePermissions();
+  const { user: self, allowed, overrides, catalogue, roleKey, platformScoped } = usePermissions();
   const { live, refresh } = useSociaSession();
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -132,6 +135,21 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
     });
     return Array.from(map.values());
   }, [roles.data, users.data]);
+
+  // The signed-in admin's platform limit; the server holds a scoped admin to their own platforms
+  const scope: ActorScope = useMemo(
+    // /me says it; an older server does not, so fall back to the role list
+    () => ({ scoped: platformScoped ?? options.find((o) => o.key === roleKey)?.platformScoped === true, platforms: self?.platforms ?? [] }),
+    [platformScoped, options, roleKey, self?.platforms],
+  );
+
+  /** Why this admin cannot set the person's password (the server refuses it too), or null when they can */
+  const passwordBlock = (u: AccessUser): string | null => {
+    const role = options.find((o) => o.key === u.role);
+    if (role?.permissions?.some((p) => !allowed.has(p))) return `${u.name} can do more than you can. Ask a full admin.`;
+    if (scope.scoped && (role?.platformScoped === false || u.platforms.some((p) => !scope.platforms.includes(p)))) return `${u.name} works beyond your platforms. Ask a full admin.`;
+    return null;
+  };
 
   const apply = async (u: AccessUser, patch: UserPatch) => {
     setBusyId(u.id);
@@ -206,26 +224,54 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
     </Button>
   );
 
-  /** Tiles have room for the words; the table row, already eight columns wide, gets a labelled key button */
-  const passwordButton = (u: AccessUser) =>
-    u.id === self?.id ? (
-      profileLink(false)
+  // Until we know who is signed in, offer nothing (your own row must not get the button)
+  const notYet = (
+    <Typography component="span" sx={{ fontSize: "0.8125rem", color: "text.secondary" }}>
+      <span aria-hidden>—</span>
+      <Box component="span" sx={visuallyHidden}>
+        Loading
+      </Box>
+    </Typography>
+  );
+
+  /** Table: a short note with the reason on hover or focus. Tiles have room, so the reason is written out. */
+  const blockedNote = (why: string, compact: boolean) =>
+    compact ? (
+      <Tooltip title={why} describeChild>
+        <Typography component="span" tabIndex={0} sx={{ fontSize: "0.75rem", color: "text.secondary", whiteSpace: "nowrap", cursor: "help", textDecoration: "underline dotted", textUnderlineOffset: "3px" }}>
+          Ask a full admin
+        </Typography>
+      </Tooltip>
     ) : (
+      <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary" }}>{why}</Typography>
+    );
+
+  /** Tiles have room for the words; the table row, already eight columns wide, gets a labelled key button */
+  const passwordButton = (u: AccessUser) => {
+    if (!self) return notYet;
+    if (u.id === self.id) return profileLink(false);
+    const why = passwordBlock(u);
+    if (why) return blockedNote(why, false);
+    return (
       <Button size="small" variant="outlined" onClick={() => openPassword(u)} startIcon={<KeyRound size={14} aria-hidden />} aria-label={`Set a new password for ${u.name}`} sx={{ minHeight: 32, px: 1.25, borderColor: "divider", color: "text.primary", whiteSpace: "nowrap" }}>
         Set new password
       </Button>
     );
+  };
 
-  const passwordIcon = (u: AccessUser) =>
-    u.id === self?.id ? (
-      profileLink(true)
-    ) : (
+  const passwordIcon = (u: AccessUser) => {
+    if (!self) return notYet;
+    if (u.id === self.id) return profileLink(true);
+    const why = passwordBlock(u);
+    if (why) return blockedNote(why, true);
+    return (
       <Tooltip title="Set new password">
         <IconButton size="small" onClick={() => openPassword(u)} aria-label={`Set a new password for ${u.name}`} sx={{ width: 32, height: 32, borderRadius: "8px", border: "1px solid", borderColor: "divider", color: "text.primary" }}>
           <KeyRound size={15} aria-hidden />
         </IconButton>
       </Tooltip>
     );
+  };
 
   const highlightSx = (u: AccessUser) =>
     u.id === highlightId ? { backgroundColor: "action.selected", boxShadow: (t: { palette: { success: { main: string } } }) => `inset 3px 0 0 ${t.palette.success.main}`, transition: "background-color 600ms ease" } : { transition: "background-color 600ms ease" };
@@ -378,6 +424,7 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
           open={addOpen}
           options={options}
           allowed={allowed}
+          scope={scope}
           onClose={() => setAddOpen(false)}
           onCreated={(created) => {
             setAddOpen(false);

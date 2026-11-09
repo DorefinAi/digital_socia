@@ -24,7 +24,7 @@ import {
   Typography,
 } from "@mui/material";
 import { PLATFORM_OPTIONS } from "@/lib/access/catalogue";
-import { passwordProblem } from "@/lib/access/password";
+import { EMAIL_RE, passwordProblem } from "@/lib/access/password";
 import { accessService } from "@/lib/access/service";
 import type { AccessUser } from "@/lib/access/types";
 import { ApiError } from "@/lib/socia/client";
@@ -36,21 +36,38 @@ export interface AddRoleOption {
   label: string;
   /** null when Socia could not read the role's permissions */
   permissions: string[] | null;
+  /** null when Socia could not read the role */
+  platformScoped: boolean | null;
 }
 
-// Same shape the server accepts (admin.ts EMAIL_RE): local@domain, no spaces
-const EMAIL_RE = /^[^\s@]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*$/;
+/** The signed-in admin's own platform limit (admin.ts assertScopeWithinOwn) */
+export interface ActorScope {
+  /** True when the admin's role is limited to their own platforms */
+  scoped: boolean;
+  platforms: readonly string[];
+}
 
-/** A role is out of reach when it can do something the signed-in admin cannot (the server refuses it too). */
-const beyond = (o: AddRoleOption, allowed: ReadonlySet<string>) => !!o.permissions && o.permissions.some((p) => !allowed.has(p));
+/** Why a role is out of reach for this admin (the server refuses it too), or null when they may give it. */
+export function roleBlock(o: AddRoleOption, allowed: ReadonlySet<string>, scope: ActorScope): string | null {
+  if (o.permissions && o.permissions.some((p) => !allowed.has(p))) return "Can do more than you can";
+  if (scope.scoped && o.platformScoped === false) return "Not limited to platforms, but you are";
+  return null;
+}
 
 /** The lowest-access desk role this admin may give: Digital Team (operator) when it exists, else the role that can do least. */
-export function defaultRoleKey(options: AddRoleOption[], allowed: ReadonlySet<string>): string {
-  const usable = options.filter((o) => !beyond(o, allowed));
+export function defaultRoleKey(options: AddRoleOption[], allowed: ReadonlySet<string>, scope: ActorScope): string {
+  const usable = options.filter((o) => !roleBlock(o, allowed, scope));
   const operator = usable.find((o) => o.key === "operator");
   if (operator) return operator.key;
   const known = usable.filter((o) => o.permissions && o.key !== "viewer").sort((a, b) => a.permissions!.length - b.permissions!.length);
-  return known[0]?.key ?? usable.find((o) => o.key !== "admin")?.key ?? options[0]?.key ?? "";
+  // Nothing usable: leave it empty so "Choose a role." shows, instead of picking a disabled one
+  return known[0]?.key ?? usable.find((o) => o.key !== "admin")?.key ?? usable[0]?.key ?? "";
+}
+
+/** X for most desks; a platform-scoped admin starts with their own platforms (X when they have it). */
+function defaultPlatforms(scope: ActorScope): string[] {
+  if (!scope.scoped) return ["x"];
+  return scope.platforms.includes("x") ? ["x"] : scope.platforms.slice(0, 1);
 }
 
 /**
@@ -60,19 +77,21 @@ export default function AddPersonDialog({
   open,
   options,
   allowed,
+  scope,
   onClose,
   onCreated,
 }: {
   open: boolean;
   options: AddRoleOption[];
   allowed: ReadonlySet<string>;
+  scope: ActorScope;
   onClose: () => void;
   onCreated: (user: AccessUser) => void;
 }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState(() => defaultRoleKey(options, allowed));
-  const [platforms, setPlatforms] = useState<string[]>(["x"]);
+  const [role, setRole] = useState(() => defaultRoleKey(options, allowed, scope));
+  const [platforms, setPlatforms] = useState<string[]>(() => defaultPlatforms(scope));
   const [password, setPassword] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [emailTaken, setEmailTaken] = useState<string | null>(null);
@@ -82,6 +101,7 @@ export default function AddPersonDialog({
   const nameRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
   const roleRef = useRef<HTMLInputElement>(null);
+  const platformRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
   const trimmedName = name.replace(/\s+/g, " ").trim();
@@ -90,6 +110,7 @@ export default function AddPersonDialog({
     name: !trimmedName ? "Type the person's name." : trimmedName.length > 80 ? "Use 80 characters or fewer." : null,
     email: !trimmedEmail ? "Type their email address." : !EMAIL_RE.test(trimmedEmail) ? "Type a valid email address, like name@example.com." : null,
     role: !role ? "Choose a role." : null,
+    platforms: scope.scoped && platforms.some((p) => !scope.platforms.includes(p)) ? "You can only give your own platforms. Untick the others." : null,
     password: passwordProblem(password),
   };
   // Field messages show after the first try to submit, then follow the typing
@@ -97,9 +118,12 @@ export default function AddPersonDialog({
     name: submitted ? problems.name : null,
     email: emailTaken ?? (submitted ? problems.email : null),
     role: submitted ? problems.role : null,
+    platforms: submitted ? problems.platforms : null,
     password: submitted ? problems.password : null,
   };
 
+  // Focus goes to the first platform that needs unticking, else the first one they may give
+  const firstPlatform = (PLATFORM_OPTIONS.find((p) => scope.scoped && platforms.includes(p.key) && !scope.platforms.includes(p.key)) ?? PLATFORM_OPTIONS.find((p) => !scope.scoped || scope.platforms.includes(p.key)))?.key;
   const togglePlatform = (key: string) => setPlatforms((list) => (list.includes(key) ? list.filter((p) => p !== key) : [...list, key]));
 
   const submit = async (e: React.FormEvent) => {
@@ -107,7 +131,7 @@ export default function AddPersonDialog({
     setSubmitted(true);
     setFormError(null);
     // Move to the first field that needs fixing, so its message is read out
-    const first = problems.name ? nameRef : problems.email || emailTaken ? emailRef : problems.role ? roleRef : problems.password ? passwordRef : null;
+    const first = problems.name ? nameRef : problems.email || emailTaken ? emailRef : problems.role ? roleRef : problems.platforms ? platformRef : problems.password ? passwordRef : null;
     if (first) {
       first.current?.focus();
       return;
@@ -158,7 +182,9 @@ export default function AddPersonDialog({
             size="small"
             label="Email"
             required
-            type="email"
+            // Plain text with a non-login name, so browsers do not save this email and password as your own sign-in
+            type="text"
+            name="new-person-email"
             value={email}
             onChange={(e) => {
               setEmail(e.target.value);
@@ -168,7 +194,7 @@ export default function AddPersonDialog({
             autoComplete="off"
             error={!!shown.email}
             helperText={shown.email ?? " "}
-            slotProps={{ htmlInput: { maxLength: 200, autoCapitalize: "off", spellCheck: false } }}
+            slotProps={{ htmlInput: { maxLength: 200, inputMode: "email", autoCapitalize: "off", spellCheck: false, "data-1p-ignore": true, "data-lpignore": "true" } }}
           />
         </Box>
 
@@ -183,10 +209,10 @@ export default function AddPersonDialog({
             renderValue={(v) => options.find((o) => o.key === v)?.label ?? v}
           >
             {options.map((o) => {
-              const tooMuch = beyond(o, allowed);
+              const block = roleBlock(o, allowed, scope);
               return (
-                <MenuItem key={o.key} value={o.key} disabled={tooMuch} sx={{ fontSize: "0.875rem" }}>
-                  <ListItemText primary={o.label} secondary={tooMuch ? "Can do more than you can" : undefined} slotProps={{ primary: { sx: { fontSize: "0.875rem" } }, secondary: { sx: { fontSize: "0.75rem" } } }} />
+                <MenuItem key={o.key} value={o.key} disabled={!!block} sx={{ fontSize: "0.875rem" }}>
+                  <ListItemText primary={o.label} secondary={block ?? undefined} slotProps={{ primary: { sx: { fontSize: "0.875rem" } }, secondary: { sx: { fontSize: "0.75rem" } } }} />
                 </MenuItem>
               );
             })}
@@ -194,7 +220,7 @@ export default function AddPersonDialog({
           <FormHelperText>{shown.role ?? "What they can open and do. You can change it later."}</FormHelperText>
         </FormControl>
 
-        <FormControl component="fieldset" variant="standard">
+        <FormControl component="fieldset" variant="standard" error={!!shown.platforms}>
           <FormLabel component="legend" sx={{ fontSize: "0.8125rem", fontWeight: 600, color: "text.primary", "&.Mui-focused": { color: "text.primary" } }}>
             Platforms
           </FormLabel>
@@ -202,14 +228,19 @@ export default function AddPersonDialog({
             {PLATFORM_OPTIONS.map((p) => (
               <FormControlLabel
                 key={p.key}
-                control={<Checkbox size="small" checked={platforms.includes(p.key)} onChange={() => togglePlatform(p.key)} />}
+                // A platform-scoped admin can only hand out their own platforms
+                // (one already ticked stays enabled, so it can be unticked)
+                disabled={scope.scoped && !scope.platforms.includes(p.key) && !platforms.includes(p.key)}
+                control={<Checkbox size="small" checked={platforms.includes(p.key)} onChange={() => togglePlatform(p.key)} slotProps={{ input: { ref: p.key === firstPlatform ? platformRef : undefined } as object }} />}
                 label={p.label}
                 slotProps={{ typography: { sx: { fontSize: "0.875rem" } } }}
                 sx={{ mr: 1, minHeight: 40 }}
               />
             ))}
           </FormGroup>
-          <FormHelperText sx={{ mt: 0 }}>The platforms they post and act on. You can change them later.</FormHelperText>
+          <FormHelperText sx={{ mt: 0 }}>
+            {shown.platforms ?? (scope.scoped ? (scope.platforms.length ? "The platforms they post and act on. You can only give your own platforms." : "You have no platforms of your own, so they start with none. A full admin can add some.") : "The platforms they post and act on. You can change them later.")}
+          </FormHelperText>
         </FormControl>
 
         <Box>

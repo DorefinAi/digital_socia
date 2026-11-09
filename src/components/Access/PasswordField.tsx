@@ -69,7 +69,9 @@ export default function PasswordField({
         disabled={disabled}
         error={!!error}
         helperText={error ?? `At least ${PASSWORD_MIN} characters.`}
-        autoComplete="new-password"
+        // Not "new-password": browsers would offer to save someone else's password as your own sign-in
+        autoComplete="off"
+        name={id}
         inputRef={inputRef}
         slotProps={{
           htmlInput: { spellCheck: false, autoCapitalize: "off", autoCorrect: "off", "data-1p-ignore": true, "data-lpignore": "true" },

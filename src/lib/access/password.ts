@@ -2,7 +2,14 @@
 // The minimum matches the server (apps/api/src/routes/admin.ts PASSWORD_MIN) and POST /me/password.
 
 export const PASSWORD_MIN = 12;
+export const PASSWORD_MAX = 200;
 export const GENERATED_LENGTH = 16;
+
+/** Same shape the server accepts (admin.ts EMAIL_RE): local@domain, no spaces */
+export const EMAIL_RE = /^[^\s@]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*$/;
+
+/** Length in characters, as the server counts it (an emoji is one, not two UTF-16 units) */
+export const passwordLength = (value: string) => [...value].length;
 
 // No look-alikes: 0/O/o, 1/l/I/i, and symbols that read badly when shared aloud or in a chat
 const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -38,7 +45,8 @@ export function generatePassword(length = GENERATED_LENGTH): string {
 /** The inline message for a password field, or null when it is fine. */
 export function passwordProblem(value: string): string | null {
   if (!value) return "Set a password, or press Generate.";
-  if (value.length < PASSWORD_MIN) return `Use at least ${PASSWORD_MIN} characters (${value.length} so far).`;
-  if (value.length > 200) return "Use 200 characters or fewer.";
+  const length = passwordLength(value);
+  if (length < PASSWORD_MIN) return `Use at least ${PASSWORD_MIN} characters (${length} so far).`;
+  if (length > PASSWORD_MAX) return `Use ${PASSWORD_MAX} characters or fewer.`;
   return null;
 }

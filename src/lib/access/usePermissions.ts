@@ -31,6 +31,8 @@ export interface PermissionsState {
   allowed: ReadonlySet<string>;
   roleKey: string;
   roleLabel: string;
+  /** True when the signed-in person's role is limited to their own platforms; null when not known yet */
+  platformScoped: boolean | null;
   overrides: PermissionOverride[];
   catalogue: Permission[];
   user: PermissionsUser | null;
@@ -64,6 +66,7 @@ export function usePermissions(): PermissionsState {
         allowed: new Set(effective.filter((p) => p.allowed).map((p) => p.key)) as ReadonlySet<string>,
         roleKey: self.role,
         roleLabel: role?.label ?? fallbackRoleLabel(self.role),
+        platformScoped: role?.platformScoped ?? false,
         overrides: self.overrides,
         catalogue: PERMISSION_CATALOGUE,
         user: { id: self.id, name: self.name, email: self.email, platforms: self.platforms, active: self.active, totpEnabled: self.totpEnabled, createdAt: self.createdAt, lastLoginAt: self.lastLoginAt },
@@ -71,7 +74,7 @@ export function usePermissions(): PermissionsState {
       };
     }
     if (!me) {
-      return { ready: status === "signed_out" || status === "offline", allowed: EMPTY, roleKey: "", roleLabel: "", overrides: [], catalogue: PERMISSION_CATALOGUE, user: null, adminName: null };
+      return { ready: status === "signed_out" || status === "offline", allowed: EMPTY, roleKey: "", roleLabel: "", platformScoped: null, overrides: [], catalogue: PERMISSION_CATALOGUE, user: null, adminName: null };
     }
     const u = me.user;
     return {
@@ -79,6 +82,7 @@ export function usePermissions(): PermissionsState {
       allowed: new Set(allowedFromMe(me)) as ReadonlySet<string>,
       roleKey: u.role,
       roleLabel: u.roleLabel ?? fallbackRoleLabel(u.role),
+      platformScoped: u.platformScoped ?? null,
       overrides: me.overrides ?? [],
       catalogue: me.catalogue?.length ? me.catalogue : PERMISSION_CATALOGUE,
       user: {

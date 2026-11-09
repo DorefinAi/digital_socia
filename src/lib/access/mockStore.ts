@@ -12,7 +12,7 @@ import {
   isBuiltInRole,
   roleSlug,
 } from "./catalogue";
-import { PASSWORD_MIN } from "./password";
+import { EMAIL_RE, PASSWORD_MAX, PASSWORD_MIN, passwordLength } from "./password";
 import type { AccessUser, AuditEntry, EffectivePermission, NewUserInput, PermissionOverride, RoleInput, RolePatch, RoleRecord, UserPatch } from "./types";
 
 interface MockRole {
@@ -213,6 +213,19 @@ function audit(s: MockAccessState, action: string, entityType: "role" | "user", 
   return { id: `a-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, at: new Date().toISOString(), actorName: actor?.name ?? null, action, entityType, entityId, entityLabel, before, after };
 }
 
+/** Mirrors the server's password schema (counted in characters) */
+function checkPassword(password: string) {
+  const length = passwordLength(password);
+  if (length < PASSWORD_MIN) throw new ApiError(400, "invalid", `The password needs at least ${PASSWORD_MIN} characters.`);
+  if (length > PASSWORD_MAX) throw new ApiError(400, "invalid", `The password can have at most ${PASSWORD_MAX} characters.`);
+}
+
+/** 403 exceeds_own_access when `keys` holds something the demo's signed-in person cannot do (access.ts assertActorCovers) */
+function assertCovers(s: MockAccessState, keys: string[], who: string) {
+  const own = new Set(effectiveFor(s, mockAccess.self(s)).filter((p) => p.allowed).map((p) => p.key));
+  if (keys.some((k) => !own.has(k))) throw new ApiError(403, "exceeds_own_access", `${who} can do things you cannot. Ask a full admin.`);
+}
+
 const pause = () => new Promise((r) => setTimeout(r, 250));
 
 // ─── The API, in demo ────────────────────────────────────────────────────────
@@ -328,9 +341,11 @@ export const mockAccess = {
     const name = input.name.replace(/\s+/g, " ").trim();
     const email = input.email.trim().toLowerCase();
     if (!name || name.length > 80) throw new ApiError(400, "invalid", "Type the person's name.");
-    if (!/^[^\s@]+@[^\s@]+$/.test(email)) throw new ApiError(400, "invalid", "Type a valid email address, like name@example.com.");
-    if (input.password.length < PASSWORD_MIN) throw new ApiError(400, "invalid", `The password needs at least ${PASSWORD_MIN} characters.`);
+    if (!EMAIL_RE.test(email)) throw new ApiError(400, "invalid", "Type a valid email address, like name@example.com.");
+    checkPassword(input.password);
     if (!s.roles.some((r) => r.key === input.role)) throw new ApiError(400, "invalid", `There is no role "${input.role}".`);
+    // Like the server: nobody hands out a role that can do more than they can
+    assertCovers(s, rolePermissions(s, input.role), `The role "${roleLabelOf(s, input.role)}"`);
     if (s.users.some((u) => u.email.toLowerCase() === email)) throw new ApiError(409, "email_taken", "Someone already uses this email.");
     const user: MockUser = { id: `u-${Date.now().toString(36)}`, name, email, role: input.role, platforms: [...new Set(input.platforms)], active: true, totpEnabled: false, createdAt: new Date().toISOString(), lastLoginAt: null, overrides: [] };
     const entry = audit(s, "user.created", "user", user.id, name, null, { name, email, role: user.role, platforms: user.platforms });
@@ -344,7 +359,8 @@ export const mockAccess = {
     const user = s.users.find((u) => u.id === id);
     if (!user) throw new ApiError(404, "not_found", "This user does not exist.");
     if (id === s.selfId) throw new ApiError(409, "self_change", "Change your own password under Your profile.");
-    if (password.length < PASSWORD_MIN) throw new ApiError(400, "invalid", `The password needs at least ${PASSWORD_MIN} characters.`);
+    checkPassword(password);
+    assertCovers(s, effectiveFor(s, user).filter((p) => p.allowed).map((p) => p.key), user.name);
     const next: MockUser = resetTotp ? { ...user, totpEnabled: false } : user;
     const entries = [audit(s, "user.password_reset", "user", id, user.name, null, null), ...(resetTotp ? [audit(s, "user.totp_reset", "user", id, user.name, null, null)] : [])];
     commit({ ...s, users: s.users.map((u) => (u.id === id ? next : u)), audit: [...entries, ...s.audit] });

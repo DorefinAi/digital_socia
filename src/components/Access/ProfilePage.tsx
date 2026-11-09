@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { Alert, Box, Button, Chip, CircularProgress, Collapse, TextField, Typography } from "@mui/material";
+import { PASSWORD_MIN, passwordLength } from "@/lib/access/password";
 import { Eraser, ImageIcon, KeyRound, Monitor, ShieldCheck, UserRound } from "lucide-react";
 import { platformLabel } from "@/lib/access/catalogue";
 import { accessService } from "@/lib/access/service";
@@ -81,13 +82,13 @@ function PasswordForm() {
   const [done, setDone] = useState(false);
   const [touched, setTouched] = useState(false);
 
-  const tooShort = next.length > 0 && next.length < 12;
+  const tooShort = next.length > 0 && passwordLength(next) < PASSWORD_MIN;
   const mismatch = confirm.length > 0 && confirm !== next;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setTouched(true);
-    if (!current || next.length < 12 || confirm !== next) return;
+    if (!current || passwordLength(next) < PASSWORD_MIN || confirm !== next) return;
     setBusy(true);
     setError(null);
     try {
@@ -119,7 +120,7 @@ function PasswordForm() {
       <Collapse in={open} unmountOnExit>
         <Box id="change-password" component="form" onSubmit={submit} noValidate sx={{ display: "grid", gap: 1.5, pt: 0.5 }}>
           <TextField size="small" type="password" label="Current password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" error={touched && !current} helperText={touched && !current ? "Enter your current password." : undefined} />
-          <TextField size="small" type="password" label="New password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" error={tooShort || (touched && next.length < 12)} helperText="At least 12 characters." />
+          <TextField size="small" type="password" label="New password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" error={tooShort || (touched && passwordLength(next) < PASSWORD_MIN)} helperText={`At least ${PASSWORD_MIN} characters.`} />
           <TextField size="small" type="password" label="Repeat new password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" error={mismatch} helperText={mismatch ? "The two new passwords don't match." : undefined} />
           {error && (
             <Typography role="alert" sx={{ fontSize: "0.8125rem", color: "error.main" }}>
