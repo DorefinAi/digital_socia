@@ -632,7 +632,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
           </Box>
           {showPanel && (
             <Box sx={panelCellSx}>
-              <QueuePreviewPanel item={focused} held={focusedHeld} canAct={canAct} canReject={canReject} onOpen={setComposing} onReject={setRejecting} />
+              <QueuePreviewPanel item={focused} held={focusedHeld} canAct={canAct} canReject={canReject} onOpen={setComposing} onReject={setRejecting} org={desk?.orgCardTemplates.data} own={desk?.cardTemplate.data?.template} />
             </Box>
           )}
           </Box>

@@ -96,10 +96,11 @@ export default function AgentAssistant() {
           onClick={() => setIsOpen(!isOpen)}
           sx={{
             position: "fixed",
-            bottom: 24,
-            right: 24,
-            width: 56,
-            height: 56,
+            // Small and tucked into the corner, so it never sits over a page's own buttons
+            bottom: 16,
+            right: 16,
+            width: 44,
+            height: 44,
             background: "black",
             color: "white",
             boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
@@ -115,7 +116,7 @@ export default function AgentAssistant() {
             "@media (prefers-reduced-motion: reduce)": { "&::after": { animation: "none" } }
           }}
         >
-          {isOpen ? <CloseIcon /> : <SmartToyIcon />}
+          {isOpen ? <CloseIcon sx={{ fontSize: 20 }} /> : <SmartToyIcon sx={{ fontSize: 20 }} />}
         </IconButton>
       </Tooltip>
 
@@ -125,8 +126,8 @@ export default function AgentAssistant() {
           elevation={12}
           sx={{
             position: "fixed",
-            bottom: 90,
-            right: 24,
+            bottom: 72,
+            right: 16,
             width: { xs: "90vw", sm: 320 },
             height: "480px",
             maxHeight: "70vh",
