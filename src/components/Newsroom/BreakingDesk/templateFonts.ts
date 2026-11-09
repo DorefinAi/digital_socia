@@ -59,7 +59,17 @@ export interface TemplateFont {
 
 const VARIABLE = [400, 500, 600, 700, 800];
 
+/**
+ * Mangal (globals.css "SociaMangal": the installed face, else public/fonts) for Hindi; Latin letters and
+ * digits fall through to a bold sans, as on the desk's own cards; Noto Sans covers Hindi if Mangal can't load.
+ */
+export const MANGAL_FAMILY = `"SociaMangal", Arial, "Helvetica Neue", ${noto.style.fontFamily}`;
+/** The desk templates' card face: headline, story and date */
+export const ORG_CARD_FONT = "mangal";
+
 export const TEMPLATE_FONTS: TemplateFont[] = [
+  // First in the menu: the default on the desk's X templates (Mangal ships regular and bold only)
+  { id: "mangal", label: "Mangal", group: "Sans", family: MANGAL_FAMILY, weights: [400, 700] },
   { id: "noto", label: "Noto Sans", group: "Sans", family: noto.style.fontFamily, weights: [...VARIABLE, 900] },
   // Roboto has no Hindi letters; Noto Sans covers them in the same voice
   { id: "roboto", label: "Roboto", group: "Sans", family: `${roboto.style.fontFamily}, ${noto.style.fontFamily}`, weights: [...VARIABLE, 900] },
@@ -84,7 +94,9 @@ export const TEMPLATE_FONTS: TemplateFont[] = [
   { id: "amita", label: "Amita", group: "Handwritten", family: amita.style.fontFamily, weights: [400, 700] },
 ];
 
-export const fontById = (id: string | undefined) => TEMPLATE_FONTS.find((f) => f.id === id) ?? TEMPLATE_FONTS[0];
+// Unset or unknown: Noto Sans, as before (Mangal is the default only where a desk template sets it)
+const FALLBACK_FONT = TEMPLATE_FONTS.find((f) => f.id === "noto") ?? TEMPLATE_FONTS[0];
+export const fontById = (id: string | undefined) => TEMPLATE_FONTS.find((f) => f.id === id) ?? FALLBACK_FONT;
 
 /** Nearest weight the font actually ships, so canvas never fakes a bold. */
 export const nearestWeight = (font: TemplateFont, weight: number) =>

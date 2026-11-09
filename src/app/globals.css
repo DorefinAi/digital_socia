@@ -140,3 +140,28 @@ p {
     grid-template-columns: 1fr;
   }
 }
+
+/*
+ * Mangal, the Hindi face of the desk's X cards (headline, story and date on the desk templates). The
+ * installed copy is used when there is one, else the bundled one in public/fonts. Only Devanagari comes from
+ * it (unicode-range), so Latin letters and digits on a card fall through to Arial/sans-serif bold, as on the
+ * desk's own cards. Canvas code waits for both weights before drawing (backgroundCard.fontsReady,
+ * TemplateCanvas's font load).
+ */
+@font-face {
+  font-family: "SociaMangal";
+  src: local("Mangal"), local("Mangal Regular"), local("Mangal-Regular"), url("/fonts/mangal.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0900-097F, U+1CD0-1CFF, U+200C-200D, U+25CC, U+A830-A839, U+A8E0-A8FF;
+}
+
+@font-face {
+  font-family: "SociaMangal";
+  src: local("Mangal Bold"), local("Mangal-Bold"), url("/fonts/mangalb.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0900-097F, U+1CD0-1CFF, U+200C-200D, U+25CC, U+A830-A839, U+A8E0-A8FF;
+}

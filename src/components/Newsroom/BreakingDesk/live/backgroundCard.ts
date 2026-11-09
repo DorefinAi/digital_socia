@@ -3,13 +3,16 @@
 // centred, at one font size shrunk from fontMaxPx to fontMinPx until both fit. Pure canvas, no React.
 
 import type { DrawableCardTemplate, OrgCardTemplateLayout } from "@/lib/socia/types";
-import { fontById } from "../templateFonts";
+import { MANGAL_FAMILY } from "../templateFonts";
 
-/** Mangal is the Hindi face the cards use; Noto Sans Devanagari stands in where Mangal is not installed. */
-const family = () => `Mangal, ${fontById("noto").family}, "Nirmala UI", sans-serif`;
+/**
+ * Mangal is the Hindi face the cards use (globals.css "SociaMangal": installed, else bundled); Latin falls
+ * through to a bold sans, and Noto Sans Devanagari stands in if Mangal can't load.
+ */
+const family = () => `${MANGAL_FAMILY}, "Nirmala UI", sans-serif`;
 const LINE_HEIGHT = 1.4;
-/** Space between the headline and the body, in lines */
-const GAP = 0.45;
+/** Space between the headline and the body, in lines: one blank line, as the desk's cards */
+const GAP = 1;
 
 export interface DrawnCard {
   blob: Blob;
@@ -134,7 +137,7 @@ function fitText(ctx: CanvasRenderingContext2D, headline: string, body: string, 
   const measure = (size: number) => {
     ctx.font = `700 ${size}px ${family()}`;
     const h = wrap(ctx, headline, boxW);
-    ctx.font = `400 ${size}px ${family()}`;
+    ctx.font = `700 ${size}px ${family()}`;
     const b = wrap(ctx, body, boxW);
     const lines = h.length + b.length + (h.length && b.length ? GAP : 0);
     return { size, headline: h, body: b, height: lines * size * LINE_HEIGHT, cut: false };
@@ -169,7 +172,7 @@ function fitText(ctx: CanvasRenderingContext2D, headline: string, body: string, 
   const room = Math.floor((boxH - (f.headline.length + (f.headline.length ? GAP : 0)) * lineH) / lineH + 1e-6);
   const kept = f.body.slice(0, Math.max(0, room));
   if (kept.length) {
-    ctx.font = `400 ${min}px ${family()}`;
+    ctx.font = `700 ${min}px ${family()}`;
     kept[kept.length - 1] = withEllipsis(ctx, kept[kept.length - 1], boxW);
   }
   const lines = f.headline.length + kept.length + (f.headline.length && kept.length ? GAP : 0);
@@ -236,15 +239,16 @@ export function paintCardText(ctx: CanvasRenderingContext2D, layout: OrgCardTemp
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  // Date: one line, as large as the slot allows
+  // Date: one line, from 1.12 × the slot's height (digits are shorter than the font size), shrunk to 95% of
+  // the slot's width, centred on the slot; orgCanvas.dateSizePx sizes the editor's date the same way
   const d = layout.date;
   if (d) {
     const dateText = istDate(d.format, words.date);
     const slotW = d.w * W;
     const slotH = d.h * H;
-    let dateSize = Math.floor(slotH * 0.72);
+    let dateSize = Math.floor(slotH * 1.12);
     ctx.font = `700 ${dateSize}px ${family()}`;
-    while (dateSize > 8 && ctx.measureText(dateText).width > slotW * 0.94) {
+    while (dateSize > 8 && ctx.measureText(dateText).width > slotW * 0.95) {
       dateSize -= 1;
       ctx.font = `700 ${dateSize}px ${family()}`;
     }
@@ -271,7 +275,7 @@ export function paintCardText(ctx: CanvasRenderingContext2D, layout: OrgCardTemp
     y += lineH;
   }
   if (fit.headline.length && fit.body.length) y += GAP * lineH;
-  ctx.font = `400 ${fit.size}px ${family()}`;
+  ctx.font = `700 ${fit.size}px ${family()}`;
   ctx.fillStyle = layout.body.color;
   for (const line of fit.body) {
     ctx.fillText(line, cx, y);

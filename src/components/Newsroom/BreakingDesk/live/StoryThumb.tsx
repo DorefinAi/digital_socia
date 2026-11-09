@@ -8,6 +8,7 @@ import type { FtpNewsItem } from "@/types/newsroom";
 import { storyTag } from "../shared";
 import type { OrgCardTemplate, UserCardTemplate } from "@/lib/socia/types";
 import { isLiveItem } from "./LiveDesk";
+import { cardHeadlineText } from "../cardWords";
 import { cardChoiceOf, holdThumb, subscribeCardChoice, subscribeThumb, thumbKey, thumbTemplate, thumbUrl, unwantThumb, wantThumb, type ThumbJob } from "./storyThumbs";
 
 /** A list that scrolls on its own marks itself with this attribute, so rows just below its fold draw early. */
@@ -63,7 +64,8 @@ const StoryThumb = React.memo(function StoryThumb({ item, boxW, boxH, org, own }
   const pick = !coverUrl && live && org ? thumbTemplate(org, own ?? null, storyTag(item), choice) : null;
   const template = pick?.template ?? null;
   const designKey = pick?.key ?? "";
-  const { headline, body } = item;
+  const headline = cardHeadlineText(item.headline, live ? item.live.district : null);
+  const { body } = item;
 
   const drawing = useMemo((): { key: string; job: ThumbJob } | null => {
     if (!template || !designKey) return null;

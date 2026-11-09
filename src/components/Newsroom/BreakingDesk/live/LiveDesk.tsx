@@ -37,6 +37,7 @@ import type {
   OrgCardTemplate,
 } from "@/lib/socia/types";
 import type { FtpMedia, FtpNewsItem, SocialPost } from "@/types/newsroom";
+import { cardHeadlineText, queueCardBody } from "../cardWords";
 
 /** A queue or feed story on the live desk: the demo shape plus the draft it came from. */
 export interface LiveNewsItem extends FtpNewsItem {
@@ -121,7 +122,8 @@ export function queueToNews(item: QueueItem): LiveNewsItem {
   return {
     id: item.id,
     headline: item.headline,
-    body: item.bodyText,
+    // Cards drawn from this row (list thumbnails) read the story, like the editor's card; the post text is shortText
+    body: queueCardBody(item),
     shortText: item.bodyText,
     tag: LIVE_TAG,
     area: item.district ?? "",
@@ -148,7 +150,8 @@ export function draftToNews(d: DraftView): FtpNewsItem {
   const media = draftMedia(d.media);
   return {
     id: d.id,
-    headline: d.story.headline,
+    // The editor's card starts from these words: "<District>: <headline>", never the post's place hashtags
+    headline: cardHeadlineText(d.story.headline, d.story.district),
     body: d.story.body,
     shortText: d.bodyText,
     tag: LIVE_TAG,
@@ -181,6 +184,8 @@ export function postToSocial(p: PublishedPost): SocialPost {
     status: p.recalled ? "recalled" : "live",
     recalledAt: p.recalled?.at,
     recallReason: p.recalled?.reason,
+    byHand: !!(p.copied || p.manual),
+    postedByName: p.publishedBy,
   };
 }
 

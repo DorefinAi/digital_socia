@@ -8,9 +8,9 @@ import type { CardTextLayer, CardTextStyle } from "@/types/newsroom";
 import type { DrawableCardTemplate, OrgCardTemplate } from "@/lib/socia/types";
 import type { TemplateLayout } from "../TemplateCanvas";
 import { type CardBackdrop, ORG_BASE_SIZE } from "../cardRender";
-import { fontById, nearestWeight } from "../templateFonts";
+import { ORG_CARD_FONT, fontById, nearestWeight } from "../templateFonts";
 import { apiFileUrl } from "./LiveDesk";
-import { istDate, loadImage } from "./backgroundCard";
+import { fontsReady, istDate, loadImage } from "./backgroundCard";
 
 /** The text box that holds the story under the headline */
 export const ORG_BODY_ID = "org-body";
@@ -20,8 +20,42 @@ export const ORG_DATE_ID = "org-date";
 // ─── One decoded picture per template version, shared by the canvas, the picker and the feed ────────
 const images = new Map<string, Promise<HTMLImageElement>>();
 
+// ─── Mangal before measuring: a card placed on a fallback face would be sized wrong ──────────────────
+let fontsIn = typeof document === "undefined";
+let fontsWait: Promise<void> | null = null;
+/**
+ * Resolves once the card faces (both weights) are in, or have failed, or after 4 s at most: without the TTFs
+ * the card is placed on the fallback faces, as before.
+ */
+export function orgFontsReady(): Promise<void> {
+  if (!fontsWait) {
+    fontsWait = Promise.race([fontsReady(), new Promise<void>((done) => setTimeout(done, 4000))])
+      .catch(() => undefined)
+      .then(() => {
+        fontsIn = true;
+      });
+  }
+  return fontsWait;
+}
+
+/** True once orgFontsReady() has settled: place words on a desk template only then. */
+export function useOrgFontsReady(): boolean {
+  const [ready, setReady] = useState(fontsIn);
+  useEffect(() => {
+    if (ready) return;
+    let cancelled = false;
+    void orgFontsReady().then(() => !cancelled && setReady(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [ready]);
+  return ready;
+}
+
 /** The template's picture, fetched with the session and decoded once. A failed load is tried again next time. */
 export function templateImage(backgroundUrl: string): Promise<HTMLImageElement> {
+  // The card's Mangal starts downloading with the first template, so the words are measured in it
+  void orgFontsReady();
   let p = images.get(backgroundUrl);
   if (!p) {
     p = loadImage(apiFileUrl(backgroundUrl));
@@ -63,17 +97,22 @@ export function useBackdrop(w: number, h: number, image: HTMLImageElement | null
 
 // ─── Placing the words ───────────────────────────────────────────────────────────────────────────────
 
-/** The headline is drawn this much larger than the story, so the two read as title and text */
-const HEAD_RATIO = 1.12;
+/** Headline size against the story's: the desk's cards set both bold at the same size */
+const HEAD_RATIO = 1;
 const HEAD_LINE = 1.3;
 const BODY_LINE = 1.4;
-/** Space between headline and story, in story lines */
-const GAP = 0.45;
+/** Space between headline and story, in story lines: one blank line, as the desk's cards */
+const GAP = 1;
 /** Inside the template's box, as a share of its width and height (as backgroundCard.ts) */
 const PAD = 0.04;
 
-export const BODY_STYLE: CardTextStyle = { weight: 400, align: "center", lineHeight: BODY_LINE, shadow: 0 };
-const DATE_STYLE: CardTextStyle = { weight: 700, align: "center", lineHeight: 1.2, shadow: 0 };
+// Headline, story and date are all bold Mangal, centred (the headline's look is cardRender.ORG_HEADLINE)
+export const BODY_STYLE: CardTextStyle = { font: ORG_CARD_FONT, weight: 700, align: "center", lineHeight: BODY_LINE, shadow: 0 };
+// Line height 1: the date's box is one line tall (dateBox), and a taller line would make the
+// card shrink it to fit the box, smaller than backgroundCard.ts draws it
+const DATE_STYLE: CardTextStyle = { font: ORG_CARD_FONT, weight: 700, align: "center", lineHeight: 1, shadow: 0 };
+/** The fonts a fresh card on a desk template is measured and drawn with */
+const ORG_FONTS = { head: ORG_CARD_FONT, body: ORG_CARD_FONT, date: ORG_CARD_FONT };
 
 type Words = { headline: string; body: string };
 type Frame = { W: number; H: number; u: number };
@@ -126,15 +165,24 @@ interface Fit {
 }
 
 /** Largest story size between the template's min and max at which headline and story fill the box, both measured. */
-function fitWords(words: Words, width: number, height: number, minPx: number, maxPx: number, fonts: { head?: string; body?: string }): Fit {
+/** Faces and weights the words are measured in: the ones they are drawn in (unset weights draw bold) */
+export interface OrgFonts {
+  head?: string;
+  body?: string;
+  date?: string;
+  headWeight?: number;
+  bodyWeight?: number;
+}
+
+function fitWords(words: Words, width: number, height: number, minPx: number, maxPx: number, fonts: OrgFonts): Fit {
   const ctx = measure();
   const headline = words.headline.trim();
   const body = words.body.trim();
   const at = (size: number): Fit => {
     if (!ctx) return { size, headH: headline ? size * HEAD_RATIO * HEAD_LINE : 0, bodyH: body ? size * BODY_LINE * 3 : 0 };
-    ctx.font = fontFor(fonts.head, 700, size * HEAD_RATIO);
+    ctx.font = fontFor(fonts.head, fonts.headWeight ?? 700, size * HEAD_RATIO);
     const headH = headline ? lineCount(ctx, headline, width) * size * HEAD_RATIO * HEAD_LINE : 0;
-    ctx.font = fontFor(fonts.body, 400, size);
+    ctx.font = fontFor(fonts.body, fonts.bodyWeight ?? BODY_STYLE.weight ?? 700, size);
     const bodyH = body ? lineCount(ctx, body, width) * size * BODY_LINE : 0;
     return { size, headH, bodyH };
   };
@@ -172,7 +220,39 @@ const boxPx = (t: DrawableCardTemplate, f: Frame) => {
   return { x: b.x * f.W + padX, y: b.y * f.H + padY, w: b.w * f.W - padX * 2, h: b.h * f.H - padY * 2 };
 };
 
-export function orgPlacement(t: DrawableCardTemplate, words: Words, fonts: { head?: string; body?: string } = {}): Placement {
+/**
+ * The date's size in card px, as backgroundCard.ts draws it on the X background: one line, starting at
+ * 1.12 × the slot's height (a font's size is taller than its digits, so they still sit inside the tag) and
+ * stepping down until it is no wider than 95% of the slot, which is what limits it on the desk's tags. The
+ * line is centred on the slot both ways; its box is made tall enough for that size (orgPlacement), so the
+ * card's fit-to-box pass never shrinks it below backgroundCard's size.
+ */
+/** Share of the date slot the date may fill: width, and height to start from */
+const DATE_FILL_W = 0.95;
+export const DATE_FILL_H = 1.12;
+
+/**
+ * The date box: centred on the slot, as wide as it, and at least one line of the date tall. A slot shorter
+ * than the line (size above 1 × slot height) would otherwise make the card shrink the date to fit the box.
+ */
+function dateBox(d: { x: number; y: number; w: number; h: number }, f: Frame, sizePx: number): NonNullable<Placement["date"]> {
+  const lineH = (sizePx * (DATE_STYLE.lineHeight ?? 1)) / f.H;
+  return { x: d.x + d.w / 2, y: d.y + d.h / 2, width: d.w, height: Math.max(d.h, lineH * 1.01), size: sizePx / f.u };
+}
+
+function dateSizePx(text: string, slotW: number, slotH: number, font: string | undefined): number {
+  let size = Math.floor(slotH * DATE_FILL_H);
+  const ctx = measure();
+  if (!ctx) return size;
+  ctx.font = fontFor(font, DATE_STYLE.weight ?? 700, size);
+  while (size > 8 && ctx.measureText(text).width > slotW * DATE_FILL_W) {
+    size -= 1;
+    ctx.font = fontFor(font, DATE_STYLE.weight ?? 700, size);
+  }
+  return size;
+}
+
+export function orgPlacement(t: DrawableCardTemplate, words: Words, fonts: OrgFonts = {}): Placement {
   const f = frameOf(t);
   const box = boxPx(t, f);
   const fit = fitWords(words, box.w, box.h, t.layout.fontMinPx, t.layout.fontMaxPx, fonts);
@@ -185,7 +265,7 @@ export function orgPlacement(t: DrawableCardTemplate, words: Words, fonts: { hea
   return {
     head: { textX: (box.x + box.w / 2) / f.W, textY: (box.y + headH / 2) / f.H, textWidth: box.w / f.W, textHeight: headH / f.H, fontScale: (fit.size * HEAD_RATIO) / (ORG_BASE_SIZE * f.u) },
     body: { x: (box.x + box.w / 2) / f.W, y: (bodyTop + bodyH / 2) / f.H, width: box.w / f.W, height: bodyH / f.H, size: fit.size / f.u },
-    date: d ? { x: d.x + d.w / 2, y: d.y + d.h / 2, width: d.w, height: d.h, size: (d.h * f.H * 0.72) / f.u } : null,
+    date: d ? dateBox(d, f, dateSizePx(istDate(d.format), d.w * f.W, d.h * f.H, fonts.date)) : null,
   };
 }
 
@@ -193,7 +273,7 @@ const dateLayer = (t: DrawableCardTemplate, p: NonNullable<Placement["date"]>, s
   id: ORG_DATE_ID,
   text: istDate(t.layout.date!.format),
   ...p,
-  style: { ...DATE_STYLE, ...style, color: t.layout.date!.color },
+  style: { ...DATE_STYLE, ...style, lineHeight: DATE_STYLE.lineHeight, color: t.layout.date!.color },
 });
 
 /** The story's text on the card: its own box when there is one, else the FTP story. */
@@ -205,7 +285,7 @@ export const orgBodyText = (layout: TemplateLayout, fallback: string) => layout.
  * (the photo choice, video settings, the operator's own text boxes).
  */
 export function orgLayout(t: OrgCardTemplate, words: Words, base: TemplateLayout): TemplateLayout {
-  const p = orgPlacement(t, words);
+  const p = orgPlacement(t, words, ORG_FONTS);
   const own = (base.layers ?? []).filter((l) => l.id !== ORG_BODY_ID && l.id !== ORG_DATE_ID);
   const body: CardTextLayer = { id: ORG_BODY_ID, text: words.body, ...p.body, style: { ...BODY_STYLE, color: t.layout.body.color } };
   return {
@@ -260,7 +340,8 @@ export function switchOrgTemplate(layout: TemplateLayout, from: OrgCardTemplate 
   // Not on a desk template yet (a photo card): start a fresh one, keeping the operator's own text boxes
   if (!layout.orgTemplate || !from || !bodyLayer) return orgLayout(to, words, { ...layout, photoBox: layout.photoBox });
 
-  const fonts = { head: layout.headlineStyle?.font, body: bodyLayer.style.font };
+  // An unset headline font is Mangal on a desk template (ORG_HEADLINE); unset text boxes draw in the old default
+  const fonts: OrgFonts = { head: layout.headlineStyle?.font ?? ORG_CARD_FONT, body: bodyLayer.style.font, date: layout.layers?.find((l) => l.id === ORG_DATE_ID)?.style.font, headWeight: layout.headlineStyle?.weight, bodyWeight: bodyLayer.style.weight };
   const fresh = orgPlacement(to, words, fonts);
   const a = frameOf(from);
   const b = frameOf(to);
