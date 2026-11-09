@@ -120,6 +120,12 @@ const liveAccess = {
   async changePassword(current: string, next: string): Promise<void> {
     await api<unknown>("POST", "/me/password", { current, next });
   },
+  async saveKeyBindings(bindings: Record<string, string[]>): Promise<{ keyBindings: Record<string, string[]> }> {
+    const res = await api<Raw>("PUT", "/me/key-bindings", { bindings });
+    const kb = res?.keyBindings;
+    // An answer without the map still saved: what was sent is what the server holds
+    return { keyBindings: kb && typeof kb === "object" && !Array.isArray(kb) ? (kb as Record<string, string[]>) : bindings };
+  },
 };
 
 export interface AccessService {
@@ -140,6 +146,8 @@ export interface AccessService {
   listAudit(entity: AuditEntity | null, limit: number, before?: string): Promise<AuditPage>;
   updateProfile(name: string): Promise<void>;
   changePassword(current: string, next: string): Promise<void>;
+  /** Saves the person's own keyboard shortcuts ({} = all defaults); 400 key_clash or invalid with a message */
+  saveKeyBindings(bindings: Record<string, string[]>): Promise<{ keyBindings: Record<string, string[]> }>;
 }
 
 export const accessService: AccessService = USE_MOCKS ? mockAccess : liveAccess;

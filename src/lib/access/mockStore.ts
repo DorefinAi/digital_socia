@@ -419,4 +419,26 @@ export const mockAccess = {
     if (!current) throw new ApiError(400, "invalid", "Enter your current password.");
     if (next.length < 12) throw new ApiError(400, "invalid", "The new password needs at least 12 characters.");
   },
+
+  /** PUT /me/key-bindings on the demo data: kept in this browser */
+  async saveKeyBindings(bindings: Record<string, string[]>) {
+    await pause();
+    try {
+      localStorage.setItem(MOCK_KEYS_STORAGE, JSON.stringify(bindings));
+    } catch {
+      throw new ApiError(500, "storage", "This browser couldn't keep the shortcuts.");
+    }
+    return { keyBindings: bindings };
+  },
 };
+
+const MOCK_KEYS_STORAGE = "socia.demo.keyBindings";
+
+/** The demo user's saved shortcuts (the demo's stand-in for /me prefs.keyBindings) */
+export function loadMockKeyBindings(): unknown {
+  try {
+    return JSON.parse(localStorage.getItem(MOCK_KEYS_STORAGE) ?? "{}");
+  } catch {
+    return {};
+  }
+}
