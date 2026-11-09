@@ -1,6 +1,7 @@
 import { BreakingTag, CardLayout, CardTextLayer, CardTextStyle, MediaAdjust, TextAlign, TextAnimation, TextMotion } from "@/types/newsroom";
 import { CHANNEL } from "@/constants";
 import { ORG_CARD_FONT, fontById, nearestWeight } from "./templateFonts";
+import { CARD_LINE } from "./live/cardFit";
 
 export type TemplateFormat = "x" | "ig_post" | "ig_reel";
 
@@ -734,7 +735,8 @@ export const templateById = (id: string | undefined) => CARD_TEMPLATES.find((t) 
 export const accentFor = (layout: CardLayout, tag: BreakingTag) => layout.accent ?? tagAccent(tag);
 
 /** Headline look on a desk template: plain words on the template's own picture (backgroundCard.ts draws it the same way) */
-export const ORG_HEADLINE: Partial<CardTextStyle> = { font: ORG_CARD_FONT, box: false, shadow: 0, weight: 700, lineHeight: 1.3 };
+// Line pitch as the story's (live/cardFit.ts), so heading and story read as one block, as on the desk's posts
+export const ORG_HEADLINE: Partial<CardTextStyle> = { font: ORG_CARD_FONT, box: false, shadow: 0, weight: 700, lineHeight: CARD_LINE };
 
 /** The headline's look after template defaults, then the operator's choices. */
 export function resolveHeadlineStyle(layout: CardLayout, tag: BreakingTag): ResolvedStyle {

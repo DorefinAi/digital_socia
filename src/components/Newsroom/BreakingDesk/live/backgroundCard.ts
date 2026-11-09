@@ -4,15 +4,17 @@
 
 import type { DrawableCardTemplate, OrgCardTemplateLayout } from "@/lib/socia/types";
 import { MANGAL_FAMILY } from "../templateFonts";
+import { cardBodyText } from "../cardWords";
+import { CARD_GAP_LINES, CARD_LINE, CARD_PAD_X, CARD_PAD_Y, largestFit } from "./cardFit";
 
 /**
  * Mangal is the Hindi face the cards use (globals.css "SociaMangal": installed, else bundled); Latin falls
  * through to a bold sans, and Noto Sans Devanagari stands in if Mangal can't load.
  */
 const family = () => `${MANGAL_FAMILY}, "Nirmala UI", sans-serif`;
-const LINE_HEIGHT = 1.4;
-/** Space between the headline and the body, in lines: one blank line, as the desk's cards */
-const GAP = 1;
+// Line pitch and the gap are cardFit's, shared with the editor's card (orgCanvas.ts)
+const LINE_HEIGHT = CARD_LINE;
+const GAP = CARD_GAP_LINES;
 
 export interface DrawnCard {
   blob: Blob;
@@ -86,17 +88,24 @@ function wrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): st
   const lines: string[] = [];
   for (const paragraph of text.split(/\n+/)) {
     const words = paragraph.split(/\s+/).filter(Boolean);
+    // Widths add up word by word, as cardRender.ts lays out the editor's card, so both break lines alike
+    const space = ctx.measureText(" ").width;
     let line = "";
+    let lineW = 0;
     for (const word of words) {
-      const next = line ? `${line} ${word}` : word;
-      if (ctx.measureText(next).width <= maxWidth) {
-        line = next;
+      const w = ctx.measureText(word).width;
+      const nextW = line ? lineW + space + w : w;
+      if (nextW <= maxWidth) {
+        line = line ? `${line} ${word}` : word;
+        lineW = nextW;
         continue;
       }
       if (line) lines.push(line);
       line = "";
-      if (ctx.measureText(word).width <= maxWidth) {
+      lineW = 0;
+      if (w <= maxWidth) {
         line = word;
+        lineW = w;
         continue;
       }
       let piece = "";
@@ -108,6 +117,7 @@ function wrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): st
         piece += g;
       }
       line = piece;
+      lineW = ctx.measureText(piece).width;
     }
     if (line) lines.push(line);
   }
@@ -142,20 +152,9 @@ function fitText(ctx: CanvasRenderingContext2D, headline: string, body: string, 
     const lines = h.length + b.length + (h.length && b.length ? GAP : 0);
     return { size, headline: h, body: b, height: lines * size * LINE_HEIGHT, cut: false };
   };
-  // Largest whole size that fits, by halving the range (a handful of wraps instead of one per pixel)
-  const top = measure(max);
-  if (top.height <= boxH) return top;
-  let lo = min;
-  let hi = max - 1;
-  let best: Fitted | null = null;
-  while (lo <= hi) {
-    const mid = Math.floor((lo + hi) / 2);
-    const f = measure(mid);
-    if (f.height <= boxH) {
-      best = f;
-      lo = mid + 1;
-    } else hi = mid - 1;
-  }
+  // The largest size that fits, in half pixels, exactly as the editor's card (cardFit.largestFit)
+  const size = largestFit(min, max, boxH, (px) => measure(px).height);
+  const best = size === null ? null : measure(size);
   if (best) return best;
 
   // Even the smallest size is too tall: keep as much as fits, headline first, and end on "…"
@@ -258,12 +257,13 @@ export function paintCardText(ctx: CanvasRenderingContext2D, layout: OrgCardTemp
 
   // Box: headline then body, centred, one size for both
   const b = layout.box;
-  const padX = b.w * W * 0.04;
-  const padY = b.h * H * 0.04;
+  const padX = b.w * W * CARD_PAD_X;
+  const padY = b.h * H * CARD_PAD_Y;
   const boxW = b.w * W - padX * 2;
   const boxH = b.h * H - padY * 2;
   const headline = words.headline.replace(/\*\*/g, "").trim();
-  const body = words.body.trim();
+  // The points as one paragraph, as on the editor's card and the desk's posts
+  const body = cardBodyText(words.body);
   const fit = fitText(ctx, headline, body, layout, boxW, boxH);
   const lineH = fit.size * LINE_HEIGHT;
   const cx = b.x * W + (b.w * W) / 2;

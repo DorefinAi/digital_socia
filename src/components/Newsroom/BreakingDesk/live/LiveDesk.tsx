@@ -37,7 +37,7 @@ import type {
   OrgCardTemplate,
 } from "@/lib/socia/types";
 import type { FtpMedia, FtpNewsItem, SocialPost } from "@/types/newsroom";
-import { cardHeadlineText, queueCardBody } from "../cardWords";
+import { draftCardHeadline, queueCardBody } from "../cardWords";
 
 /** A queue or feed story on the live desk: the demo shape plus the draft it came from. */
 export interface LiveNewsItem extends FtpNewsItem {
@@ -151,7 +151,7 @@ export function draftToNews(d: DraftView): FtpNewsItem {
   return {
     id: d.id,
     // The editor's card starts from these words: "<District>: <headline>", never the post's place hashtags
-    headline: cardHeadlineText(d.story.headline, d.story.district),
+    headline: draftCardHeadline(d.story.headline, d),
     body: d.story.body,
     shortText: d.bodyText,
     tag: LIVE_TAG,

@@ -79,7 +79,7 @@ import * as socia from "@/lib/socia/api";
 import type { DraftView, DrawableCardTemplate, OrgCardTemplate } from "@/lib/socia/types";
 import type { LiveEditing } from "./live/LiveEditor";
 import { apiFileUrl, credentialsFor, errorCode, errorText, useLiveDesk } from "./live/LiveDesk";
-import { cardHeadlineText } from "./cardWords";
+import { draftCardHeadline } from "./cardWords";
 import { usePhase } from "@/lib/socia/usePhase";
 import { assemblePost } from "./phase1/Phase1Editor";
 import { type PostBox, type PostFormat, SERVER_HASHTAGS_MAX, SERVER_MENTIONS_MAX, checkedValues, pickerRows, readPostBox, splitPost, syncOptions, tagKey, withBody } from "./postBox";
@@ -332,9 +332,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const kept = record && (!record.cardUrl || record.cardUrl === d.card.url) ? record : null;
       // A design saved before card headlines were cleaned (leading hashtags, district prefix) reads as it is
       // saved now, so reopening it is not an edit
-      const saved = kept ? { ...kept, layout: { ...kept.layout, headline: cardHeadlineText(kept.layout.headline, d.story.district) } } : null;
+      const saved = kept ? { ...kept, layout: { ...kept.layout, headline: draftCardHeadline(kept.layout.headline, d) } } : null;
       const ownBg = d.card.custom ? bgStore.read(d.id) : null;
-      const layout = saved?.layout ?? defaultLayout(cardHeadlineText(d.cardHeadline, d.story.district), "x");
+      const layout = saved?.layout ?? defaultLayout(draftCardHeadline(d.cardHeadline, d), "x");
       return {
         id: story.id,
         draft: undefined,
@@ -1172,9 +1172,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // Text and headline as the server should have them
   const cardHeadline = plainCardText(layout.headline).slice(0, 400);
   const livePatch = live
-    ? { ...postBox.save, cardHeadline: cardHeadline || cardHeadlineText(live.draft.cardHeadline, live.draft.story.district) }
+    ? { ...postBox.save, cardHeadline: cardHeadline || draftCardHeadline(live.draft.cardHeadline, live.draft) }
     : null;
-  const serverPatch = live ? { bodyText: live.draft.bodyText, cardHeadline: cardHeadlineText(live.draft.cardHeadline, live.draft.story.district), hashtags: live.draft.hashtags, mentions: live.draft.mentions } : null;
+  const serverPatch = live ? { bodyText: live.draft.bodyText, cardHeadline: draftCardHeadline(live.draft.cardHeadline, live.draft), hashtags: live.draft.hashtags, mentions: live.draft.mentions } : null;
   const patchKey = JSON.stringify(livePatch);
   // Dirty when the post the server would assemble, or the headline, differs; the same words split another
   // way (a draft whose body already ends in tags) is not a change, so opening a story saves nothing
@@ -1528,7 +1528,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       });
       designStore.write(d.id, null);
       bgStore.write(d.id, null);
-      const fresh = defaultLayout(cardHeadlineText(d.cardHeadline, d.story.district), "x");
+      const fresh = defaultLayout(draftCardHeadline(d.cardHeadline, d), "x");
       setCardSource("design");
       setBgUploaded(null);
       // The automatic card stays: the design is not moved back onto a desk template
@@ -1552,7 +1552,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       setMentions(box.mentions);
       // Their text, untouched, is the server's own: nothing to save until it is edited
       setStart((s) => ({ ...s, pristine: box.pristine, openMentions: box.openMentions }));
-      patch({ headline: cardHeadlineText(d.cardHeadline, d.story.district) });
+      patch({ headline: draftCardHeadline(d.cardHeadline, d) });
       setStale(null);
     });
   const keepMine = () =>

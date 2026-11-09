@@ -1,6 +1,7 @@
-// The words a card is drawn with come from the story (its headline and its points), never from the X post.
-// The post starts with place hashtags ("#Jodhpur #रावतभाटा: <headline>"); a card never does: it starts with the
-// district's English name instead ("Jodhpur: <headline>"), never the town.
+// The words a card is drawn with come from the story (its headline and its points), never from the X post:
+// the heading, then the points as one paragraph (cardBodyText).
+// The post starts with place hashtags ("#Jodhpur #रावतभाटा: <headline>"); the card heading starts with the last
+// of them without its "#" ("रावतभाटा: <headline>"): the town in Hindi, else the district's English name.
 
 import type { QueueItem } from "@/lib/socia/types";
 
@@ -37,50 +38,122 @@ function placeKey(place: string): string {
   return place.toLowerCase().replace(/[\s-]+/g, "");
 }
 
+/** "बड़ीसादड़ी": a town as its hashtag spells it (core breaking/compose.ts townHashtag), without the "#" */
+export function townTag(town: string | null | undefined): string {
+  return (town ?? "").normalize("NFC").replace(/[^\p{L}\p{M}\p{N}_]+/gu, "");
+}
+
+/** One word and a colon at the start: "बेगूं: ", "Sirohi: " */
+const ONE_WORD_LEAD = /^\s*([\p{L}\p{M}\p{N}_]+)\s*[:：]\s*/u;
+
 /**
- * A card headline in the desk's "<District>: <headline>" form ("#Jaipur #डग: Fire" with district "Jaipur" →
- * "Jaipur: Fire"); no town is added.
- * - A leading tag run ending in ":" that starts with a place is dropped (the district replaces it).
+ * The place a card heading starts with: the last place tag of the post's first line, without "#". That is
+ * the story's town in Hindi when it has one ("#Jhalawar #डग: …" → "डग"), else the district's English name
+ * ("#Sirohi: …" → "Sirohi"). Empty when the story has neither.
+ */
+export function cardPlace(district: string | null | undefined, town: string | null | undefined): string {
+  return townTag(town) || (district ?? "").trim();
+}
+
+/**
+ * The story's town: the field when the server sends one (null: no town). An older server without the field:
+ * the last tag of the post's "#District #Town:" first line, when that tag is not the district.
+ */
+export function storyTown(town: string | null | undefined, bodyText: string | null | undefined, district: string | null | undefined): string | null {
+  if (town !== undefined) return town;
+  const first = (bodyText ?? "").split("\n")[0] ?? "";
+  const run = first.match(LEADING_TAGS)?.[0];
+  if (!run) return null;
+  const last = run.trim().split(/\s+/).pop()?.replace(/^#/, "").replace(/[:：]$/, "") ?? "";
+  if (!last || placeKey(last) === placeKey(district ?? "") || KNOWN_PLACES.has(placeKey(last))) return null;
+  return last;
+}
+
+/**
+ * A card heading in the desk's "<place>: <headline>" form, the place being cardPlace(district, town):
+ * "#Chittorgarh #बेगूं: …" → "बेगूं: …", "#Sirohi: …" → "Sirohi: …".
+ * - A leading tag run ending in ":" that starts with a place (a known one, the district or the town) is
+ *   dropped; the place goes in front instead.
  * - Any other tag run (party, topic: "#Congress #Kota: …", "#BJP: …", "#ब्रेकिंग: …") is the story's own lead,
- *   kept by the server on purpose: it stays without its "#" signs and no district goes in front
- *   ("Congress Kota: …").
- * - Idempotent: a known place already in front ("Jaipur: …", as a saved card headline carries it) is taken
- *   off first, so the district is not doubled and a changed one replaces it; a non-place lead already in front
- *   ("BJP: …", as such a headline is saved) keeps the headline as it is.
+ *   kept by the server on purpose: it stays without its "#" signs and no place goes in front.
+ * - Idempotent: a place already in front (a known English place, the district, or the town as one word, as a
+ *   saved card heading carries it) is replaced, never stacked; another lead already in front ("BJP: …", as
+ *   such a heading is saved) keeps the heading as it is.
  * Hashtags later in the line stay. Never left blank by this.
  */
-export function cardHeadlineText(headline: string, district?: string | null): string {
+export function cardHeadlineText(headline: string, district?: string | null, town?: string | null): string {
   const text = (headline ?? "").trim();
-  const place = (district ?? "").trim();
+  const place = cardPlace(district, town);
+  const isPlace = (word: string) => {
+    const k = placeKey(word);
+    return KNOWN_PLACES.has(k) || (!!district && k === placeKey(district)) || (!!town && k === placeKey(townTag(town)));
+  };
   const run = text.match(LEADING_TAGS)?.[0];
   let bare = text;
   if (run) {
     const rest = text.slice(run.length).trim();
     if (!rest) return text;
     const first = run.trim().split(/\s+/)[0].replace(/^#/, "").replace(/[:：]$/, "");
-    const placeRun = KNOWN_PLACES.has(placeKey(first)) || (!!place && placeKey(first) === placeKey(place));
     // The story's own lead ("#BJP: …"): its words stay, as text, and nothing goes in front
-    if (!placeRun) return `${run.replace(/#/g, "").replace(/\s*([:：])\s*$/, "$1").replace(/\s+/g, " ").trim()} ${rest}`;
+    if (!isPlace(first)) return `${run.replace(/#/g, "").replace(/\s*([:：])\s*$/, "$1").replace(/\s+/g, " ").trim()} ${rest}`;
     bare = rest;
   }
   if (!place) return bare;
   const lead = bare.match(LEADING_PLACE);
-  if (lead && (KNOWN_PLACES.has(placeKey(lead[1])) || placeKey(lead[1]) === placeKey(place))) bare = bare.slice(lead[0].length).trim() || bare;
-  // A lead kept from a tag run and saved as text ("BJP: …", "ब्रेकिंग: …") still takes no district on reopening
+  const word = bare.match(ONE_WORD_LEAD);
+  if (lead && isPlace(lead[1])) bare = bare.slice(lead[0].length).trim() || bare;
+  else if (word && isPlace(word[1])) bare = bare.slice(word[0].length).trim() || bare;
+  // A lead kept from a tag run and saved as text ("BJP: …", "ब्रेकिंग: …") still takes no place on reopening
   else if (LEADING_LEAD.test(bare)) return bare;
   return `${place}: ${bare}`;
 }
 
+/** The card heading for a draft: its story's district and town */
+export function draftCardHeadline(headline: string, d: { bodyText: string; story: { district?: string | null; town?: string | null } }): string {
+  return cardHeadlineText(headline, d.story.district, storyTown(d.story.town, d.bodyText, d.story.district));
+}
+
+/** The card heading for a queue row */
+export function queueCardHeadline(item: Pick<QueueItem, "headline" | "bodyText" | "district" | "town">): string {
+  return cardHeadlineText(item.headline, item.district, storyTown(item.town, item.bodyText, item.district));
+}
+
+/** A point without its closing punctuation, as the post joins them (core breaking/compose.ts trimPoint) */
+const trimPoint = (p: string) => p.normalize("NFC").replace(/[\s।॥|.,;:!-]+$/u, "").replace(/\s+/g, " ").trim();
+/** A point that trails off on purpose ("...", "…") keeps its dots */
+const TRAILS_OFF = /(?:\.\.\.|…)$/u;
+
 /**
- * The story text for a card drawn from a queue row: the story's own points, one per line, when the queue
- * sends them (`storyBody`; older servers don't). Without it, the post's body without its "#Place #Town: headline"
- * first line: the points as the post joins them (commas, maybe cut with "..."), not split back into lines.
+ * The story text on a desk-template card: one paragraph, the points joined with ", " as the desk's posts
+ * join them (each point's closing punctuation dropped first), all of them, never cut. A point that ends in
+ * "..." or "…" keeps its dots and the next one follows after a space. Takes the points, or the story body
+ * with one point per line; a body that is already one paragraph comes back the same.
+ */
+export function cardBodyText(points: string | readonly string[]): string {
+  const list = typeof points === "string" ? points.split(/\r?\n+/) : points;
+  let out = "";
+  let trailed = false;
+  for (const raw of list) {
+    const clean = (raw ?? "").normalize("NFC").replace(/\s+/g, " ").trim();
+    const keepDots = TRAILS_OFF.test(clean);
+    const point = keepDots ? clean : trimPoint(clean);
+    if (!point) continue;
+    out = out ? `${out}${trailed ? " " : ", "}${point}` : point;
+    trailed = keepDots;
+  }
+  return out;
+}
+
+/**
+ * The story text for a card drawn from a queue row, as cardBodyText makes it: from the story's own points
+ * (`storyBody`). Older servers don't send it: then the post's body without its "#Place #Town: headline" first
+ * line, which is the points already joined (and maybe cut with "..." to fit the post).
  */
 export function queueCardBody(item: Pick<QueueItem, "bodyText" | "storyBody">): string {
-  if (typeof item.storyBody === "string") return item.storyBody;
+  if (typeof item.storyBody === "string") return cardBodyText(item.storyBody);
   const lines = (item.bodyText ?? "").split("\n");
   if (lines.length > 1 && isTaggedHeadLine(lines[0])) lines.shift();
-  return lines.join("\n").trim();
+  return cardBodyText(lines);
 }
 
 /** "#Place #Town: headline", the first line of a breaking post */
