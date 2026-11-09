@@ -46,6 +46,11 @@ export interface Me {
   phase?: SociaPhase;
   /** phase1-contract.md §0 */
   features?: SociaFeatures;
+  /** The person's own settings; older servers leave it out (all defaults) */
+  prefs?: {
+    /** Action id -> its keys ("mod+enter"); [] turns the action off; actions not listed keep their defaults */
+    keyBindings?: Record<string, string[]>;
+  };
 }
 
 export type SociaPhase = 1 | 2;

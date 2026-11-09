@@ -17,7 +17,8 @@ import type { FtpNewsItem, RejectReason } from "@/types/newsroom";
 import { countChars, findUrl, normaliseTag, X_LIMIT } from "../socialText";
 import { RejectDialog } from "../actionDialogs";
 import { EditorShortcutsSheet } from "../EditorShortcutsSheet";
-import { isEditorTypingTarget, isTextEntryTarget, phase1KeyFor, phase1Shortcut } from "../editorKeys";
+import { isEditorTypingTarget, isTextEntryTarget, keysById, PHASE1_KEYS, phase1KeyFor, phase1Shortcut } from "../editorKeys";
+import { ariaKeyShortcuts, useKeyBindings } from "../keyBindings";
 import { PlatformIcon, rejectedNotice, srOnly, TAG_TINT, tagTint } from "../shared";
 import { BREAKING_RED } from "../cardRender";
 import { credentialsFor, errorCode, errorText, fileUrl, useLiveDesk } from "../live/LiveDesk";
@@ -80,6 +81,8 @@ export default function Phase1Editor({ item, onClose, onSaved, live }: Phase1Edi
   // The browser refused the clipboard: say so and offer to mark it posted after copying by hand
   const [blocked, setBlocked] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  // The person's own keys (profile): the handler reads them per key press, the hints re-render with them
+  useKeyBindings();
   const [rejecting, setRejecting] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   // Autosave failed: the reason, shown with Retry; it also retries by itself with a growing wait
@@ -752,8 +755,8 @@ export default function Phase1Editor({ item, onClose, onSaved, live }: Phase1Edi
                       value={tagDraft}
                       onChange={(e) => setTagDraft(e.target.value)}
                       onKeyDown={(e) => {
-                        // Ctrl/Cmd+Enter is Copy & Posted (it takes the typed tag in itself)
-                        if (e.ctrlKey || e.metaKey) return;
+                        // Ctrl/Cmd+Enter (or the person's own Alt combo) is Copy & Posted; it takes the typed tag in itself
+                        if (e.ctrlKey || e.metaKey || e.altKey) return;
                         if (e.key === "Enter" || e.key === "," || e.key === " ") {
                           if (!tagDraft.trim()) return;
                           e.preventDefault();
@@ -800,13 +803,13 @@ export default function Phase1Editor({ item, onClose, onSaved, live }: Phase1Edi
                         sx={{ m: 0, gap: 0.5, "& .MuiFormControlLabel-label": { fontSize: "0.8125rem", color: X_COLORS.muted } }}
                       />
                       <Box sx={{ flex: 1 }} />
-                      <Tooltip title={blockedReason || `Copies the post${addCard ? ", saves the card" : ""} and moves it to Posted (${shortcut})`}>
+                      <Tooltip title={blockedReason || `Copies the post${addCard ? ", saves the card" : ""} and moves it to Posted${shortcut ? ` (${shortcut})` : ""}`}>
                         <span>
                           <Button
                             variant="contained"
                             onClick={() => void copyAndPost()}
                             disabled={!canCopy}
-                            aria-keyshortcuts="Control+Enter Meta+Enter"
+                            aria-keyshortcuts={ariaKeyShortcuts(keysById(PHASE1_KEYS, "post.copyPosted"))}
                             startIcon={busy === "copy" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <ClipboardCopy size={15} />}
                             sx={{ minHeight: 38, px: 2, borderRadius: "19px", fontWeight: 700, textTransform: "none", whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", boxShadow: "none", "&:hover": { backgroundColor: "#B50F14", boxShadow: "none" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.8)" } }}
                           >
@@ -821,7 +824,7 @@ export default function Phase1Editor({ item, onClose, onSaved, live }: Phase1Edi
                   {blockedReason && !busy ? (
                     <Box component="span" sx={{ color: over || url ? "error.main" : "text.secondary" }}>{blockedReason}.</Box>
                   ) : (
-                    <>Paste it into X and attach a photo there if the story needs one. {shortcut} does the same as the button.</>
+                    <>Paste it into X and attach a photo there if the story needs one.{shortcut ? ` ${shortcut} does the same as the button.` : ""}</>
                   )}
                 </Typography>
               </Box>

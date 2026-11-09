@@ -88,7 +88,8 @@ import { keyHash, useBackgroundCard } from "./live/useBackgroundCard";
 import OrgTemplatePicker, { type CardChoice } from "./live/OrgTemplatePicker";
 import { cardChoiceChanged, defaultOrgTemplate } from "./live/storyThumbs";
 import { PostedLinkDialog } from "./actionDialogs";
-import { NUDGE, editorKeyFor, editorShortcut, isCanvasKeyTarget, isEditorTypingTarget, isTextEntryTarget, swallowNextContextMenu, withEditorShortcut } from "./editorKeys";
+import { EDITOR_KEYS, NUDGE, editorKeyFor, editorShortcut, editorShortcutSuffix, isCanvasKeyTarget, isEditorTypingTarget, isTextEntryTarget, keysById, swallowNextContextMenu, withEditorShortcut } from "./editorKeys";
+import { ariaKeyShortcuts, useKeyBindings } from "./keyBindings";
 import { ConfirmPostDialog, EditorShortcutsSheet, LeaveEditorDialog } from "./EditorShortcutsSheet";
 import RewriteNotice from "./RewriteNotice";
 import { type MenuEntry, useEditorMenu } from "./video/ui/EditorContextMenu";
@@ -461,6 +462,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // The background card last uploaded as this draft's card, by draft and drawing
   const [bgUploaded, setBgUploaded] = useState<{ id: string; key: string } | null>(null);
   // ── Keyboard and right-click ──
+  // The person's own keys (profile): the handler reads them per key press, the hints re-render with them
+  useKeyBindings();
   const [sheetOpen, setSheetOpen] = useState(false);
   // Esc with unsaved work asks before closing
   const [leaving, setLeaving] = useState(false);
@@ -1851,13 +1854,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   const postButton = (onDark: boolean) =>
     live && copyMode ? (
-      <Tooltip title={!mayMarkPosted ? "Your role can't mark posts as posted" : blockedReason || `Copies the post, saves the card and moves the story to Posted (${editorShortcut("post.approve")})`}>
+      <Tooltip title={!mayMarkPosted ? "Your role can't mark posts as posted" : blockedReason || `Copies the post, saves the card and moves the story to Posted${editorShortcutSuffix("post.approve")}`}>
         <span>
           <Button
             variant="contained"
             onClick={() => requestPost("button")}
             aria-label={busy === "copy" ? "Copying and marking posted" : "Copy & Posted"}
-            aria-keyshortcuts="Control+Enter Meta+Enter"
+            aria-keyshortcuts={ariaKeyShortcuts(keysById(EDITOR_KEYS, "post.approve"))}
             disabled={!canCopyPost}
             startIcon={busy === "copy" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <ClipboardCopy size={15} />}
             sx={{ minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", "&:hover": { backgroundColor: "#B50F14" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.7)" } }}
@@ -1867,13 +1870,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         </span>
       </Tooltip>
     ) : live && apiPosting ? (
-      <Tooltip title={!mayPublish ? "Your role can't post to the platforms" : blockedReason || `Posts the card to ${meta.short} after a 10-second undo window (${editorShortcut("post.approve")})`}>
+      <Tooltip title={!mayPublish ? "Your role can't post to the platforms" : blockedReason || `Posts the card to ${meta.short} after a 10-second undo window${editorShortcutSuffix("post.approve")}`}>
         <span>
           <Button
             variant="contained"
             onClick={() => requestPost("button")}
             aria-label={busy === "post" ? "Posting" : `Post to ${meta.short}`}
-            aria-keyshortcuts="Control+Enter Meta+Enter"
+            aria-keyshortcuts={ariaKeyShortcuts(keysById(EDITOR_KEYS, "post.approve"))}
             disabled={!canPost || !mayPublish}
             startIcon={busy === "post" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <Send size={15} />}
             sx={{ minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", "&:hover": { backgroundColor: "#B50F14" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.7)" } }}
@@ -2760,8 +2763,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 </IconButton>
               </Tooltip>
               {toolbarDivider}
-              <Tooltip title="Keyboard shortcuts (?)">
-                <IconButton sx={toolbarIcon} aria-label="Keyboard shortcuts" aria-keyshortcuts="Shift+?" onClick={() => setSheetOpen(true)}>
+              <Tooltip title={withEditorShortcut("Keyboard shortcuts", "help.keys")}>
+                <IconButton sx={toolbarIcon} aria-label="Keyboard shortcuts" aria-keyshortcuts={ariaKeyShortcuts(keysById(EDITOR_KEYS, "help.keys"))} onClick={() => setSheetOpen(true)}>
                   <Keyboard size={14} />
                 </IconButton>
               </Tooltip>
@@ -2923,7 +2926,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   Reject
                 </Button>
                 <Box sx={{ flex: 1 }} />
-                <Button variant="outlined" onClick={save} disabled={!canEdit || !!busy} aria-keyshortcuts="Control+S Meta+S" startIcon={busy === "save" ? <CircularProgress size={13} color="inherit" /> : <Save size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25, whiteSpace: "nowrap" }}>
+                <Button variant="outlined" onClick={save} disabled={!canEdit || !!busy} aria-keyshortcuts={ariaKeyShortcuts(keysById(EDITOR_KEYS, "post.save"))} startIcon={busy === "save" ? <CircularProgress size={13} color="inherit" /> : <Save size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25, whiteSpace: "nowrap" }}>
                   Save draft
                 </Button>
                 <Tooltip title={live ? "Scheduling isn't available on the live desk yet" : blockedReason}>

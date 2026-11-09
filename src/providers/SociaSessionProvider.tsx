@@ -5,6 +5,8 @@ import { USE_MOCKS } from "@/lib/socia/config";
 import { fetchMe, logout } from "@/lib/socia/api";
 import { ApiError, onSignedOut } from "@/lib/socia/client";
 import type { Me, SociaFeatures, SociaPhase } from "@/lib/socia/types";
+import { loadMockKeyBindings } from "@/lib/access/mockStore";
+import { setKeyBindingOverrides } from "@/components/Newsroom/BreakingDesk/keyBindings";
 
 type SessionStatus = "mock" | "loading" | "signed_in" | "needs_second_step" | "signed_out" | "offline";
 
@@ -32,13 +34,18 @@ export function SociaSessionProvider({ children }: { children: React.ReactNode }
 
   const apply = useCallback((next: Me) => {
     setMe(next);
+    // The person's own shortcuts: the desk's key handlers and hints read them from the store
+    setKeyBindingOverrides(next.prefs?.keyBindings ?? {});
     setPhase({ phase: next.phase === 1 ? 1 : 2, features: next.features ?? null });
     setStatus(next.verified ? "signed_in" : "needs_second_step");
     return next;
   }, []);
   const applyError = useCallback((err: unknown) => {
     setMe(null);
-    setStatus(err instanceof ApiError && err.code === "offline" ? "offline" : "signed_out");
+    const offline = err instanceof ApiError && err.code === "offline";
+    // Like the phase, the person's keys survive a network blip; a real sign-out clears them
+    if (!offline) setKeyBindingOverrides({});
+    setStatus(offline ? "offline" : "signed_out");
     return null;
   }, []);
 
@@ -55,15 +62,20 @@ export function SociaSessionProvider({ children }: { children: React.ReactNode }
       // Already signed out on the server; the local state is cleared either way
     }
     setMe(null);
+    setKeyBindingOverrides({});
     setStatus("signed_out");
   }, []);
 
   useEffect(() => {
-    if (USE_MOCKS) return;
+    if (USE_MOCKS) {
+      setKeyBindingOverrides(loadMockKeyBindings());
+      return;
+    }
     // The state updates land after /me answers, not during the effect
     fetchMe().then(apply, applyError);
     return onSignedOut(() => {
       setMe(null);
+      setKeyBindingOverrides({});
       setStatus("signed_out");
     });
   }, [apply, applyError]);

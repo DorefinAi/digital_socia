@@ -36,6 +36,8 @@ import LiveEditor from "./live/LiveEditor";
 import { isLiveItem, useLiveDesk } from "./live/LiveDesk";
 import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
 import { useTabBusy } from "@/lib/browserTidy";
+import { eventKey, queueHint, queueKeyFor } from "./editorKeys";
+import { useKeyBindings } from "./keyBindings";
 
 type ConsoleTab = "queue" | "scheduled" | "published" | "templates";
 
@@ -315,20 +317,25 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     };
   };
 
-  // Queue shortcuts from the spec: J/K move (phase 1 also the up and down arrows), Enter or E opens, R rejects
+  // Queue shortcuts (editorKeys.QUEUE_KEYS, or the person's own from their profile): J/K move (phase 1 also the
+  // up and down arrows), Enter or E opens, R rejects
+  useKeyBindings();
   useEffect(() => {
     if (tab !== "queue" || composing || rejecting) return;
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (e.metaKey || e.ctrlKey || e.altKey || target.closest("input, textarea, select, [contenteditable='true'], [role='dialog']")) return;
-      const key = e.key.toLowerCase();
-      // Enter on a focused button or link (the new-stories pill, card actions) presses that control instead
-      if (key === "enter" && target.closest("button, a, [role='button']")) return;
-      const arrow = p1 && (key === "arrowdown" || key === "arrowup") && !target.closest(ARROW_OWNERS);
-      if (key === "j" || key === "k" || arrow) {
+      if (e.isComposing || target.closest("input, textarea, select, [contenteditable='true'], [role='dialog']")) return;
+      const cmd = queueKeyFor(e, p1);
+      if (!cmd) return;
+      const combo = eventKey(e);
+      // Enter or Space on a focused button or link (the new-stories pill, card actions) presses that control instead
+      if ((combo === "enter" || combo === "space" || combo === "shift+enter") && target.closest("button, a, [role='button']")) return;
+      // Arrow keys belong to the focused tabs, menus and segmented controls
+      if (/arrow/.test(combo) && target.closest(ARROW_OWNERS)) return;
+      if (cmd.id === "queue.next" || cmd.id === "queue.prev") {
         e.preventDefault();
         if (!visible.length) return;
-        const next = Math.max(0, Math.min(visible.length - 1, Math.min(focusIndex, visible.length - 1) + (key === "j" || key === "arrowdown" ? 1 : -1)));
+        const next = Math.max(0, Math.min(visible.length - 1, Math.min(focusIndex, visible.length - 1) + (cmd.id === "queue.next" ? 1 : -1)));
         setFocusIndex(next);
         // Phase 1: keep the selected row in view, and move keyboard focus with it when a row holds focus
         const row = p1 ? document.getElementById(phase1RowId(visible[next].id)) : null;
@@ -336,10 +343,10 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
           if (target.getAttribute("role") === "option") row.focus({ preventScroll: true });
           row.scrollIntoView({ block: "nearest" });
         }
-      } else if ((key === "enter" || key === "e") && focused && canAct) {
+      } else if (cmd.id === "queue.open" && focused && canAct) {
         e.preventDefault();
         setComposing(focused);
-      } else if (key === "r" && focused && canReject && !(isLiveItem(focused) && focused.live.claim && !focused.live.claim.mine)) {
+      } else if (cmd.id === "queue.reject" && focused && canReject && !(isLiveItem(focused) && focused.live.claim && !focused.live.claim.mine)) {
         e.preventDefault();
         setRejecting(focused);
       }
@@ -637,7 +644,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
           )}
           </Box>
           <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", display: { xs: "none", md: "block" } }}>
-            {p1 ? "Keyboard: J / K or ↑ / ↓ to move, Enter or E to open, R to reject." : "Keyboard: J / K to move, Enter or E to open, R to reject."}
+            {queueHint(p1)}
           </Typography>
         </>
       )}

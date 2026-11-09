@@ -14,6 +14,8 @@ import { cardChoiceOf, subscribeCardChoice, thumbTemplate } from "../live/storyT
 import { storyTag } from "../shared";
 import { countChars } from "../socialText";
 import XPostPreview from "./XPostPreview";
+import { keyLabel, keysById, QUEUE_KEYS } from "../editorKeys";
+import { ariaKeyShortcuts, useKeyBindings } from "../keyBindings";
 
 // A small, quiet keycap: the size of the text beside it, never bolder than it
 const kbdSx = {
@@ -150,6 +152,11 @@ const QueuePreviewPanel = React.memo(function QueuePreviewPanel({ item, held, ca
   const used = live?.length ?? countChars(text, "X (Twitter)");
   const ref = useRef<HTMLElement>(null);
   useFitToWindow(ref);
+  // The person's own keys (profile), else J / K and Enter
+  useKeyBindings();
+  const moveKeys = [keysById(QUEUE_KEYS, "queue.next")[0], keysById(QUEUE_KEYS, "queue.prev")[0]].filter((k): k is string => !!k);
+  const openKeys = keysById(QUEUE_KEYS, "queue.open");
+  const rejectKeys = keysById(QUEUE_KEYS, "queue.reject");
 
   return (
     <Box component="aside" ref={ref} aria-labelledby="p1-preview-title" sx={panelSx}>
@@ -157,11 +164,14 @@ const QueuePreviewPanel = React.memo(function QueuePreviewPanel({ item, held, ca
         <Typography component="h2" id="p1-preview-title" sx={{ fontSize: "0.9375rem", fontWeight: 700 }}>
           As it will read on X
         </Typography>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, fontSize: "0.75rem", color: "text.secondary", flexShrink: 0 }}>
-          <Key>J</Key>
-          <Key>K</Key>
-          <span>to move</span>
-        </Box>
+        {moveKeys.length > 0 && (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, fontSize: "0.75rem", color: "text.secondary", flexShrink: 0 }}>
+            {moveKeys.map((k) => (
+              <Key key={k}>{keyLabel(k)}</Key>
+            ))}
+            <span>to move</span>
+          </Box>
+        )}
       </Box>
 
       <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", p: 2, display: "flex", flexDirection: "column", gap: 1.5 }}>
@@ -185,7 +195,7 @@ const QueuePreviewPanel = React.memo(function QueuePreviewPanel({ item, held, ca
         <Box sx={footerSx}>
           <Box sx={footerRowSx}>
             {canReject && !held && (
-              <Button variant="outlined" color="inherit" onClick={() => onReject(item)} startIcon={<Ban size={15} />} aria-keyshortcuts="R" sx={{ ...actionSx, borderColor: "divider", color: "text.secondary", "&:hover": { color: "error.main", borderColor: "error.main" } }}>
+              <Button variant="outlined" color="inherit" onClick={() => onReject(item)} startIcon={<Ban size={15} />} aria-keyshortcuts={ariaKeyShortcuts(rejectKeys)} sx={{ ...actionSx, borderColor: "divider", color: "text.secondary", "&:hover": { color: "error.main", borderColor: "error.main" } }}>
                 Reject
               </Button>
             )}
@@ -194,7 +204,7 @@ const QueuePreviewPanel = React.memo(function QueuePreviewPanel({ item, held, ca
               onClick={() => onOpen(item)}
               disabled={!canAct}
               startIcon={canAct && !held ? <PenLine size={15} /> : <Lock size={15} />}
-              aria-keyshortcuts="Enter"
+              aria-keyshortcuts={ariaKeyShortcuts(openKeys)}
               sx={actionSx}
             >
               {held ? (
@@ -210,9 +220,9 @@ const QueuePreviewPanel = React.memo(function QueuePreviewPanel({ item, held, ca
                 </>
               )}
               {/* In the label, not endIcon: MUI sizes endIcon children as 20px icons */}
-              {canAct && (
+              {canAct && openKeys[0] && (
                 <Box component="span" sx={{ ml: 1, display: "inline-flex" }}>
-                  <Key onPrimary={!held}>Enter</Key>
+                  <Key onPrimary={!held}>{keyLabel(openKeys[0])}</Key>
                 </Box>
               )}
             </Button>

@@ -13,6 +13,7 @@ import { BoxGesture, FrameBox, ResizeFrame, resizeBox, useBoxGesture } from "../
 import { apiFileUrl, errorText } from "./LiveDesk";
 import { type CardWords, fontsReady, loadImage, paintCardText } from "./backgroundCard";
 import { NUDGE, editorKeyFor, editorShortcut, swallowNextContextMenu, withEditorShortcut } from "../editorKeys";
+import { useKeyBindings } from "../keyBindings";
 import { type MenuEntry, useEditorMenu } from "../video/ui/EditorContextMenu";
 
 /** The First India places (contract §2); colours, date format and font sizes are not edited here */
@@ -77,6 +78,8 @@ interface Props {
 
 export default function CardLayoutEditor({ template, editable, onSaved }: Props) {
   const saved = template.layout;
+  // Undo and redo hints follow the person's own keys (profile)
+  useKeyBindings();
   const [draft, setDraft] = useState<CardTemplateLayout | null>(null);
   const layout = draft ?? saved;
   const dirty = !!draft && !samePlaces(draft, saved);

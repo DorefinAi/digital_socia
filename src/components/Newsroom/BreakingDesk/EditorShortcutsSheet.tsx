@@ -6,7 +6,8 @@
 import React, { useRef } from "react";
 import { Box, Button, CircularProgress, Dialog, IconButton, Typography } from "@mui/material";
 import { X as CloseIcon } from "lucide-react";
-import { EDITOR_KEYS, EDITOR_POINTER_KEYS, type EditorKeySection, editorKeyLabel, editorKeyName, PHASE1_KEYS } from "./editorKeys";
+import { EDITOR_KEYS, EDITOR_POINTER_KEYS, type EditorKeySection, editorKeyLabel, editorKeyName, keysOf, PHASE1_KEYS } from "./editorKeys";
+import { useKeyBindings } from "./keyBindings";
 
 const SECTIONS: EditorKeySection[] = ["Post", "Edit", "Text box", "Help"];
 
@@ -60,6 +61,8 @@ const headSx = { fontSize: "0.75rem", fontWeight: 700, color: "text.secondary", 
  * editor in phase 1, where Ctrl+Enter is Copy & Posted instead of Post to X.
  */
 export function EditorShortcutsSheet({ open, onClose, phase1, copyPosted }: { open: boolean; onClose: () => void; phase1?: boolean; copyPosted?: boolean }) {
+  // The person's own keys from their profile; an action they turned off reads "Off"
+  useKeyBindings();
   const keys = phase1 ? PHASE1_KEYS : copyPosted ? EDITOR_KEYS.map((k) => (k.id === "post.approve" ? { ...k, label: COPY_POSTED_LABEL } : k)) : EDITOR_KEYS;
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth aria-labelledby="x-editor-keys-title" slotProps={{ paper: { sx: { borderRadius: "14px", backgroundImage: "none" } } }}>
@@ -85,7 +88,13 @@ export function EditorShortcutsSheet({ open, onClose, phase1, copyPosted }: { op
             {keys.filter((k) => k.section === section).map((k) => (
               <Box key={k.id} sx={rowSx}>
                 <Typography sx={{ fontSize: "0.8125rem" }}>{k.label}</Typography>
-                <Keys keys={k.show ?? k.keys} />
+                {k.show || keysOf(k).length ? (
+                  <Keys keys={k.show ?? keysOf(k)} />
+                ) : (
+                  <Typography component="span" sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
+                    Off
+                  </Typography>
+                )}
               </Box>
             ))}
           </Box>
