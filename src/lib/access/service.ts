@@ -5,7 +5,7 @@ import { api } from "@/lib/socia/client";
 import { USE_MOCKS } from "@/lib/socia/config";
 import { fallbackRoleLabel } from "./catalogue";
 import { mockAccess } from "./mockStore";
-import type { AccessUser, AuditEntity, AuditEntry, AuditPage, PermissionOverride, RoleInput, RolePatch, RoleRecord, UserPatch, UserPermissions } from "./types";
+import type { AccessUser, AuditEntity, AuditEntry, AuditPage, NewUserInput, PermissionOverride, RoleInput, RolePatch, RoleRecord, UserPatch, UserPermissions } from "./types";
 
 const enc = encodeURIComponent;
 type Raw = Record<string, unknown>;
@@ -89,6 +89,14 @@ const liveAccess = {
     const res = await api<Raw>("PATCH", `/admin/users/${enc(id)}`, patch);
     return readUser((res.user as Raw) ?? res);
   },
+  async createUser(input: NewUserInput): Promise<AccessUser> {
+    const res = await api<Raw>("POST", "/admin/users", input);
+    return readUser((res.user as Raw) ?? res);
+  },
+  async resetPassword(id: string, password: string, resetTotp: boolean): Promise<AccessUser> {
+    const res = await api<Raw>("PATCH", `/admin/users/${enc(id)}`, resetTotp ? { password, resetTotp: true } : { password });
+    return readUser((res.user as Raw) ?? res);
+  },
   async userPermissions(id: string): Promise<UserPermissions> {
     const res = await api<Raw>("GET", `/admin/users/${enc(id)}/permissions`);
     return { role: str(res.role), roleLabel: strOrNull(res.roleLabel) ?? undefined, permissions: list<UserPermissions["permissions"][number]>(res.permissions) };
@@ -122,6 +130,10 @@ export interface AccessService {
   deleteRole(key: string): Promise<void>;
   listUsers(): Promise<AccessUser[]>;
   updateUser(id: string, patch: UserPatch): Promise<AccessUser>;
+  /** Adds a person who can sign in with `password` straight away */
+  createUser(input: NewUserInput): Promise<AccessUser>;
+  /** Sets someone else's password (and clears their two-step sign-in with `resetTotp`); signs them out everywhere */
+  resetPassword(id: string, password: string, resetTotp: boolean): Promise<AccessUser>;
   userPermissions(id: string): Promise<UserPermissions>;
   /** Resolves to the new effective permissions when the server sends them */
   putOverrides(id: string, overrides: PermissionOverride[]): Promise<UserPermissions | null>;

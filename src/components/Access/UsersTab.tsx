@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   Alert,
   Box,
@@ -26,7 +27,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { ChevronRight, Pencil, Search } from "lucide-react";
+import { ChevronRight, KeyRound, Pencil, Search, UserPlus } from "lucide-react";
 import { ADMIN_LOCKED, BUILT_IN_ROLE_KEYS, BUILT_IN_ROLE_LABELS, PLATFORM_OPTIONS, platformLabel } from "@/lib/access/catalogue";
 import { accessService } from "@/lib/access/service";
 import { usePermissions } from "@/lib/access/usePermissions";
@@ -35,6 +36,8 @@ import { useSociaSession } from "@/providers/SociaSessionProvider";
 import { LoadError, errorText } from "@/components/Newsroom/SociaDesk/liveShared";
 import { Avatar, ConfirmDialog, LosingAccess, effectiveSet, formatDateTime, labelOf, lostKeys, tileSx, useLoad, type Loaded } from "./shared";
 import UserPermissionsDrawer from "./UserPermissionsDrawer";
+import AddPersonDialog from "./AddPersonDialog";
+import SetPasswordDialog from "./SetPasswordDialog";
 
 interface RoleOption {
   key: string;
@@ -83,7 +86,7 @@ function RoleSelect({ user, options, disabled, onChange }: { user: AccessUser; o
       onChange={(e) => onChange(e.target.value)}
       disabled={disabled}
       inputProps={{ "aria-label": `${user.name}'s role` }}
-      sx={{ minWidth: 150, fontSize: "0.8125rem", "& .MuiSelect-select": { py: 0.75 } }}
+      sx={{ minWidth: 140, fontSize: "0.8125rem", "& .MuiSelect-select": { py: 0.75 } }}
     >
       {!known && <MenuItem value={user.role}>{user.roleLabel}</MenuItem>}
       {options.map((o) => (
@@ -104,6 +107,21 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirm, setConfirm] = useState<null | { user: AccessUser; patch: UserPatch; lost: string[]; extra?: string }>(null);
   const [drawerId, setDrawerId] = useState<string | null>(null);
+  // Both dialogs remount (fresh key) on every opening, so a form and any password in it start empty
+  const [dialogSeq, setDialogSeq] = useState(0);
+  const [addOpen, setAddOpen] = useState(false);
+  const [passwordFor, setPasswordFor] = useState<AccessUser | null>(null);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+
+  // The person just added: scroll to them, then let the highlight fade after a while
+  useEffect(() => {
+    if (!highlightId) return;
+    const el = Array.from(document.querySelectorAll<HTMLElement>(`[data-user-id="${CSS.escape(highlightId)}"]`)).find((n) => n.offsetParent !== null);
+    el?.scrollIntoView({ block: "center", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    const t = setTimeout(() => setHighlightId(null), 8000);
+    return () => clearTimeout(t);
+  }, [highlightId]);
 
   // The role picker: the server's roles when we may read them, else the built-ins plus every role someone has
   const options: RoleOption[] = useMemo(() => {
@@ -175,8 +193,66 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
       </Box>
     ) : null;
 
+  const openPassword = (u: AccessUser) => {
+    setDialogSeq((n) => n + 1);
+    setPasswordFor(u);
+    setPasswordOpen(true);
+  };
+
+  // Your own password is changed under Your profile (the server refuses it here)
+  const profileLink = (compact: boolean) => (
+    <Button component={Link} href="/profile" size="small" aria-label="Change your own password under Your profile" sx={{ minHeight: 32, px: 1, minWidth: 0, color: "text.secondary", fontSize: compact ? "0.75rem" : undefined, whiteSpace: "nowrap", textDecoration: "underline", textUnderlineOffset: "3px" }}>
+      Your profile
+    </Button>
+  );
+
+  /** Tiles have room for the words; the table row, already eight columns wide, gets a labelled key button */
+  const passwordButton = (u: AccessUser) =>
+    u.id === self?.id ? (
+      profileLink(false)
+    ) : (
+      <Button size="small" variant="outlined" onClick={() => openPassword(u)} startIcon={<KeyRound size={14} aria-hidden />} aria-label={`Set a new password for ${u.name}`} sx={{ minHeight: 32, px: 1.25, borderColor: "divider", color: "text.primary", whiteSpace: "nowrap" }}>
+        Set new password
+      </Button>
+    );
+
+  const passwordIcon = (u: AccessUser) =>
+    u.id === self?.id ? (
+      profileLink(true)
+    ) : (
+      <Tooltip title="Set new password">
+        <IconButton size="small" onClick={() => openPassword(u)} aria-label={`Set a new password for ${u.name}`} sx={{ width: 32, height: 32, borderRadius: "8px", border: "1px solid", borderColor: "divider", color: "text.primary" }}>
+          <KeyRound size={15} aria-hidden />
+        </IconButton>
+      </Tooltip>
+    );
+
+  const highlightSx = (u: AccessUser) =>
+    u.id === highlightId ? { backgroundColor: "action.selected", boxShadow: (t: { palette: { success: { main: string } } }) => `inset 3px 0 0 ${t.palette.success.main}`, transition: "background-color 600ms ease" } : { transition: "background-color 600ms ease" };
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap" }}>
+        <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", flex: "1 1 220px" }}>
+          To change your own password, open{" "}
+          <Box component={Link} href="/profile" sx={{ color: "text.primary", fontWeight: 600, textUnderlineOffset: "3px" }}>
+            Your profile
+          </Box>
+          .
+        </Typography>
+        <Button
+          variant="contained"
+          disableElevation
+          startIcon={<UserPlus size={16} aria-hidden />}
+          onClick={() => {
+            setDialogSeq((n) => n + 1);
+            setAddOpen(true);
+          }}
+          sx={{ ml: "auto", flexShrink: 0, minHeight: 40 }}
+        >
+          Add person
+        </Button>
+      </Box>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
         <TextField
           size="small"
@@ -214,21 +290,22 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
                 <TableCell>Active</TableCell>
                 <TableCell>Exceptions</TableCell>
                 <TableCell>Last sign-in</TableCell>
+                <TableCell sx={{ px: 1 }}>Password</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {shown.map((u) => (
-                <TableRow key={u.id} hover sx={{ opacity: u.active ? 1 : 0.6, "&:last-of-type td": { borderBottom: "none" } }}>
+                <TableRow key={u.id} hover data-user-id={u.id} sx={{ opacity: u.active ? 1 : 0.6, "&:last-of-type td": { borderBottom: "none" }, ...highlightSx(u) }}>
                   <TableCell>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                       <Avatar name={u.name} size={28} />
-                      <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, whiteSpace: "nowrap" }}>
+                      <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, minWidth: 110 }}>
                         {u.name}
                         {youTag(u)}
                       </Typography>
                     </Box>
                   </TableCell>
-                  <TableCell sx={{ color: "text.secondary", wordBreak: "break-all", minWidth: 180 }}>{u.email}</TableCell>
+                  <TableCell sx={{ color: "text.secondary", wordBreak: "break-all", minWidth: 160 }}>{u.email}</TableCell>
                   <TableCell>
                     <RoleSelect user={u} options={options} disabled={busyId === u.id} onChange={(role) => change(u, { role })} />
                   </TableCell>
@@ -239,7 +316,9 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
                     <Switch size="small" checked={u.active} disabled={busyId === u.id} onChange={(e) => change(u, { active: e.target.checked })} slotProps={{ input: { "aria-label": `${u.name} can sign in` } }} />
                   </TableCell>
                   <TableCell>{exceptionsButton(u)}</TableCell>
-                  <TableCell sx={{ whiteSpace: "nowrap", color: "text.secondary" }}>{formatDateTime(u.lastLoginAt)}</TableCell>
+                  {/* Date over time, to leave room for the Password column */}
+                  <TableCell sx={{ color: "text.secondary", whiteSpace: "pre-line", minWidth: 96 }}>{formatDateTime(u.lastLoginAt).replace(", ", "\n")}</TableCell>
+                  <TableCell sx={{ px: 1 }}>{passwordIcon(u)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -251,7 +330,7 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
       {shown.length > 0 && (
         <Box component="ul" aria-label="People on the desk" sx={{ listStyle: "none", m: 0, p: 0, display: { xs: "flex", lg: "none" }, flexDirection: "column", gap: 1 }}>
           {shown.map((u) => (
-            <Box component="li" key={u.id} sx={{ ...tileSx, opacity: u.active ? 1 : 0.7, display: "flex", flexDirection: "column", gap: 1.25 }}>
+            <Box component="li" key={u.id} data-user-id={u.id} sx={{ ...tileSx, opacity: u.active ? 1 : 0.7, display: "flex", flexDirection: "column", gap: 1.25, ...highlightSx(u) }}>
               <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, minWidth: 0 }}>
                 <Avatar name={u.name} size={32} />
                 <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -272,6 +351,8 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
                 <Box sx={{ ml: -1 }}>{exceptionsButton(u)}</Box>
                 <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>Last sign-in</Typography>
                 <Typography sx={{ fontSize: "0.8125rem" }}>{formatDateTime(u.lastLoginAt)}</Typography>
+                <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>Password</Typography>
+                <Box sx={{ ml: u.id === self?.id ? -1 : 0 }}>{passwordButton(u)}</Box>
               </Box>
             </Box>
           ))}
@@ -288,6 +369,37 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
           users.setData((l) => l?.map((x) => (x.id === drawerUser.id ? { ...x, overrides: count } : x)) ?? l);
           setToast({ ok: true, text: `${drawerUser.name}'s exceptions saved.` });
           if (live && drawerUser.id === self?.id) void refresh();
+        }}
+      />
+
+      {list && (
+        <AddPersonDialog
+          key={`add-${dialogSeq}`}
+          open={addOpen}
+          options={options}
+          allowed={allowed}
+          onClose={() => setAddOpen(false)}
+          onCreated={(created) => {
+            setAddOpen(false);
+            setQuery("");
+            users.setData((l) => (l ? [...l.filter((x) => x.id !== created.id), created] : l));
+            setToast({ ok: true, text: `${created.name} can now sign in.` });
+            setHighlightId(created.id);
+            void users.reload();
+            void roles.reload();
+          }}
+        />
+      )}
+
+      <SetPasswordDialog
+        key={`password-${dialogSeq}`}
+        open={passwordOpen}
+        user={passwordFor}
+        onClose={() => setPasswordOpen(false)}
+        onDone={(u, withTotp) => {
+          users.setData((l) => l?.map((x) => (x.id === u.id ? { ...x, ...u } : x)) ?? l);
+          setPasswordOpen(false);
+          setToast({ ok: true, text: withTotp ? `${u.name}'s password is set and two-step sign-in is reset. They were signed out everywhere.` : `${u.name}'s password is set. They were signed out everywhere.` });
         }}
       />
 

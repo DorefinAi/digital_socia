@@ -12,7 +12,8 @@ import {
   isBuiltInRole,
   roleSlug,
 } from "./catalogue";
-import type { AccessUser, AuditEntry, EffectivePermission, PermissionOverride, RoleInput, RolePatch, RoleRecord, UserPatch } from "./types";
+import { PASSWORD_MIN } from "./password";
+import type { AccessUser, AuditEntry, EffectivePermission, NewUserInput, PermissionOverride, RoleInput, RolePatch, RoleRecord, UserPatch } from "./types";
 
 interface MockRole {
   key: string;
@@ -317,6 +318,35 @@ export const mockAccess = {
     if (patch.role !== undefined && patch.role !== user.role) entries.push(audit(s, "user.role_changed", "user", id, user.name, { role: user.role }, { role: patch.role }));
     if (patch.platforms && patch.platforms.join() !== user.platforms.join()) entries.push(audit(s, "user.platforms_changed", "user", id, user.name, { platforms: user.platforms }, { platforms: patch.platforms }));
     if (patch.active !== undefined && patch.active !== user.active) entries.push(audit(s, patch.active ? "user.activated" : "user.deactivated", "user", id, user.name, { active: user.active }, { active: patch.active }));
+    commit({ ...s, users: s.users.map((u) => (u.id === id ? next : u)), audit: [...entries, ...s.audit] });
+    return toUser(getMockAccess(), next);
+  },
+
+  async createUser(input: NewUserInput): Promise<AccessUser> {
+    await pause();
+    const s = getMockAccess();
+    const name = input.name.replace(/\s+/g, " ").trim();
+    const email = input.email.trim().toLowerCase();
+    if (!name || name.length > 80) throw new ApiError(400, "invalid", "Type the person's name.");
+    if (!/^[^\s@]+@[^\s@]+$/.test(email)) throw new ApiError(400, "invalid", "Type a valid email address, like name@example.com.");
+    if (input.password.length < PASSWORD_MIN) throw new ApiError(400, "invalid", `The password needs at least ${PASSWORD_MIN} characters.`);
+    if (!s.roles.some((r) => r.key === input.role)) throw new ApiError(400, "invalid", `There is no role "${input.role}".`);
+    if (s.users.some((u) => u.email.toLowerCase() === email)) throw new ApiError(409, "email_taken", "Someone already uses this email.");
+    const user: MockUser = { id: `u-${Date.now().toString(36)}`, name, email, role: input.role, platforms: [...new Set(input.platforms)], active: true, totpEnabled: false, createdAt: new Date().toISOString(), lastLoginAt: null, overrides: [] };
+    const entry = audit(s, "user.created", "user", user.id, name, null, { name, email, role: user.role, platforms: user.platforms });
+    commit({ ...s, users: [...s.users, user], audit: [entry, ...s.audit] });
+    return toUser(getMockAccess(), user);
+  },
+
+  async resetPassword(id: string, password: string, resetTotp: boolean): Promise<AccessUser> {
+    await pause();
+    const s = getMockAccess();
+    const user = s.users.find((u) => u.id === id);
+    if (!user) throw new ApiError(404, "not_found", "This user does not exist.");
+    if (id === s.selfId) throw new ApiError(409, "self_change", "Change your own password under Your profile.");
+    if (password.length < PASSWORD_MIN) throw new ApiError(400, "invalid", `The password needs at least ${PASSWORD_MIN} characters.`);
+    const next: MockUser = resetTotp ? { ...user, totpEnabled: false } : user;
+    const entries = [audit(s, "user.password_reset", "user", id, user.name, null, null), ...(resetTotp ? [audit(s, "user.totp_reset", "user", id, user.name, null, null)] : [])];
     commit({ ...s, users: s.users.map((u) => (u.id === id ? next : u)), audit: [...entries, ...s.audit] });
     return toUser(getMockAccess(), next);
   },

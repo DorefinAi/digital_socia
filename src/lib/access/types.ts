@@ -49,6 +49,15 @@ export interface UserPatch {
   active?: boolean;
 }
 
+/** POST /admin/users: a new person with a starting password */
+export interface NewUserInput {
+  name: string;
+  email: string;
+  role: string;
+  platforms: string[];
+  password: string;
+}
+
 export interface EffectivePermission {
   key: string;
   allowed: boolean;
