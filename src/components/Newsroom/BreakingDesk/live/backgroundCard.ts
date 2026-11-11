@@ -1,11 +1,14 @@
 // Draws an X card on the operator's own background (contract: first-india-card-contract.md §2):
-// today's date in the date slot, then inside the box the headline (bold) and the whole story body,
-// centred, at one font size shrunk from fontMaxPx to fontMinPx until both fit. Pure canvas, no React.
+// today's date in the date slot, then inside the box the headline (bold) and the whole story body, each
+// line centred across the box and the block starting at its top (cardFit), at one font size shrunk from
+// fontMaxPx to fontMinPx until both fit. Pure canvas, no React.
 
 import type { DrawableCardTemplate, OrgCardTemplateLayout } from "@/lib/socia/types";
-import { MANGAL_FAMILY } from "../templateFonts";
+import { MANGAL_FAMILY, MARDOTO_FAMILY } from "../templateFonts";
 import { cardBodyText } from "../cardWords";
-import { CARD_GAP_LINES, CARD_LINE, CARD_PAD_X, CARD_PAD_Y, largestFit } from "./cardFit";
+import { CARD_GAP_LINES, CARD_LINE, type PxRect, cardTextArea, largestFit } from "./cardFit";
+import { fitDate } from "./cardDate";
+import { isTainted, rgbPng } from "./rgbPng";
 
 /**
  * Mangal is the Hindi face the cards use (globals.css "SociaMangal": installed, else bundled); Latin falls
@@ -67,13 +70,17 @@ export async function loadImage(url: string): Promise<HTMLImageElement> {
   }
 }
 
-/** Waits for the Hindi faces so the first draw is not measured on a fallback font. */
+/** The date tag's face (Mardoto Bold), at `px` */
+const dateFont = (px: number) => `700 ${px}px ${MARDOTO_FAMILY}`;
+
+/** Waits for the Hindi faces and the date's face so the first draw is not measured on a fallback font. */
 export async function fontsReady() {
   if (typeof document === "undefined" || !document.fonts) return;
   const sample = "क ख A 1";
   await Promise.all([
     document.fonts.load(`700 40px ${family()}`, sample),
     document.fonts.load(`400 40px ${family()}`, sample),
+    document.fonts.load(dateFont(40), "Date:0123456789/"),
   ]).catch(() => undefined);
   await document.fonts.ready;
 }
@@ -141,7 +148,9 @@ function withEllipsis(ctx: CanvasRenderingContext2D, line: string, maxWidth: num
   return `${letters.join("").replace(/[\s.।,]+$/, "")}${ELLIPSIS}`;
 }
 
-function fitText(ctx: CanvasRenderingContext2D, headline: string, body: string, layout: OrgCardTemplateLayout, boxW: number, boxH: number): Fitted {
+/** `box` is the template's box in card px; the words wrap in its column and may hang over it (cardFit.cardTextArea) */
+function fitText(ctx: CanvasRenderingContext2D, headline: string, body: string, layout: OrgCardTemplateLayout, box: PxRect): Fitted {
+  const boxW = cardTextArea(box).w;
   const max = Math.max(6, layout.fontMinPx, layout.fontMaxPx);
   const min = Math.max(6, Math.min(layout.fontMinPx, layout.fontMaxPx));
   const measure = (size: number) => {
@@ -153,12 +162,13 @@ function fitText(ctx: CanvasRenderingContext2D, headline: string, body: string, 
     return { size, headline: h, body: b, height: lines * size * LINE_HEIGHT, cut: false };
   };
   // The largest size that fits, in half pixels, exactly as the editor's card (cardFit.largestFit)
-  const size = largestFit(min, max, boxH, (px) => measure(px).height);
+  const size = largestFit(min, max, (px) => cardTextArea(box, px).h, (px) => measure(px).height);
   const best = size === null ? null : measure(size);
   if (best) return best;
 
   // Even the smallest size is too tall: keep as much as fits, headline first, and end on "…"
   const f = measure(min);
+  const boxH = cardTextArea(box, min).h;
   const lineH = min * LINE_HEIGHT;
   const rows = Math.max(1, Math.floor(boxH / lineH + 1e-6));
   if (f.headline.length >= rows) {
@@ -180,30 +190,23 @@ function fitText(ctx: CanvasRenderingContext2D, headline: string, body: string, 
 
 type Encoded = { blob: Blob } | { error: "tainted" | "failed" | "too_big" };
 
-function toBlob(canvas: HTMLCanvasElement): Promise<Encoded> {
-  return new Promise((resolve) => {
-    try {
-      // null here means the browser could not encode it (too large for memory, or out of memory)
-      canvas.toBlob((blob) => resolve(blob ? { blob } : { error: "failed" }), "image/png");
-    } catch {
-      // A tainted canvas (background from another origin) refuses to export
-      resolve({ error: "tainted" });
-    }
-  });
+/** The card as an RGB PNG (rgbPng.ts: no alpha channel), at `scale` of its size. */
+async function toBlob(canvas: HTMLCanvasElement, scale: number): Promise<Encoded> {
+  try {
+    // null here means the browser could not encode it (too large for memory, or out of memory)
+    const blob = await rgbPng(canvas, scale);
+    return blob ? { blob } : { error: "failed" };
+  } catch (err) {
+    // A tainted canvas (background from another origin) refuses to export; anything else is the browser failing
+    return { error: isTainted(err) ? "tainted" : "failed" };
+  }
 }
 
 /** X takes card images up to 5 MB; a busy photo background is stepped down until it fits. */
 async function encode(canvas: HTMLCanvasElement, maxBytes: number): Promise<Encoded> {
   let last: Encoded = { error: "too_big" };
   for (const scale of [1, 0.8, 0.65, 0.5]) {
-    let source = canvas;
-    if (scale < 1) {
-      source = document.createElement("canvas");
-      source.width = Math.round(canvas.width * scale);
-      source.height = Math.round(canvas.height * scale);
-      source.getContext("2d")?.drawImage(canvas, 0, 0, source.width, source.height);
-    }
-    const out = await toBlob(source);
+    const out = await toBlob(canvas, scale);
     if ("error" in out) {
       // Tainted stays tainted; a failed encode may still work smaller
       if (out.error === "tainted") return out;
@@ -238,36 +241,31 @@ export function paintCardText(ctx: CanvasRenderingContext2D, layout: OrgCardTemp
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  // Date: one line, from 1.12 × the slot's height (digits are shorter than the font size), shrunk to 95% of
-  // the slot's width, centred on the slot; orgCanvas.dateSizePx sizes the editor's date the same way
+  // Date: Mardoto Bold in its tag, sized and placed by cardDate.fitDate, as orgCanvas places the editor's date
   const d = layout.date;
   if (d) {
     const dateText = istDate(d.format, words.date);
-    const slotW = d.w * W;
-    const slotH = d.h * H;
-    let dateSize = Math.floor(slotH * 1.12);
-    ctx.font = `700 ${dateSize}px ${family()}`;
-    while (dateSize > 8 && ctx.measureText(dateText).width > slotW * 0.95) {
-      dateSize -= 1;
-      ctx.font = `700 ${dateSize}px ${family()}`;
-    }
+    const at = fitDate(ctx, dateText, { x: d.x * W, y: d.y * H, w: d.w * W, h: d.h * H }, dateFont);
+    ctx.font = dateFont(at.size);
     ctx.fillStyle = d.color;
-    ctx.fillText(dateText, d.x * W + slotW / 2, d.y * H + slotH / 2);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(dateText, at.originX, at.baseline);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
   }
 
-  // Box: headline then body, centred, one size for both
+  // Box: headline then body, centred across, from the top of the text area (cardFit), one size for both
   const b = layout.box;
-  const padX = b.w * W * CARD_PAD_X;
-  const padY = b.h * H * CARD_PAD_Y;
-  const boxW = b.w * W - padX * 2;
-  const boxH = b.h * H - padY * 2;
+  const box = { x: b.x * W, y: b.y * H, w: b.w * W, h: b.h * H };
   const headline = words.headline.replace(/\*\*/g, "").trim();
   // The points as one paragraph, as on the editor's card and the desk's posts
   const body = cardBodyText(words.body);
-  const fit = fitText(ctx, headline, body, layout, boxW, boxH);
+  const fit = fitText(ctx, headline, body, layout, box);
+  const area = cardTextArea(box, fit.size);
   const lineH = fit.size * LINE_HEIGHT;
-  const cx = b.x * W + (b.w * W) / 2;
-  let y = b.y * H + padY + (boxH - fit.height) / 2 + lineH / 2;
+  const cx = area.x + area.w / 2;
+  let y = area.y + lineH / 2;
   ctx.font = `700 ${fit.size}px ${family()}`;
   ctx.fillStyle = layout.headline.color;
   for (const line of fit.headline) {
@@ -286,7 +284,7 @@ export function paintCardText(ctx: CanvasRenderingContext2D, layout: OrgCardTemp
 
 /**
  * Draws the card at the template's own size (the background's, when the template gives none) and returns
- * it as a PNG ready to upload.
+ * it as an RGB PNG (no alpha channel) ready to upload.
  */
 export async function drawBackgroundCard(template: DrawableCardTemplate, backgroundUrl: string, words: CardWords, maxBytes: number): Promise<DrawnCard> {
   const [image] = await Promise.all([loadImage(backgroundUrl), fontsReady()]);
@@ -295,7 +293,8 @@ export async function drawBackgroundCard(template: DrawableCardTemplate, backgro
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
-  const ctx = canvas.getContext("2d");
+  // Opaque: the card goes out as RGB, never with an alpha channel
+  const ctx = canvas.getContext("2d", { alpha: false });
   if (!ctx) throw new Error("This browser can't draw cards.");
   ctx.drawImage(image, 0, 0, W, H);
   const fit = paintCardText(ctx, template.layout, words, W, H);

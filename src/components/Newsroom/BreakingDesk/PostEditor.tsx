@@ -54,6 +54,7 @@ import { usePermissions } from "@/lib/access/usePermissions";
 import TemplateCanvas, {
   BREAKING_RED,
   CanvasSelection,
+  CardExport,
   DEFAULT_TEXT_Y,
   TEMPLATE_FORMATS,
   TemplateCanvasHandle,
@@ -127,6 +128,8 @@ const ADJUSTMENTS: { key: Exclude<keyof MediaAdjust, "filter">; label: string; m
 
 const BAR = { bg: "#0E0E10", text: "rgba(255,255,255,0.7)", border: "rgba(255,255,255,0.14)" };
 const SELECT_BLUE = "#2F7BFF";
+/** Saving the card image failed in the browser itself (out of memory), not because of the media */
+const CARD_IMAGE_FAILED = "The browser ran out of memory making the card image. Close other tabs and try again.";
 const BACKDROPS = ["blur", "#000000", "#FFFFFF", BREAKING_RED] as const;
 
 
@@ -1095,6 +1098,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     }
   };
 
+  /** Saves the card on the canvas as an image ("saved", or why not) */
+  const downloadCardImage = async (): Promise<CardExport> => (await canvasRef.current?.download(downloadName("png", format))) ?? "failed";
+
   /** Saves the card drawn on the operator's X background. */
   const downloadBackgroundCard = async () => {
     try {
@@ -1121,14 +1127,14 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const saveAsPostedNow = async () => {
     // Live: the operator posts the downloaded card by hand, then gives the desk the post's link
     if (live) {
-      const ok = exportsVideo ? await exportVideo() : bgMode ? await downloadBackgroundCard() : canvasRef.current?.download(downloadName("png", format)) ?? false;
-      if (!ok && !exportsVideo) setNotice("This media file does not allow image export from the browser. Download the card from Preview, or post with Post to X.");
+      const saved = exportsVideo ? await exportVideo() : bgMode ? await downloadBackgroundCard() : await downloadCardImage();
+      if (saved !== true && saved !== "saved" && !exportsVideo) setNotice(saved === "failed" ? CARD_IMAGE_FAILED : "This media file does not allow image export from the browser. Download the card from Preview, or post with Post to X.");
       setLinkOpen(true);
       return;
     }
-    const ok = isVideo ? await exportVideo() : canvasRef.current?.download(downloadName("png", format)) ?? false;
-    if (!ok) {
-      if (!isVideo) setNotice("This media file does not allow image export from the browser, so nothing was saved.");
+    const saved = isVideo ? await exportVideo() : await downloadCardImage();
+    if (saved !== true && saved !== "saved") {
+      if (!isVideo) setNotice(saved === "failed" ? CARD_IMAGE_FAILED : "This media file does not allow image export from the browser, so nothing was saved.");
       return;
     }
     publishSocialPost(buildPayload());

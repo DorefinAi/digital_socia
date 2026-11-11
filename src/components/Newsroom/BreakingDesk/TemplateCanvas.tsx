@@ -7,6 +7,7 @@ import { CardBackdrop, CardRects, FrameTime, MIN_BOX, Rect, TemplateFormat, Text
 import { BoxHandle, FrameBox, ResizeFrame, resizeBox, useBoxGesture } from "./ResizeFrame";
 import { NUDGE, eventKey, isMac } from "./editorKeys";
 import { fontById, nearestWeight } from "./templateFonts";
+import { flatCopy, isTainted, rgbPng } from "./live/rgbPng";
 
 export { BIG_BREAKING_YELLOW, BREAKING_RED, DEFAULT_TEXT_Y, TEMPLATE_FORMATS } from "./cardRender";
 export type { TemplateFormat } from "./cardRender";
@@ -31,12 +32,18 @@ type Source = HTMLImageElement | HTMLVideoElement;
 
 export type TrimRange = ClipSegment;
 
+/** How saving the card as an image went */
+export type CardExport = "saved" | "blocked" | "failed";
+
 export interface TemplateCanvasHandle {
   /** Small JPEG of the current frame, or null when the media host blocks pixel access */
   snapshot: (maxWidth: number) => string | null;
-  /** Saves the full-size frame as PNG; false when the media host blocks pixel access */
-  download: (fileName: string) => boolean;
-  /** The current frame as a PNG no bigger than `maxBytes`, scaled down if needed; null when the media host blocks pixel access */
+  /**
+   * Saves the full-size frame as an RGB PNG (no alpha channel): "saved", "blocked" when the media host blocks
+   * pixel access, "failed" when the browser could not make the image (out of memory)
+   */
+  download: (fileName: string) => Promise<CardExport>;
+  /** The current frame as an RGB PNG no bigger than `maxBytes`, scaled down if needed; null when the media host blocks pixel access */
   png: (maxBytes: number) => Promise<Blob | null>;
   /** Moves a video background to `time` seconds */
   seek: (time: number) => void;
@@ -417,50 +424,44 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
         return null;
       }
     },
-    download: (fileName) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return false;
+    download: async (fileName) => {
+      const live = canvasRef.current;
+      if (!live) return "failed";
       try {
+        // The full-text frame on an opaque canvas first (the card can repaint while it encodes), then RGB PNG
+        const blob = await rgbPng(withAllText(() => flatCopy(live)));
+        if (!blob) return "failed";
+        const href = URL.createObjectURL(blob);
         const link = document.createElement("a");
-        link.href = withAllText(() => canvas.toDataURL("image/png"));
+        link.href = href;
         link.download = fileName;
         link.click();
-        return true;
-      } catch {
-        return false;
+        setTimeout(() => URL.revokeObjectURL(href), 4000);
+        return "saved";
+      } catch (err) {
+        // A tainted canvas (media host without CORS) refuses to export
+        return isTainted(err) ? "blocked" : "failed";
       }
     },
     png: async (maxBytes) => {
       const live = canvasRef.current;
       if (!live) return null;
-      // Encoding is async and the card can repaint meanwhile, so copy the full-text frame first
-      const canvas = document.createElement("canvas");
-      canvas.width = live.width;
-      canvas.height = live.height;
+      // Encoding is async and the card can repaint meanwhile, so copy the full-text frame first, opaque
+      let canvas: HTMLCanvasElement;
       try {
-        withAllText(() => canvas.getContext("2d")?.drawImage(live, 0, 0));
+        canvas = withAllText(() => flatCopy(live));
       } catch {
         return null;
       }
-      const encode = (source: HTMLCanvasElement) =>
-        new Promise<Blob | null>((resolve) => {
-          try {
-            source.toBlob(resolve, "image/png");
-          } catch {
-            // A tainted canvas (media host without CORS) refuses to export
-            resolve(null);
-          }
-        });
       // Full size first; a busy photo can pass the limit, so step the frame down until it fits
       for (const scale of [1, 0.8, 0.65, 0.5]) {
-        let source = canvas;
-        if (scale < 1) {
-          source = document.createElement("canvas");
-          source.width = Math.round(canvas.width * scale);
-          source.height = Math.round(canvas.height * scale);
-          source.getContext("2d")?.drawImage(canvas, 0, 0, source.width, source.height);
+        let blob: Blob | null;
+        try {
+          blob = await rgbPng(canvas, scale);
+        } catch {
+          // A tainted canvas (media host without CORS) refuses to export
+          return null;
         }
-        const blob = await encode(source);
         if (!blob) return null;
         if (blob.size <= maxBytes) return blob;
       }

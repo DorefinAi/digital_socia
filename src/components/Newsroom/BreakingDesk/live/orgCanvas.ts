@@ -8,11 +8,12 @@ import type { CardTextLayer, CardTextStyle } from "@/types/newsroom";
 import type { DrawableCardTemplate, OrgCardTemplate } from "@/lib/socia/types";
 import type { TemplateLayout } from "../TemplateCanvas";
 import { type CardBackdrop, ORG_BASE_SIZE } from "../cardRender";
-import { ORG_CARD_FONT, fontById, nearestWeight } from "../templateFonts";
+import { ORG_CARD_FONT, ORG_DATE_FONT, fontById, nearestWeight } from "../templateFonts";
 import { apiFileUrl } from "./LiveDesk";
 import { fontsReady, istDate, loadImage } from "./backgroundCard";
 import { cardBodyText } from "../cardWords";
-import { CARD_GAP_LINES, CARD_LINE, CARD_PAD_X, CARD_PAD_Y, largestFit } from "./cardFit";
+import { CARD_GAP_LINES, CARD_LINE, LEGACY_CARD_LINE, type PxRect, cardTextArea, largestFit, legacyTextArea } from "./cardFit";
+import { fitDate } from "./cardDate";
 
 /** The text box that holds the story under the headline */
 export const ORG_BODY_ID = "org-body";
@@ -22,7 +23,7 @@ export const ORG_DATE_ID = "org-date";
 // ─── One decoded picture per template version, shared by the canvas, the picker and the feed ────────
 const images = new Map<string, Promise<HTMLImageElement>>();
 
-// ─── Mangal before measuring: a card placed on a fallback face would be sized wrong ──────────────────
+// ─── Mangal and Mardoto before measuring: a card placed on a fallback face would be sized wrong ──────
 let fontsIn = typeof document === "undefined";
 let fontsWait: Promise<void> | null = null;
 /**
@@ -109,13 +110,14 @@ const GAP = CARD_GAP_LINES;
 /** Boxes are planned this many px taller than their lines, so the card's own fit never shrinks the words */
 const SLACK_PX = 1;
 
-// Headline, story and date are all bold Mangal, centred (the headline's look is cardRender.ORG_HEADLINE)
+// Headline and story are bold Mangal, centred (the headline's look is cardRender.ORG_HEADLINE); the date is
+// Mardoto Bold, as on the desk's posts
 export const BODY_STYLE: CardTextStyle = { font: ORG_CARD_FONT, weight: 700, align: "center", lineHeight: BODY_LINE, shadow: 0 };
 // Line height 1: the date's box is one line tall (dateBox), and a taller line would make the
 // card shrink it to fit the box, smaller than backgroundCard.ts draws it
-const DATE_STYLE: CardTextStyle = { font: ORG_CARD_FONT, weight: 700, align: "center", lineHeight: 1, shadow: 0 };
+const DATE_STYLE: CardTextStyle = { font: ORG_DATE_FONT, weight: 700, align: "center", lineHeight: 1, shadow: 0 };
 /** The fonts a fresh card on a desk template is measured and drawn with */
-const ORG_FONTS = { head: ORG_CARD_FONT, body: ORG_CARD_FONT, date: ORG_CARD_FONT };
+const ORG_FONTS = { head: ORG_CARD_FONT, body: ORG_CARD_FONT, date: ORG_DATE_FONT };
 
 type Words = { headline: string; body: string };
 type Frame = { W: number; H: number; u: number };
@@ -179,7 +181,9 @@ export interface OrgFonts {
   bodyWeight?: number;
 }
 
-function fitWords(words: Words, width: number, height: number, minPx: number, maxPx: number, fonts: OrgFonts): Fit {
+/** `box` is the template's box in card px: the words wrap in its column and may hang over it (cardFit.cardTextArea) */
+function fitWords(words: Words, box: PxRect, minPx: number, maxPx: number, fonts: OrgFonts): Fit {
+  const width = cardTextArea(box).w;
   const ctx = measure();
   const headline = words.headline.trim();
   const body = words.body.trim();
@@ -193,7 +197,7 @@ function fitWords(words: Words, width: number, height: number, minPx: number, ma
   };
   const total = (f: Fit) => f.headH + f.bodyH + (f.headH && f.bodyH ? GAP * f.size * BODY_LINE : 0);
   // The largest size whose block fits the box, in half pixels (cardFit.largestFit, as backgroundCard.ts)
-  const size = largestFit(minPx, maxPx, height, (px) => total(at(px)));
+  const size = largestFit(minPx, maxPx, (px) => cardTextArea(box, px).h, (px) => total(at(px)));
   // Too long even at the smallest size: the story takes what is left and shrinks further on the card
   return at(size ?? Math.max(6, Math.min(minPx, maxPx)));
 }
@@ -205,63 +209,53 @@ export interface Placement {
   date: Pick<CardTextLayer, "x" | "y" | "width" | "height" | "size"> | null;
 }
 
-const boxPx = (t: DrawableCardTemplate, f: Frame) => {
+/** The template's box in card px */
+const rawBox = (t: DrawableCardTemplate, f: Frame): PxRect => {
   const b = t.layout.box;
-  const padX = b.w * f.W * CARD_PAD_X;
-  const padY = b.h * f.H * CARD_PAD_Y;
-  return { x: b.x * f.W + padX, y: b.y * f.H + padY, w: b.w * f.W - padX * 2, h: b.h * f.H - padY * 2 };
+  return { x: b.x * f.W, y: b.y * f.H, w: b.w * f.W, h: b.h * f.H };
 };
+/** The words' column over the template's box, in card px (cardFit.cardTextArea at no hang) */
+const boxPx = (t: DrawableCardTemplate, f: Frame) => cardTextArea(rawBox(t, f));
 
 /**
- * The date's size in card px, as backgroundCard.ts draws it on the X background: one line, starting at
- * 1.12 × the slot's height (a font's size is taller than its digits, so they still sit inside the tag) and
- * stepping down until it is no wider than 95% of the slot, which is what limits it on the desk's tags. The
- * line is centred on the slot both ways; its box is made tall enough for that size (orgPlacement), so the
- * card's fit-to-box pass never shrinks it below backgroundCard's size.
+ * The date box for `text` in the template's date slot (layout shares), sized and placed as backgroundCard.ts
+ * draws it (cardDate.fitDate): the box's centre is where the centred line puts the ink in the tag, it is at
+ * least the slot's width (never narrower than the line, which would make the card shrink the date) and at
+ * least one line tall.
  */
-/** Share of the date slot the date may fill: width, and height to start from */
-const DATE_FILL_W = 0.95;
-export const DATE_FILL_H = 1.12;
-
-/**
- * The date box: centred on the slot, as wide as it, and at least one line of the date tall. A slot shorter
- * than the line (size above 1 × slot height) would otherwise make the card shrink the date to fit the box.
- */
-function dateBox(d: { x: number; y: number; w: number; h: number }, f: Frame, sizePx: number): NonNullable<Placement["date"]> {
-  const lineH = (sizePx * (DATE_STYLE.lineHeight ?? 1)) / f.H;
-  return { x: d.x + d.w / 2, y: d.y + d.h / 2, width: d.w, height: Math.max(d.h, lineH * 1.01), size: sizePx / f.u };
-}
-
-function dateSizePx(text: string, slotW: number, slotH: number, font: string | undefined): number {
-  let size = Math.floor(slotH * DATE_FILL_H);
+function dateBox(d: { x: number; y: number; w: number; h: number }, f: Frame, text: string, font: string | undefined): NonNullable<Placement["date"]> {
+  const slot = { x: d.x * f.W, y: d.y * f.H, w: d.w * f.W, h: d.h * f.H };
   const ctx = measure();
-  if (!ctx) return size;
-  ctx.font = fontFor(font, DATE_STYLE.weight ?? 700, size);
-  while (size > 8 && ctx.measureText(text).width > slotW * DATE_FILL_W) {
-    size -= 1;
-    ctx.font = fontFor(font, DATE_STYLE.weight ?? 700, size);
-  }
-  return size;
+  if (!ctx) return { x: d.x + d.w / 2, y: d.y + d.h / 2, width: d.w, height: d.h, size: slot.h / f.u };
+  const at = fitDate(ctx, text, slot, (px) => fontFor(font, DATE_STYLE.weight ?? 700, px));
+  const lineH = (at.size * (DATE_STYLE.lineHeight ?? 1)) / f.H;
+  return {
+    x: (at.originX + at.advance / 2) / f.W,
+    y: at.middleY / f.H,
+    width: Math.max(d.w, (at.advance + 2) / f.W),
+    height: Math.max(d.h, lineH * 1.01),
+    size: at.size / f.u,
+  };
 }
 
 export function orgPlacement(t: DrawableCardTemplate, words: Words, fonts: OrgFonts = {}): Placement {
   const f = frameOf(t);
-  const box = boxPx(t, f);
-  const fit = fitWords(words, box.w, box.h, t.layout.fontMinPx, t.layout.fontMaxPx, fonts);
+  const fit = fitWords(words, rawBox(t, f), t.layout.fontMinPx, t.layout.fontMaxPx, fonts);
+  // The area at the fitted size: the block's leading may hang over the box's top and bottom
+  const box = cardTextArea(rawBox(t, f), fit.size);
   // A pixel of room, so the card's own measuring never finds the words too tall and shrinks them
   const headH = fit.headH ? Math.min(box.h, fit.headH + SLACK_PX) : fit.size * HEAD_RATIO * HEAD_LINE;
   const gap = GAP * fit.size * BODY_LINE;
-  // Heading, gap and story as one block, centred in the box top to bottom (as backgroundCard.ts), so a
-  // story too short to fill it at the template's largest size leaves equal room above and below
-  const blockH = headH + (fit.bodyH ? gap + fit.bodyH + SLACK_PX : 0);
-  const top = box.y + Math.max(0, (box.h - blockH) / 2);
+  // Heading, gap and story as one block from the top of the text area (as backgroundCard.ts): the heading at
+  // the top of the red panel, as on the desk's posts
+  const top = box.y;
   const bodyTop = top + headH + gap;
   const bodyH = Math.max(fit.size * BODY_LINE, Math.min(box.y + box.h - bodyTop, fit.bodyH ? fit.bodyH + SLACK_PX : fit.size * BODY_LINE));
   const d = t.layout.date;
   return {
     head: { textX: (box.x + box.w / 2) / f.W, textY: (top + headH / 2) / f.H, textWidth: box.w / f.W, textHeight: headH / f.H, fontScale: (fit.size * HEAD_RATIO) / (ORG_BASE_SIZE * f.u) },
     body: { x: (box.x + box.w / 2) / f.W, y: (bodyTop + bodyH / 2) / f.H, width: box.w / f.W, height: bodyH / f.H, size: fit.size / f.u },
-    date: d ? dateBox(d, f, dateSizePx(istDate(d.format), d.w * f.W, d.h * f.H, fonts.date)) : null,
+    date: d ? dateBox(d, f, istDate(d.format), fonts.date) : null,
   };
 }
 
@@ -303,24 +297,29 @@ const near = (a: number | undefined, b: number | undefined, tol = 0.004) => a !=
 /**
  * True while the headline and the story still sit where the template put them (left edges, widths, the
  * headline's top, and the story right under it). Their heights follow the words, so they are not compared.
+ * Cards placed before the desk-post fit (cardFit LEGACY_*: a narrower column, the block centred in the box)
+ * count as untouched too, so switching template still fits them afresh.
  */
 function untouched(layout: TemplateLayout, t: DrawableCardTemplate): boolean {
   const body = layout.layers?.find((l) => l.id === ORG_BODY_ID);
   if (!body || layout.textHeight === undefined || body.height === undefined) return false;
   const f = frameOf(t);
-  const box = boxPx(t, f);
+  const tol = f.H * 0.004;
+  const size = body.size * f.u;
   const headTop = (layout.textY - layout.textHeight / 2) * f.H;
   const headBottom = (layout.textY + layout.textHeight / 2) * f.H;
   const bodyTop = (body.y - body.height / 2) * f.H;
-  return (
-    near(layout.textX, (box.x + box.w / 2) / f.W) &&
-    near(layout.textWidth, box.w / f.W) &&
-    near(body.x, (box.x + box.w / 2) / f.W) &&
-    near(body.width, box.w / f.W) &&
-    Math.abs(headTop - box.y) <= f.H * 0.004 &&
-    bodyTop >= headBottom - f.H * 0.004 &&
-    bodyTop - headBottom <= body.size * f.u * BODY_LINE * (GAP + 0.5)
-  );
+  const bodyBottom = (body.y + body.height / 2) * f.H;
+  const inColumn = (c: PxRect) =>
+    near(layout.textX, (c.x + c.w / 2) / f.W) && near(layout.textWidth, c.w / f.W) && near(body.x, (c.x + c.w / 2) / f.W) && near(body.width, c.w / f.W);
+  const storyUnder = (pitch: number) => bodyTop >= headBottom - tol && bodyTop - headBottom <= size * pitch * (GAP + 0.5);
+  // Now: from the top of the area at the story's size
+  const now = cardTextArea(rawBox(t, f), size);
+  if (inColumn(now) && Math.abs(headTop - now.y) <= tol && storyUnder(BODY_LINE)) return true;
+  // Before: the block centred in the padded box (at its top when it filled the box)
+  const old = legacyTextArea(rawBox(t, f));
+  const centred = Math.abs(headTop - old.y - (old.y + old.h - bodyBottom)) <= tol * 2 || Math.abs(headTop - old.y) <= tol;
+  return inColumn(old) && headTop >= old.y - tol && centred && storyUnder(LEGACY_CARD_LINE);
 }
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
