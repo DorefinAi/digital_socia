@@ -272,6 +272,17 @@ export interface MentionSuggestion {
   exact: boolean;
 }
 
+/** Why a breaking draft got the handles it got (post_drafts.handle_pick) */
+export interface HandlePick {
+  cls: string;
+  why: string;
+  warnings: string[];
+  /** Each handle with the reason it was chosen for: police, collector, cm, subject, party, reporter, desk… */
+  handles: { handle: string; reason: string; title?: string }[];
+  /** The reporter name read from the breaking file's name, matched to a handle or not */
+  reporterToken?: string | null;
+}
+
 export interface DraftMedia {
   id: string;
   kind: "image" | "video";
@@ -300,6 +311,12 @@ export interface DraftView {
   bodyText: string;
   cardHeadline: string;
   hashtags: string[];
+  /**
+   * Topic hashtags the org's rules matched, offered for one-click accept. They are NEVER on the post
+   * until somebody accepts one: applying them automatically was wrong more often than right. Empty on
+   * drafts composed before this shipped and on non-breaking drafts.
+   */
+  hashtagSuggestions?: string[];
   mentions: string[];
   mentionSuggestions: MentionSuggestion[];
   postText: string;
@@ -311,6 +328,13 @@ export interface DraftView {
   job: { id: string; kind: string; status: "pending" | "running" | "dead"; sendAt: string; attempts: number; error: string | null } | null;
   composeMethod: string;
   composeVersion: string;
+  /**
+   * Breaking drafts: why these handles. `cls` is the story class every handle rule hangs off (incident,
+   * administration, political, government, judicial, soft, leader_post, other) and `why` says it in
+   * words. `warnings` never stopped a handle going on the post — a reporter name the list does not
+   * carry, a district code the places file does not carry. Null on drafts composed before this shipped.
+   */
+  handlePick?: HandlePick | null;
   createdAt: string;
   updatedAt: string;
   story: {
