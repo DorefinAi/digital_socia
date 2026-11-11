@@ -6,6 +6,10 @@ import type { Theme } from "@mui/material/styles";
 import {
   X as CloseIcon,
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  PanelLeftClose,
+  PanelLeftOpen,
   Eye,
   Send,
   Film,
@@ -78,12 +82,12 @@ import { DAILY_CAP, isLiveOn } from "@/data/socialDesk";
 import * as socia from "@/lib/socia/api";
 import type { DraftView, DrawableCardTemplate, OrgCardTemplate } from "@/lib/socia/types";
 import type { LiveEditing } from "./live/LiveEditor";
-import { apiFileUrl, credentialsFor, errorCode, errorText, useLiveDesk } from "./live/LiveDesk";
+import { apiFileUrl, credentialsFor, errorCode, errorText, isLiveItem, useLiveDesk } from "./live/LiveDesk";
 import { draftCardHeadline } from "./cardWords";
 import { usePhase } from "@/lib/socia/usePhase";
 import { assemblePost } from "./phase1/Phase1Editor";
 import { type PostBox, type PostFormat, SERVER_HASHTAGS_MAX, SERVER_MENTIONS_MAX, checkedValues, pickerRows, readPostBox, splitPost, syncOptions, tagKey, withBody } from "./postBox";
-import { needsCheckHint, needsCheckLabel, Phase1Badges, shownNeedsCheck } from "./phase1/badges";
+import { needsCheckHint, needsCheckLabel, shownNeedsCheck } from "./phase1/badges";
 import { keyHash, useBackgroundCard } from "./live/useBackgroundCard";
 import OrgTemplatePicker, { type CardChoice } from "./live/OrgTemplatePicker";
 import { cardChoiceChanged, defaultOrgTemplate } from "./live/storyThumbs";
@@ -93,6 +97,24 @@ import { ariaKeyShortcuts, useKeyBindings } from "./keyBindings";
 import { ConfirmPostDialog, EditorShortcutsSheet, LeaveEditorDialog } from "./EditorShortcutsSheet";
 import RewriteNotice from "./RewriteNotice";
 import { type MenuEntry, useEditorMenu } from "./video/ui/EditorContextMenu";
+
+import VolumeStrip from "./VolumeStrip";
+import { adjacentStory, counterTone, steppedTextSize, storyAfterPosted, workableOrder } from "./deskRules";
+
+/** Someone else holds this story (their claim), so the studio steps over it */
+const heldByOther = (n: FtpNewsItem) => isLiveItem(n) && !!n.live.claim && !n.live.claim.mine;
+
+/**
+ * After Copy & Mark Posted moves on to the next story, the main action rests for a moment, so a second press
+ * of Ctrl+Enter (or a double click) meant for the story just posted can't post the next one unread.
+ * Module-level: the next story may open in a fresh editor.
+ */
+const ADVANCE_QUIET_MS = 1000;
+let approveQuietUntil = 0;
+const restApproveAfterAdvance = () => {
+  approveQuietUntil = Date.now() + ADVANCE_QUIET_MS;
+};
+const approveResting = () => Date.now() < approveQuietUntil;
 
 type Tool = "ftp" | "template" | "background" | "text" | "video" | "story";
 
@@ -137,6 +159,8 @@ const chromeButton = {
   px: 1.25,
   fontSize: "0.8125rem",
   "&:hover": { backgroundColor: "rgba(255,255,255,0.1)" },
+  // Disabled (Prev on the first story, Next on the last) stays readable on the dark bar
+  "&.Mui-disabled": { color: "rgba(255,255,255,0.38)" },
 };
 
 const toolbarIcon = { borderRadius: "6px", width: 30, height: 30, color: "text.primary" };
@@ -190,6 +214,8 @@ function withDraftChoices(suggestions: TagSuggestion[], chosen?: string[]): TagO
 }
 
 interface PostEditorProps {
+  /** The desk's queue in its current filter order: Prev / Next, J / K and the story after Copy & Mark Posted follow it */
+  queueOrder?: readonly FtpNewsItem[];
   item: FtpNewsItem;
   platform: SocialPlatform;
   onClose: () => void;
@@ -292,7 +318,7 @@ function liveTags(d: DraftView) {
 /** A handle whose add to the directory failed lately (`until` per tag key); only called from event handlers */
 const addCoolingDown = (until: ReadonlyMap<string, number>, key: string) => (until.get(key) ?? 0) > Date.now();
 
-export default function PostEditor({ item, platform, onClose, onSwitch, onSaved, live }: PostEditorProps) {
+export default function PostEditor({ item, platform, onClose, onSwitch, onSaved, live, queueOrder }: PostEditorProps) {
   const { publishSocialPost, saveDraft, scheduleDraft, rejectDraft, socialDrafts, socialPosts, hashtagRules, handleDirectory } = useNewsroom();
   const { can, roleLabel } = usePermissions();
   const desk = useLiveDesk();
@@ -305,7 +331,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // Reject declines the draft: draft.reject or post.publish, as on the server
   const mayReject = can("draft.reject") || can("post.publish");
   // Phase 1 (set on the server): no X API posting (approve answers 409 phase_off), no video export and no
-  // post-link step. The main button is Copy & Posted: copy the text, send the card, move the story to Posted.
+  // post-link step. The main button is Copy & Mark Posted: copy the text, send the card, move the story to Posted.
   const { features } = usePhase();
   const phase1 = !!live && !!desk?.phase1;
   const apiPosting = !phase1 || !!features?.xApiPosting;
@@ -415,7 +441,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const { measure: measureWorkspace, columns: workspaceColumns, left: leftPanel, right: rightPanel } = useResizablePanels(EDITOR_PANELS);
   // Below lg the columns stack and the panels keep their natural size
   const wide = useMediaQuery((t: Theme) => t.breakpoints.up("lg"));
-  const leftFolded = wide && leftPanel.collapsed;
+  const leftFolded = leftPanel.collapsed;
   const rightFolded = wide && rightPanel.collapsed;
   const [selection, setSelection] = useState<CanvasSelection>(null);
   const [zoom, setZoom] = useState(1);
@@ -448,7 +474,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const [copied, setCopied] = useState(false);
   // ── Live desk state ──
   const [busy, setBusy] = useState<null | "save" | "post" | "posted" | "copy" | "reject" | "claim" | "card">(null);
-  // Phase 1 Copy & Posted: copied but not marked (blocks until retried), or someone already posted the story
+  // Phase 1 Copy & Mark Posted: copied but not marked (blocks until retried), or someone already posted the story
   const [notPosted, setNotPosted] = useState<string | null>(null);
   const [takenBy, setTakenBy] = useState<string | null>(null);
   // Someone saved the draft after it was opened: the server's version, until the operator picks a side
@@ -673,7 +699,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     field.focus();
     field.setSelectionRange(field.value.length, field.value.length);
   });
-  const bg = useBackgroundCard(bgMode ? activeTemplate : null, plainCardText(layout.headline) || item.headline, item.body, CARD_MAX_BYTES, live?.draft.id ?? item.id);
+  // The story under the headline: the Body box's words once someone edits them, else the FTP body as before, so a
+  // draft nobody edited keeps its background card's key (and is not drawn and uploaded again)
+  const bgBody = layout.layers?.find((l) => l.id === ORG_BODY_ID)?.text ?? item.body;
+  const bg = useBackgroundCard(bgMode ? activeTemplate : null, plainCardText(layout.headline) || item.headline, bgBody, CARD_MAX_BYTES, live?.draft.id ?? item.id);
   // The drawing is on the server already: uploaded in this session, or recorded for this draft and card URL
   const bgRecord = bgMode && live?.draft.card.custom ? bgStore.read(live.draft.id) : null;
   const bgSynced =
@@ -907,8 +936,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   const textSize = activeLayer
     ? { value: activeLayer.size, min: 16, max: 240, step: 1, format: (v: number) => `${v}`, onChange: (size: number) => patchLayer(activeLayer.id, { size }) }
-    : { value: layout.fontScale, min: 0.5, max: 1.8, step: 0.05, format: (v: number) => `${Math.round(v * 100)}%`, onChange: (fontScale: number) => patch({ fontScale }) };
-  const nudgeSize = (direction: 1 | -1) => textSize.onChange(+Math.max(textSize.min, Math.min(textSize.max, textSize.value + direction * (activeLayer ? 4 : 0.05))).toFixed(2));
+    : { value: layout.fontScale, min: 0.5, max: 1.8, step: 0.01, format: (v: number) => `${Math.round(v * 100)}%`, onChange: (fontScale: number) => patch({ fontScale }) };
+  const nudgeSize = (direction: 1 | -1) => textSize.onChange(steppedTextSize(textSize.value, direction, textSize.min, textSize.max, textSize.step));
 
   // ── Video: when each text shows, how it comes in, and the playhead ──
   const keptFrom = segments[0]?.start ?? 0;
@@ -1291,7 +1320,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   };
 
   /**
-   * Sends the card when it changed here. `always` (phase 1 Copy & Posted) sends the card on screen even if
+   * Sends the card when it changed here. `always` (phase 1 Copy & Mark Posted) sends the card on screen even if
    * untouched, since phase 1 has no automatic card; it then resolves to the PNG for the operator's download
    * (null when the card already on the server is the one shown).
    */
@@ -1404,7 +1433,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       onClose();
     });
 
-  // ── Phase 1: Copy & Posted ──
+  // ── Phase 1: Copy & Mark Posted ──
   const canCopyPost = canPost && mayMarkPosted && !takenBy;
 
   /** Saves the posted card for the operator: the PNG just sent, else the card already on the server. */
@@ -1463,10 +1492,18 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       live.onFinished();
       desk?.addCopied({ draftId: id, postId: res.postId, headline: item.headline, undoUntil: res.undoUntil, withCard: cardSaved });
       setPreviewOpen(false);
-      onClose();
+      // Stay in the studio: the next story in the queue's order (the posted one is now in Posted), stepping over
+      // stories someone else is working on
+      const after = onSwitch ? storyAfterPosted(workableOrder(queueOrder ?? desk?.queue ?? [], item.id, heldByOther), item.id) : undefined;
+      if (after) {
+        restApproveAfterAdvance();
+        onSwitch?.(after);
+      } else onClose();
     } catch (err) {
-      // The clipboard holds a post the server didn't mark: empty it (best effort) and block with a banner
-      void navigator.clipboard?.writeText("").catch(() => undefined);
+      // The clipboard holds a post the server didn't mark: empty it (best effort) and block with a banner. Not when
+      // the server says this very draft was just posted from here: the clipboard then holds that good post.
+      const justPostedHere = errorCode(err) === "already_posted" && !!desk?.pending.some((p) => p.copied && p.draftId === id);
+      if (!justPostedHere) void navigator.clipboard?.writeText("").catch(() => undefined);
       if (errorCode(err) === "already_posted") {
         // 409 already_posted { postedBy, postedAt }; postedBy is the name (an object tolerated)
         const who = (err as { data?: { postedBy?: string | { name?: string } | null; postedAt?: string | null } }).data;
@@ -1633,14 +1670,14 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const tooClose = !!live?.draft.rewrite?.tooClose;
   const postNow = () => {
     setConfirmPost(null);
-    // Live: approve, which holds the post for its 10-second undo window (phase 1: Copy & Posted). Demo: Save as posted, the demo's post action.
+    // Live: approve, which holds the post for its 10-second undo window (phase 1: Copy & Mark Posted). Demo: Save as posted, the demo's post action.
     if (live && copyMode) void copyAndPost();
     else if (live) void postLive();
     else void saveAsPosted();
   };
   /** The Post button and Ctrl+Enter: a too-close rewording asks first; demo Ctrl+Enter (no undo window) always asks. */
   const requestPost = (via: "button" | "key") => {
-    if (inFlight.current) return;
+    if (inFlight.current || approveResting()) return;
     if (tooClose) setConfirmPost("tooClose");
     else if (!live && via === "key") setConfirmPost("demo");
     else postNow();
@@ -1648,12 +1685,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   // ── Ctrl+Enter: the Post button, with the same checks ──
   const approveByKey = () => {
-    if (busy || exporting !== null) return;
+    if (busy || exporting !== null || approveResting()) return;
     if (copyMode ? !mayMarkPosted : !mayPublish || (!live && !mayMarkPosted)) {
       setNotice(copyMode ? "Your role can't mark posts as posted." : "Your role can't post to the platforms.");
       return;
     }
-    // Phase 1 without Copy & Posted: nothing to post with from here
+    // Phase 1 without Copy & Mark Posted: nothing to post with from here
     if (live && !copyMode && !apiPosting) return;
     if (!(copyMode ? canCopyPost : canPost)) {
       setNotice(blockedReason ? `Not posted: ${blockedReason}.` : "This post can't go out right now.");
@@ -1675,6 +1712,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     { label: "Keyboard shortcuts", icon: <Keyboard size={14} />, hint: "?", onSelect: () => setSheetOpen(true) },
   ];
   const menuFor = (target: Exclude<CanvasSelection, null> | "stage"): MenuEntry[] => {
+    const textOptions: MenuEntry[] = target === "headline" || target.startsWith("layer:") ? [
+      ...(["left", "center", "right"] as const).map((align) => ({ label: `Align ${align}`, icon: ALIGN_ICONS[align], onSelect: () => styleText({ align }) })),
+      { label: textStyle.uppercase ? "Normal case" : "Capitals", icon: <Type size={14} />, onSelect: () => styleText({ uppercase: !textStyle.uppercase }) },
+      { kind: "divider" },
+    ] : [];
     if (serverView) {
       const entries: MenuEntry[] = [];
       if (canEdit && (orgTemplates.length ? cardTemplate : activeTemplate)) entries.push({ label: useBgLabel, icon: <ImageIcon size={14} />, onSelect: useOwnBackground });
@@ -1698,6 +1740,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const home = placed ? (id === ORG_BODY_ID ? placed.body : placed.date) : null;
       return [
         { label: "Edit text", icon: <Pencil size={14} />, hint: "Click", onSelect: () => editText(`layer:${id}`) },
+        ...textOptions,
         { kind: "divider" },
         { label: "Bring forward", icon: <ArrowUpToLine size={14} />, disabled: index >= layers.length - 1, onSelect: () => restack(id, 1) },
         { label: "Send backward", icon: <ArrowDownToLine size={14} />, disabled: index <= 0, onSelect: () => restack(id, -1) },
@@ -1726,6 +1769,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       if (!home) return menuFor("stage");
       return [
         { label: "Edit text", icon: <Pencil size={14} />, hint: "Click", onSelect: () => editText("headline") },
+        ...textOptions,
         { kind: "divider" },
         { label: "Reset position", icon: <Move size={14} />, disabled: near(layout.textX, home.textX) && near(layout.textY, home.textY), onSelect: () => patch({ textX: home.textX, textY: home.textY }) },
         { label: "Reset size", icon: <Scaling size={14} />, disabled: near(layout.textWidth, home.textWidth) && near(layout.textHeight, home.textHeight) && near(layout.fontScale, home.fontScale, 0.01), onSelect: () => patch({ textWidth: home.textWidth, textHeight: home.textHeight, fontScale: home.fontScale }) },
@@ -1737,6 +1781,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const sizedByHand = layout.textHeight !== undefined || layout.textWidth !== undefined;
       return [
         { label: "Edit text", icon: <Pencil size={14} />, hint: "Click", onSelect: () => editText("headline") },
+        ...textOptions,
         { kind: "divider" },
         { label: "Reset position", icon: <Move size={14} />, disabled: layout.textY === home && layout.textX === undefined, onSelect: () => patch({ textY: home, textX: undefined }) },
         { label: "Reset size", icon: <Scaling size={14} />, disabled: !sizedByHand, onSelect: () => patch({ textWidth: undefined, textHeight: undefined, textX: undefined }) },
@@ -1773,6 +1818,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     cardMenu.open(e, () => menuFor(target));
   };
 
+  // Prev / Next in the queue's order, for J / K below (set further down, where they are worked out)
+  const storyNav = useRef<{ previousStory?: FtpNewsItem; nextStory?: FtpNewsItem; switchStory: (next: FtpNewsItem) => void } | null>(null);
   // ── Keyboard: one handler for every shortcut in editorKeys.ts ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1792,7 +1839,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         if (!e.repeat && !covered) approveByKey();
         return;
       }
-      if (isEditorTypingTarget(e.target) || covered) return;
+      // Undo and Redo also work from the text toolbar's buttons and menus, but a text box keeps its own undo
+      const historyKey = (cmd.id === "edit.undo" || cmd.id === "edit.redo") && !isTextEntryTarget(e.target as HTMLElement);
+      if ((isEditorTypingTarget(e.target) && !historyKey) || covered) return;
       // Delete, Backspace and the arrows act on the card only from the stage or from no control at all
       const onCanvas = !bgMode && !serverView && isCanvasKeyTarget(e.target, stageAreaRef.current);
       switch (cmd.id) {
@@ -1812,6 +1861,17 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           e.preventDefault();
           setSheetOpen(true);
           return;
+        case "story.next":
+        case "story.prev": {
+          // The queue's order, as Prev / Next; switching saves first
+          const nav = storyNav.current;
+          if (e.repeat || !nav) return;
+          const target = cmd.id === "story.next" ? nav.nextStory : nav.previousStory;
+          if (!target) return;
+          e.preventDefault();
+          nav.switchStory(target);
+          return;
+        }
         case "box.delete":
           if (onCanvas && orgMode && selection === "background" && layout.photoBox) {
             e.preventDefault();
@@ -1859,13 +1919,14 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           <Button
             variant="contained"
             onClick={() => requestPost("button")}
-            aria-label={busy === "copy" ? "Copying and marking posted" : "Copy & Posted"}
+            aria-label={busy === "copy" ? "Copying and marking posted" : "Copy & Mark Posted"}
+            // "Post" on phones, where the full label doesn't fit the bar
             aria-keyshortcuts={ariaKeyShortcuts(keysById(EDITOR_KEYS, "post.approve"))}
             disabled={!canCopyPost}
-            startIcon={busy === "copy" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <ClipboardCopy size={15} />}
-            sx={{ minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", "&:hover": { backgroundColor: "#B50F14" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.7)" } }}
+            startIcon={busy === "copy" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <ClipboardCopy size={16} />}
+            sx={{ minHeight: 38, px: { xs: 1.25, md: 2 }, flexShrink: 0, fontSize: "0.875rem", fontWeight: 800, whiteSpace: "nowrap", backgroundColor: "#111", color: "#fff", border: onDark ? "2px solid #fff" : "2px solid #111", boxShadow: "0 0 0 3px rgba(255,255,255,0.12)", "&:hover": { backgroundColor: "#2a2a2a" }, "&.Mui-disabled": { backgroundColor: "rgba(17,17,17,0.35)", color: "rgba(255,255,255,0.7)", borderColor: "rgba(255,255,255,0.35)" } }}
           >
-            Copy &amp; Posted
+            {phoneLabel("Copy & Mark Posted", "Post")}
           </Button>
         </span>
       </Tooltip>
@@ -1879,7 +1940,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             aria-keyshortcuts={ariaKeyShortcuts(keysById(EDITOR_KEYS, "post.approve"))}
             disabled={!canPost || !mayPublish}
             startIcon={busy === "post" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <Send size={15} />}
-            sx={{ minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", "&:hover": { backgroundColor: "#B50F14" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.7)" } }}
+            sx={{ minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: "#111", color: "#fff", "&:hover": { backgroundColor: "#333" }, "&.Mui-disabled": { backgroundColor: "rgba(17,17,17,0.35)", color: "rgba(255,255,255,0.7)" } }}
           >
             {onDark ? phoneLabel(`Post to ${meta.short}`, "Post") : `Post to ${meta.short}`}
           </Button>
@@ -1888,7 +1949,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     ) : null;
 
   // On the live desk Post to X is the main action, so Save as posted takes the quieter style of Copy
-  const savePostedSx = { minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", "&:hover": { backgroundColor: "#B50F14" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.7)" } };
+  const savePostedSx = { minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: "#111", color: "#fff", "&:hover": { backgroundColor: "#333" }, "&.Mui-disabled": { backgroundColor: "rgba(17,17,17,0.35)", color: "rgba(255,255,255,0.7)" } };
 
   const actionButtons = (onDark: boolean) => (
     <>
@@ -1923,6 +1984,30 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     </>
   );
 
+  // The queue's order without the stories someone else is working on (the open one always stays in it)
+  const navigationOrder = workableOrder(queueOrder ?? desk?.queue ?? [], item.id, heldByOther);
+  const previousStory = adjacentStory(navigationOrder, item.id, -1);
+  const nextStory = adjacentStory(navigationOrder, item.id, 1);
+  const switchStory = (next: FtpNewsItem) => {
+    if (!onSwitch || next.id === item.id || busy || exporting !== null) return;
+    if (live) {
+      if (!canEdit) return onSwitch(next);
+      void runLive("save", async () => {
+        const problem = await flushForLeave();
+        onSwitch(next);
+        if (problem) setTimeout(() => setNotice(problem), 0);
+      });
+      return;
+    }
+    if (edited && canEdit) saveDraft(buildPayload());
+    onSwitch(next);
+  };
+  // J / K (or the person's own keys, editorKeys "story.next" / "story.prev"): read by the key handler above
+  useEffect(() => {
+    storyNav.current = { previousStory, nextStory, switchStory };
+  });
+  const bodyLayer = layout.layers?.find((layer) => layer.id === ORG_BODY_ID);
+
   // Top bar: the story's tag and category. Live, they come from the draft (Samvadia's priority and category)
   const headTag = live ? priorityTag(live.draft.story.priority) : item.tag;
   const headCategory = live?.draft.story.category?.trim() || null;
@@ -1938,6 +2023,15 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
               Desk
             </Box>
+          </Button>
+          {/* Prev / Next walk the queue's order; phones have no room for them in the bar and use the FTP feed instead */}
+          <Button aria-label={`Prev${editorShortcutSuffix("story.prev")}, previous story`} aria-keyshortcuts={ariaKeyShortcuts(keysById(EDITOR_KEYS, "story.prev"))} disabled={!previousStory || !!busy || exporting !== null} onClick={() => previousStory && switchStory(previousStory)} sx={{ ...chromeButton, display: { xs: "none", sm: "inline-flex" }, minWidth: 0, flexShrink: 0, border: `1px solid ${BAR.border}`, ml: 0.5 }}>
+            <ChevronLeft size={16} />
+            {`Prev${editorShortcutSuffix("story.prev")}`}
+          </Button>
+          <Button aria-label={`Next${editorShortcutSuffix("story.next")}, next story`} aria-keyshortcuts={ariaKeyShortcuts(keysById(EDITOR_KEYS, "story.next"))} disabled={!nextStory || !!busy || exporting !== null} onClick={() => nextStory && switchStory(nextStory)} sx={{ ...chromeButton, display: { xs: "none", sm: "inline-flex" }, minWidth: 0, flexShrink: 0, border: `1px solid ${BAR.border}` }}>
+            {`Next${editorShortcutSuffix("story.next")}`}
+            <ChevronRight size={16} />
           </Button>
           <Box sx={{ display: { xs: "none", sm: "block" }, width: "1px", height: 22, backgroundColor: BAR.border, mx: 0.5 }} />
           <Box sx={{ display: { xs: "none", sm: "contents" } }}>
@@ -1978,10 +2072,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               ))}
             </Box>
           )}
-          <Button onClick={() => setPreviewOpen(true)} aria-label="Preview" sx={{ ...chromeButton, minWidth: 0, flexShrink: 0, gap: 0.75, border: `1px solid ${BAR.border}` }}>
+          <Button onClick={() => setPreviewOpen(true)} aria-label="See on X" sx={{ ...chromeButton, minWidth: 0, flexShrink: 0, gap: 0.75, border: `1px solid ${BAR.border}` }}>
             <Eye size={15} />
             <Box component="span" sx={{ display: { xs: "none", md: "inline" } }}>
-              Preview
+              See on X
             </Box>
           </Button>
           <Tooltip title={phase1 ? `${meta.short} posts marked posted today` : `${meta.short} posts saved today against the daily cap`}>
@@ -1992,10 +2086,19 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           {actionButtons(true)}
         </Box>
 
+        <VolumeStrip name={meta.short} used={postedToday} cap={cap} />
+
         {/* Workspace */}
         <Box ref={measureWorkspace} sx={{ position: "relative", flex: 1, minHeight: 0, display: { xs: "flex", lg: "grid" }, flexDirection: "column", gridTemplateColumns: workspaceColumns, overflowY: { xs: "auto", lg: "hidden" } }}>
           {/* Tool rail */}
-          <Box role="tablist" aria-label="Design tools" sx={{ order: { xs: 1, lg: 0 }, flexShrink: 0, display: "flex", flexDirection: { xs: "row", lg: "column" }, gap: 0.5, p: 0.75, backgroundColor: "background.paper", borderRight: { lg: "1px solid" }, borderTop: { xs: "1px solid", lg: "none" }, borderColor: "divider" }}>
+          <Box sx={{ order: { xs: 1, lg: 0 }, flexShrink: 0, display: "flex", flexDirection: { xs: "row", lg: "column" }, gap: 0.5, p: 0.75, backgroundColor: "background.paper", borderRight: { lg: "1px solid" }, borderTop: { xs: "1px solid", lg: "none" }, borderColor: "divider" }}>
+            {/* Folds the panel beside the rail to a thin strip; a plain button, outside the tools' tab list */}
+            <Tooltip title={leftFolded ? "Show the tool panel" : "Hide the tool panel"}>
+              <IconButton aria-label={leftFolded ? "Show the tool panel" : "Hide the tool panel"} aria-expanded={!leftFolded} aria-controls="post-editor-tool-panel" onClick={() => leftPanel.setCollapsed(!leftPanel.collapsed)} sx={{ color: "text.primary", alignSelf: "center", flexShrink: 0 }}>
+                {leftFolded ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+              </IconButton>
+            </Tooltip>
+            <Box role="tablist" aria-label="Design tools" sx={{ display: "flex", flex: 1, minWidth: 0, flexDirection: { xs: "row", lg: "column" }, gap: 0.5 }}>
             {TOOLS.filter((t) => !t.videoOnly || (isVideo && !phase1 && !orgMode)).map((t) => (
               <Box
                 key={t.id}
@@ -2030,31 +2133,16 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 {t.label}
               </Box>
             ))}
+            </Box>
           </Box>
 
           {/* Tool panel */}
-          <Box id="post-editor-tool-panel" role="tabpanel" sx={{ order: { xs: 2, lg: 0 }, flexShrink: 0, p: 2, overflowY: { lg: "auto" }, backgroundColor: "background.paper", borderRight: { lg: "1px solid" }, borderColor: "divider", ...(leftFolded && foldedPanelSx) }}>
+          <Box id="post-editor-tool-panel" role="tabpanel" sx={{ order: { xs: 2, lg: 0 }, flexShrink: 0, p: 2, overflowY: { lg: "auto" }, backgroundColor: "background.paper", borderRight: { lg: "1px solid" }, borderColor: "divider", ...(leftFolded && (wide ? foldedPanelSx : { display: "none" })) }}>
             {panel === "ftp" && (
               <FtpFeedPanel
                 platform={platform}
                 currentId={item.id}
-                onPick={(next) => {
-                  // Keep the operator's work before switching stories
-                  // A clip export in progress belongs to the current story
-                  if (exporting !== null) return;
-                  if (live) {
-                    if (!canEdit) return onSwitch?.(next);
-                    void runLive("save", async () => {
-                      const cardProblem = await flushForLeave();
-                      onSwitch?.(next);
-                      // After the switch has reset this editor's notice for the new story
-                      if (cardProblem) setTimeout(() => setNotice(cardProblem), 0);
-                    });
-                    return;
-                  }
-                  if (edited && canEdit) saveDraft(buildPayload());
-                  onSwitch?.(next);
-                }}
+                onPick={switchStory}
               />
             )}
 
@@ -2317,23 +2405,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   })}
                 </Box>
 
-                <TextField
-                  multiline
-                  minRows={activeLayer ? 3 : 6}
-                  maxRows={14}
-                  slotProps={{ htmlInput: { maxLength: activeLayer ? (activeLayer.id === ORG_BODY_ID ? STORY_TEXT_MAX : 300) : CARD_TEXT_MAX, "aria-label": activeLayer ? "Text box words" : "Card text" } }}
-                  helperText={activeLayer ? "Drag the box on the card to place it; drag a handle to resize it. The words shrink to fit." : `${layout.headline.length} / ${CARD_TEXT_MAX} characters. The text shrinks to fit the card.`}
-                  fullWidth
-                  size="small"
-                  value={textValue}
-                  inputRef={headlineInputRef}
-                  onFocus={() => !activeLayer && setSelection("headline")}
-                  onChange={(e) => setTextValue(e.target.value)}
-                  sx={{ ...fieldSx, "& textarea": { fontWeight: 600 } }}
-                />
+                <TextField label="Headline" multiline minRows={3} maxRows={8} fullWidth size="small" value={layout.headline} inputRef={!activeLayer ? headlineInputRef : undefined} onFocus={() => setSelection("headline")} onChange={(e) => patch({ headline: e.target.value.slice(0, CARD_TEXT_MAX) })} slotProps={{ htmlInput: { maxLength: CARD_TEXT_MAX, readOnly: !canEdit, "aria-label": "Headline" } }} sx={{ ...fieldSx, mt: 1, "& textarea": { fontWeight: 600 } }} />
+                {bodyLayer && <TextField label="Body" multiline minRows={4} maxRows={10} fullWidth size="small" value={bodyLayer.text} inputRef={activeLayer?.id === ORG_BODY_ID ? headlineInputRef : undefined} onFocus={() => setSelection(`layer:${ORG_BODY_ID}`)} onChange={(e) => patchLayer(ORG_BODY_ID, { text: e.target.value.slice(0, STORY_TEXT_MAX) })} slotProps={{ htmlInput: { maxLength: STORY_TEXT_MAX, readOnly: !canEdit, "aria-label": "Body" } }} sx={{ ...fieldSx, mt: 2 }} />}
+                {activeLayer && activeLayer.id !== ORG_BODY_ID && <TextField label="Text box" multiline minRows={3} fullWidth size="small" value={textValue} inputRef={headlineInputRef} onChange={(e) => setTextValue(e.target.value)} slotProps={{ htmlInput: { maxLength: 300, readOnly: !canEdit } }} sx={{ ...fieldSx, mt: 2 }} />}
                 <Box sx={{ display: "flex", gap: 0.5, mt: 0.5, flexWrap: "wrap" }}>
                   <Button size="small" onClick={highlightSelection} startIcon={<Highlighter size={13} />} sx={{ fontSize: "0.75rem", color: "text.primary" }}>
-                    Highlight selected words
+                    Add yellow highlight
                   </Button>
                   {textValue.includes("**") && (
                     <Button size="small" onClick={() => setTextValue(textValue.replace(/\*\*/g, ""))} sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
@@ -2348,6 +2425,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   size={textSize}
                   autoColor={activeLayer || orgMode ? undefined : { active: layout.color === "auto", onPick: () => patch({ color: "auto" }) }}
                   onReset={resetTextStyle}
+                  history={{ undo, redo, canUndo, canRedo }}
                 />
 
                 {isVideo && duration > 0 && (
@@ -2444,10 +2522,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 {panel === "text" ? (
                   <>
                     <TextField
+                      label="Headline"
                       multiline
                       minRows={3}
                       maxRows={10}
-                      slotProps={{ htmlInput: { maxLength: CARD_TEXT_MAX, "aria-label": "Card headline", readOnly: !canEdit } }}
+                      slotProps={{ htmlInput: { maxLength: CARD_TEXT_MAX, "aria-label": "Headline", readOnly: !canEdit } }}
                       inputRef={headlineFieldRef}
                       helperText="Drawn in yellow above the story. The story under it comes from the FTP."
                       fullWidth
@@ -2456,6 +2535,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                       onChange={(e) => patch({ headline: e.target.value.slice(0, CARD_TEXT_MAX) })}
                       sx={{ ...fieldSx, "& textarea": { fontWeight: 600 } }}
                     />
+                    <TextField label="Body" multiline minRows={4} maxRows={10} fullWidth size="small" value={orgBodyText(layout, item.body)} onChange={(e) => setLayout((current) => {
+                      const value = e.target.value.slice(0, STORY_TEXT_MAX);
+                      const layers = current.layers ?? [];
+                      return { ...current, layers: layers.some((layer) => layer.id === ORG_BODY_ID) ? layers.map((layer) => layer.id === ORG_BODY_ID ? { ...layer, text: value } : layer) : [...layers, { id: ORG_BODY_ID, text: value, x: 0.5, y: 0.6, width: 0.8, size: 40, style: BODY_STYLE }] };
+                    })} slotProps={{ htmlInput: { maxLength: STORY_TEXT_MAX, "aria-label": "Body", readOnly: !canEdit } }} sx={{ ...fieldSx, mt: 2 }} />
                     <Button size="small" disabled={!canEdit || plainCardText(layout.headline) === item.headline} onClick={() => patch({ headline: item.headline })} startIcon={<RotateCcw size={13} />} sx={{ mt: 1, px: 0.5, color: "text.secondary", fontSize: "0.75rem" }}>
                       Use the FTP headline
                     </Button>
@@ -2597,6 +2681,20 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               {(selection === "headline" || activeLayer) && (
                 <>
                   <FontSelect compact value={textStyle.font} onChange={(id) => styleText({ font: id, weight: nearestWeight(fontById(id), textStyle.weight) })} />
+              <Tooltip title={withEditorShortcut("Undo", "edit.undo")}>
+                <span>
+                  <IconButton sx={toolbarIcon} aria-label="Undo" disabled={!canUndo} onClick={undo}>
+                    <Undo2 size={14} />
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <Tooltip title={withEditorShortcut("Redo", "edit.redo")}>
+                <span>
+                  <IconButton sx={toolbarIcon} aria-label="Redo" disabled={!canRedo} onClick={redo}>
+                    <Redo2 size={14} />
+                  </IconButton>
+                </span>
+              </Tooltip>
                   {toolbarDivider}
                   <IconButton sx={toolbarIcon} aria-label="Smaller text" onClick={() => nudgeSize(-1)}>
                     <Minus size={15} />
@@ -2614,10 +2712,6 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   </IconButton>
                   <IconButton sx={{ ...toolbarIcon, backgroundColor: textStyle.underline ? "action.selected" : "transparent" }} aria-label="Underline" aria-pressed={textStyle.underline} onClick={() => styleText({ underline: !textStyle.underline })}>
                     <Underline size={15} />
-                  </IconButton>
-                  {/* One button cycles left, centre, right */}
-                  <IconButton sx={toolbarIcon} aria-label={`Alignment: ${textStyle.align}. Change`} onClick={() => styleText({ align: textStyle.align === "left" ? "center" : textStyle.align === "center" ? "right" : "left" })}>
-                    {ALIGN_ICONS[textStyle.align]}
                   </IconButton>
                   <Tooltip title="Text colour">
                     <Box
@@ -2735,6 +2829,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
             {/* View zoom */}
             <Box sx={{ ...floatingSx, position: "absolute", right: 12, bottom: 12, display: "flex", alignItems: "center", px: 0.5, height: 36, borderRadius: "8px" }}>
+              {/* Undo / Redo stay here for any selection (the text toolbar repeats them beside the font) */}
               <Tooltip title={withEditorShortcut("Undo", "edit.undo")}>
                 <span>
                   <IconButton sx={toolbarIcon} aria-label="Undo" disabled={!canUndo} onClick={undo}>
@@ -2844,18 +2939,18 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 <Typography sx={{ fontSize: "0.9375rem", fontWeight: 700 }}>{isX ? "Tweet" : platform === "Facebook" ? "Post text" : "Caption"}</Typography>
                 <Box sx={{ display: "flex", gap: 0.25 }}>
                   <Button size="small" onClick={makeCrisp} startIcon={<Scissors size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem" }}>
-                    Make it crisp
+                    Fit to 280
                   </Button>
                   <Button size="small" onClick={() => setText(withBody(text, item.shortText, splitOpts))} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.secondary" }}>
-                    Use draft
+                    Revert to original
                   </Button>
                 </Box>
               </Box>
               {live?.draft.rewrite && <RewriteNotice rewrite={live.draft.rewrite} />}
               <TextField multiline minRows={isX ? 4 : 5} maxRows={10} fullWidth size="small" value={text} onChange={(e) => setText(e.target.value)} onBlur={settleBox} slotProps={{ htmlInput: { "aria-label": `${isX ? "Tweet" : platform === "Facebook" ? "Post" : "Caption"} text`, readOnly: !!live && !canEdit } }} sx={fieldSx} />
               <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, mt: 0.75 }}>
-                <LinearProgress variant="determinate" value={Math.min(100, (used / limits.text) * 100)} color={overLimit ? "error" : "inherit"} sx={{ flex: 1, height: 4, borderRadius: 2 }} />
-                <Typography sx={{ fontSize: "0.75rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: overLimit ? "error.main" : "text.secondary" }}>
+                <LinearProgress variant="determinate" value={Math.min(100, (used / limits.text) * 100)} color={counterTone(used, limits.text, isX)} sx={{ flex: 1, height: 4, borderRadius: 2 }} />
+                <Typography sx={{ fontSize: "0.75rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: `${counterTone(used, limits.text, isX)}.main` }}>
                   {used} / {limits.text}
                 </Typography>
               </Box>
@@ -2877,31 +2972,16 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             <TagPicker label="Mentions" prefix="@" options={mentionRows} max={mentionMax} onChange={(o) => pickTags("@", o)} disabled={!!live && !canEdit} />
             {live && (
               <Box>
-                <Typography sx={{ ...sectionLabel, mb: 0.5 }}>Card that will be posted</Typography>
-                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
-                  <Typography sx={{ fontSize: "0.8125rem" }}>
-                    {serverView ? "Card made on another screen" : bgMode ? "Your X background card" : orgMode ? `${orgTpl.label} card, ${frame.w} × ${frame.h}` : ownCard ? "Your design from this editor" : phase1 ? "The card on the left" : "The automatic card"}
-                    {(busy === "card" || (bgMode && bg.status === "drawing")) && <CircularProgress size={12} sx={{ ml: 1, verticalAlign: "middle" }} aria-label="Working" />}
-                  </Typography>
-                  {ownCard && canEdit && (
-                    <Button size="small" onClick={() => void switchToAutoCard()} disabled={!!busy} startIcon={<RotateCcw size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.secondary", whiteSpace: "nowrap" }}>
-                      Use automatic card
-                    </Button>
-                  )}
-                </Box>
-                <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.25 }}>
-                  {serverView
-                    ? `Another operator or browser put this card on the draft. It posts as it is until you change the design or use ${activeTemplate ? bgName : "your X background"}.`
-                    : bgMode
-                    ? `${activeTemplate?.layout.date ? "Today's date, the headline" : "The headline"} and the whole story on your background${bg.card ? `, ${bg.card.width} × ${bg.card.height} at ${bg.card.fontPx} px` : ""}.`
-                    : orgMode
-                      ? "The card on the left, exactly as you see it, at the template's own size. Click any text to type in it; drag to move, handles to resize."
-                    : ownCard
-                      ? "The frame on the left, exactly as you see it."
-                      : phase1
-                        ? "Copy & Posted saves it with the post and downloads it, exactly as you see it."
-                        : "Change the template, text or picture and your design posts instead."}
-                </Typography>
+                {(ownCard && canEdit) || busy === "card" || (bgMode && bg.status === "drawing") ? (
+                  <Box sx={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 1 }}>
+                    {(busy === "card" || (bgMode && bg.status === "drawing")) && <CircularProgress size={12} aria-label="Working" />}
+                    {ownCard && canEdit && (
+                      <Button size="small" onClick={() => void switchToAutoCard()} disabled={!!busy} startIcon={<RotateCcw size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.secondary", whiteSpace: "nowrap" }}>
+                        Use automatic card
+                      </Button>
+                    )}
+                  </Box>
+                ) : null}
                 {bgMode && bg.status === "ready" && bg.card?.cut && (
                   <Alert severity="warning" sx={{ mt: 1, py: 0, fontSize: "0.75rem", borderRadius: "8px" }}>
                     The story is too long for the box even at the smallest size, so its end is cut. Shorten the headline, or design the card here.
@@ -2922,6 +3002,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
             <Box sx={{ position: { lg: "sticky" }, bottom: { lg: -16 }, mt: "auto", mx: -2, mb: -2, px: 2, py: 1.25, backgroundColor: "background.paper", borderTop: "1px solid", borderColor: "divider" }}>
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+                {phase1 && live && (live.draft.story.needsCheck as readonly string[] | undefined)?.includes("resaved") && (
+                  <Tooltip title={needsCheckHint("resaved")}>
+                    <Box component="span" role="note" sx={{ flexShrink: 1, minWidth: 0, px: 0.75, py: 0.25, borderRadius: "6px", border: "1px solid", borderColor: "warning.main", color: "warning.dark", fontSize: "0.6875rem", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {needsCheckLabel("resaved")}
+                    </Box>
+                  </Tooltip>
+                )}
                 <Button color="error" onClick={() => setDialog("reject")} disabled={!canEdit || !mayReject || !!busy} startIcon={<Ban size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1 }}>
                   Reject
                 </Button>
@@ -3023,7 +3110,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             ? `This downloads the ${isVideo ? "clip" : "card"} and marks the story posted on ${meta.short}. There is no undo.`
             : `The reworded text still repeats much of what the publishers wrote. Reword it before posting, or post it to ${meta.short} as it is.`
         }
-        confirmLabel={confirmPost === "demo" ? "Save as posted" : copyMode ? "Copy & Posted anyway" : "Post anyway"}
+        confirmLabel={confirmPost === "demo" ? "Save as posted" : copyMode ? "Copy & Mark Posted anyway" : "Post anyway"}
         onConfirm={postNow}
         onCancel={() => setConfirmPost(null)}
       />
@@ -3042,12 +3129,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
 /**
  * Phase 1, above the post: the file's badges, why it needs a second look (an update of a posted story among
- * them), and the Copy & Posted banners (already posted by someone, or copied but not marked).
+ * them), and the Copy & Mark Posted banners (already posted by someone, or copied but not marked).
  */
 function Phase1Checks({ story, takenBy, notPosted, retry }: { story: DraftView["story"]; takenBy: string | null; notPosted: string | null; retry: React.ReactNode }) {
-  const reasons = shownNeedsCheck(story.needsCheck);
-  const hasBadges = !!(story.tags?.big || story.tags?.update || story.tags?.exclusive || reasons.length);
-  if (!hasBadges && !takenBy && !notPosted) return null;
+  // "File re-saved" sits beside Reject in the action row instead
+  const reasons = shownNeedsCheck(story.needsCheck).filter((r) => r !== "resaved");
+  // The BIG / UPDATE tags are no longer shown in the studio, so only the reasons and the banners need room
+  if (!reasons.length && !takenBy && !notPosted) return null;
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {takenBy && (
@@ -3060,11 +3148,7 @@ function Phase1Checks({ story, takenBy, notPosted, retry }: { story: DraftView["
           <b>NOT marked as posted. Do not paste this.</b> {notPosted} The clipboard was emptied where the browser allowed it.
         </Alert>
       )}
-      {hasBadges && (
-        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, alignItems: "center" }}>
-          <Phase1Badges tags={story.tags} needsCheck={story.needsCheck} />
-        </Box>
-      )}
+
       {reasons.length > 0 && (
         <Alert severity="warning" sx={{ fontSize: "0.8125rem", borderRadius: "8px", "& .MuiAlert-message": { width: "100%" } }}>
           <Box component="ul" sx={{ m: 0, pl: 2, display: "flex", flexDirection: "column", gap: 0.5 }}>

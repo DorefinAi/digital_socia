@@ -1,13 +1,15 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
-import { Box, Typography } from "@mui/material";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Box, Tab, Tabs, Typography } from "@mui/material";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { BreakingTag, FtpNewsItem, SocialPlatform } from "@/types/newsroom";
 import { isLiveOn } from "@/data/socialDesk";
 import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
 import { CategoryLabel, srOnly, storyCategory, storyTag, TAG_TINT, tagTint, timeAgo } from "./shared";
-import { isLiveItem, useLiveDesk } from "./live/LiveDesk";
+import { usePermissions } from "@/lib/access/usePermissions";
+import { REJECTED_NEWS_PERMISSION } from "@/lib/rejectedNews";
+import { isLiveItem, stableQueueToNews, useLiveDesk } from "./live/LiveDesk";
 import NewStoriesPill, { freshHighlightSx } from "./NewStoriesPill";
 import StoryThumb, { THUMB_ROOT_ATTR } from "./live/StoryThumb";
 
@@ -18,20 +20,37 @@ const STATUS_STYLE: Record<string, { label: string; color: string }> = {
   rejected: { label: "Rejected", color: "error.main" },
 };
 
-/** Live FTP feed beside the editor: newest first, new arrivals marked, click to switch story. */
+type FeedList = "queue" | "published" | "rejected";
+const FEED_TABS: [FeedList, string][] = [
+  ["queue", "New"],
+  ["published", "Posted today"],
+  ["rejected", "Rejected"],
+];
+const newestFirst = (a: FtpNewsItem, b: FtpNewsItem) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime();
+
+/**
+ * Live FTP feed beside the editor: the shown day's whole queue, newest first, new arrivals behind their own pill,
+ * click to switch story. Its tabs show Posted today and Rejected in place (to read; the story stays open).
+ */
 export default function FtpFeedPanel({ platform, currentId, onPick }: { platform: SocialPlatform; currentId: string; onPick: (item: FtpNewsItem) => void }) {
   const { ftpNews, socialPosts, socialDrafts } = useNewsroom();
   const desk = useLiveDesk();
+  const { can } = usePermissions();
   const listRef = useRef<HTMLDivElement>(null);
+  const tabs = FEED_TABS.filter(([t]) => t !== "rejected" || can(REJECTED_NEWS_PERMISSION));
+  const [list, setList] = useState<FeedList>("queue");
+  const otherList = desk && list !== "queue" ? (list === "published" ? desk.postedView : desk.rejected) : null;
+  const otherItems = useMemo(() => (otherList?.data?.items ?? []).map(stableQueueToNews), [otherList?.data]);
   const [openedAt] = useState(() => Date.now());
-  // Live: the stories waiting in the X queue, newest first
+  // Live: the stories waiting in the X queue for the shown day, newest first
   const stories: FtpNewsItem[] = desk ? desk.queue : ftpNews;
-  const sorted = [...stories].sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
-  const loading = !!desk && !desk.inbox.data;
+  const sorted = otherList ? otherItems : [...stories].sort(newestFirst);
+  const loading = !!desk && !(otherList ?? desk.inbox).data;
 
   // Stories that arrive while the feed is open wait behind the "new stories" pill, so the list never jumps
-  const [shown, setShown] = useState<ReadonlySet<string> | null>(null);
-  if (shown === null && !loading) setShown(new Set(sorted.map((n) => n.id)));
+  const [shownState, setShown] = useState<ReadonlySet<string> | null>(null);
+  const shown = otherList ? new Set(sorted.map((n) => n.id)) : shownState;
+  if (!otherList && shownState === null && !loading) setShown(new Set(sorted.map((n) => n.id)));
   const waiting = shown ? sorted.filter((n) => !shown.has(n.id) && n.id !== currentId) : [];
   const listed = shown ? sorted.filter((n) => shown.has(n.id) || n.id === currentId) : sorted;
   const [highlight, setHighlight] = useState<ReadonlySet<string>>(() => new Set());
@@ -58,12 +77,33 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.25, height: { lg: "100%" }, minHeight: 0 }}>
+      {desk && (
+        <Tabs
+          value={list}
+          onChange={(_, t: FeedList) => setList(t)}
+          aria-label="Desk lists"
+          variant="scrollable"
+          scrollButtons={false}
+          sx={{ minHeight: 34, borderBottom: "1px solid", borderColor: "divider", mx: -0.5, "& .MuiTabs-indicator": { backgroundColor: "text.primary" } }}
+        >
+          {tabs.map(([t, label]) => (
+            <Tab
+              key={t}
+              value={t}
+              label={label}
+              id={`ftp-feed-tab-${t}`}
+              aria-controls="ftp-feed-panel"
+              sx={{ minWidth: 0, minHeight: 34, px: 1, py: 0.5, textTransform: "none", fontSize: "0.8125rem", fontWeight: 700, color: "text.secondary", "&.Mui-selected": { color: "text.primary" } }}
+            />
+          ))}
+        </Tabs>
+      )}
       <Box>
         <Typography component="h2" sx={{ fontSize: "0.9375rem", fontWeight: 700 }}>
-          FTP feed
+          {list === "queue" ? "FTP feed" : list === "published" ? "Posted today" : "Rejected"}
         </Typography>
         <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.25 }}>
-          {loading ? "Loading stories" : `${listed.length} ${listed.length === 1 ? "story" : "stories"}, newest first`}
+          {loading ? "Loading stories" : `${listed.length} ${listed.length === 1 ? "story" : "stories"}${otherList ? "" : ", newest first"}`}
         </Typography>
       </Box>
       <Box aria-hidden sx={{ display: "flex", flexWrap: "wrap", columnGap: 1.5, rowGap: 0.5 }}>
@@ -76,6 +116,9 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
       </Box>
       <Box
         ref={listRef}
+        id="ftp-feed-panel"
+        role={desk ? "tabpanel" : undefined}
+        aria-labelledby={desk ? `ftp-feed-tab-${list}` : undefined}
         {...{ [THUMB_ROOT_ATTR]: "" }}
         onScroll={(e) => setAtTop(e.currentTarget.scrollTop <= 2)}
         onPointerEnter={() => setPointerIn(true)}
@@ -98,16 +141,16 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
             listRef.current?.scrollTo({ top: 0, behavior: "smooth" });
           }}
         />
-        {desk && !desk.inbox.data ? (
-          desk.inbox.error ? (
-            <LoadError error={desk.inbox.error} onRetry={() => void desk.inbox.refresh()} />
+        {desk && !(otherList ?? desk.inbox).data ? (
+          (otherList ?? desk.inbox).error ? (
+            <LoadError error={(otherList ?? desk.inbox).error!} onRetry={() => void (otherList ?? desk.inbox).refresh()} />
           ) : (
             <LoadingRows rows={6} height={54} />
           )
         ) : listed.length === 0 ? (
           <Box sx={{ py: 4, px: 2, textAlign: "center", border: "1px dashed", borderColor: "divider", borderRadius: "8px" }}>
-            <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600 }}>No stories waiting</Typography>
-            <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.5 }}>New stories from the FTP appear here on their own.</Typography>
+            <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600 }}>{list === "queue" ? "No stories waiting" : list === "published" ? "Nothing posted today yet" : "Nothing rejected"}</Typography>
+            <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.5 }}>{list === "queue" ? "New stories from the FTP appear here on their own." : list === "published" ? "Stories land here after Copy & Mark Posted." : "Stories rejected today are listed here."}</Typography>
           </Box>
         ) : (
           listed.map((n) => {
@@ -120,11 +163,14 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
             const cover = n.media[0];
             // Live: who has the story open; never when their hold runs out
             const holder = live?.claim && !current ? (live.claim.mine ? "With you" : `${live.claim.name} is editing`) : null;
+            // Posted today and Rejected are lists to read: plain rows, not buttons that do nothing
+            const pickable = !otherList;
             return (
               <Box
                 key={n.id}
-                component="button"
-                onClick={() => !current && onPick(n)}
+                component={pickable ? "button" : "div"}
+                type={pickable ? "button" : undefined}
+                onClick={pickable ? () => !current && onPick(n) : undefined}
                 aria-current={current ? "true" : undefined}
                 sx={{
                   // Positioned so the screen-reader label stays inside the scrolling list
@@ -141,12 +187,12 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
                   borderRadius: "8px",
                   fontFamily: "inherit",
                   color: "text.primary",
-                  cursor: current ? "default" : "pointer",
+                  cursor: current || !pickable ? "default" : "pointer",
                   // Flagged stories carry their tag colour; the rest stay neutral
                   background: (t) => (tag ? tagTint(tag, t.palette.mode, current ? 1.6 : 1) : current ? t.palette.action.selected : "transparent"),
                   // The open story is outlined so it stays distinct from the tint
                   boxShadow: (t) => (current ? `inset 0 0 0 2px ${t.palette.text.primary}` : "none"),
-                  "&:hover": { background: (t) => (tag ? tagTint(tag, t.palette.mode, current ? 1.6 : 1.35) : current ? t.palette.action.selected : t.palette.action.hover) },
+                  ...(pickable ? { "&:hover": { background: (t) => (tag ? tagTint(tag, t.palette.mode, current ? 1.6 : 1.35) : current ? t.palette.action.selected : t.palette.action.hover) } } : {}),
                   "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "2px" },
                   ...(highlight.has(n.id) ? freshHighlightSx : {}),
                 }}
@@ -161,7 +207,8 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
                 </Box>
                 <Box sx={{ minWidth: 0 }}>
                   <Typography sx={{ fontSize: "0.75rem", fontWeight: 600, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{n.headline}</Typography>
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.4, minWidth: 0, overflow: "hidden", fontSize: "0.625rem", color: "text.secondary", whiteSpace: "nowrap"}}>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.4, minWidth: 0, overflow: "hidden", fontSize: "0.625rem", color: "text.secondary", whiteSpace: "nowrap" }}>
+                    {/* The tint carries the tag on screen; screen readers hear it */}
                     {tag && (
                       <Box component="span" sx={srOnly}>
                         {TAG_TINT[tag].label}

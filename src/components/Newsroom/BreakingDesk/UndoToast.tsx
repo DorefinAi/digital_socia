@@ -12,8 +12,12 @@ const stackSx = { position: "fixed", left: { xs: 12, lg: 24 }, bottom: 24, zInde
 const toastSx = { display: "flex", alignItems: "center", gap: 1, px: 1.5, py: 1, borderRadius: "10px", backgroundColor: "#18181B", color: "#fff", boxShadow: "0 8px 24px rgba(0,0,0,0.25)" } as const;
 
 /** Bottom-left stack: a countdown with Undo while a post is held, then its live link once it has gone out. */
-export default function UndoToast() {
-  return useLiveDesk() ? <LiveUndoToast /> : <DemoUndoToast />;
+/**
+ * `keyboardUndo`: Ctrl+Z undoes the newest Copy & Mark Posted. Off while the studio is open, where Ctrl+Z belongs
+ * to the editor (after posting, the studio moves on to the next story and the toast is still up).
+ */
+export default function UndoToast({ keyboardUndo = true }: { keyboardUndo?: boolean }) {
+  return useLiveDesk() ? <LiveUndoToast keyboardUndo={keyboardUndo} /> : <DemoUndoToast />;
 }
 
 function DemoUndoToast() {
@@ -80,7 +84,7 @@ function DemoUndoToast() {
 }
 
 /** The same stack on the live desk: the server holds the post for 10 seconds, Undo cancels the job. */
-function LiveUndoToast() {
+function LiveUndoToast({ keyboardUndo }: { keyboardUndo: boolean }) {
   const desk = useLiveDesk();
   const [now, setNow] = useState(() => Date.now());
   const [copied, setCopied] = useState<string | null>(null);
@@ -94,7 +98,7 @@ function LiveUndoToast() {
     return () => clearInterval(timer);
   }, [counting]);
 
-  // Ctrl+Z (Cmd+Z) undoes the newest Copy & Posted while its toast is up, from anywhere but a text box
+  // Ctrl+Z (Cmd+Z) undoes the newest Copy & Mark Posted while its toast is up, from anywhere but a text box
   const latestCopied = [...pending].reverse().find((p) => p.copied)?.id ?? null;
   const undo = useCallback(
     async (id: string) => {
@@ -105,7 +109,7 @@ function LiveUndoToast() {
     [desk],
   );
   useEffect(() => {
-    if (!latestCopied) return;
+    if (!latestCopied || !keyboardUndo) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || eventKey(e) !== "mod+z" || isTextEntryTarget(e.target)) return;
       e.preventDefault();
@@ -113,7 +117,7 @@ function LiveUndoToast() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [latestCopied, undo]);
+  }, [latestCopied, undo, keyboardUndo]);
 
   if (!desk || !pending.length) return null;
 
@@ -129,13 +133,13 @@ function LiveUndoToast() {
   return (
     <Box role="status" aria-live="polite" sx={stackSx}>
       {pending.map((p) => {
-        // Phase 1 Copy & Posted: already in Posted; Undo puts it back in the queue
+        // Phase 1 Copy & Mark Posted: already in Posted; Undo puts it back in the queue
         if (p.copied) {
           return (
             <Box key={p.id} sx={toastSx}>
               <Box sx={{ minWidth: 0, flex: 1 }}>
                 <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600 }}>{p.copied.withCard ? "Copied, card saved, moved to Posted" : "Copied and moved to Posted"}</Typography>
-                <Typography sx={{ fontSize: "0.75rem", color: failed[p.id] ? "#FF8A80" : "rgba(255,255,255,0.65)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{failed[p.id] ?? `Paste it into X now. ${keyLabel("mod+z")} to undo`}</Typography>
+                <Typography sx={{ fontSize: "0.75rem", color: failed[p.id] ? "#FF8A80" : "rgba(255,255,255,0.65)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{failed[p.id] ?? keyboardUndo ? `Paste it into X now. ${keyLabel("mod+z")} to undo` : "Paste it into X now."}</Typography>
               </Box>
               <Button size="small" onClick={() => void undo(p.id)} aria-keyshortcuts="Control+Z Meta+Z" sx={{ minHeight: 30, color: "#FFD400", fontWeight: 700 }}>
                 Undo

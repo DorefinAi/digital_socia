@@ -6,7 +6,7 @@
 import React, { useRef } from "react";
 import { Box, Button, CircularProgress, Dialog, IconButton, Typography } from "@mui/material";
 import { X as CloseIcon } from "lucide-react";
-import { EDITOR_KEYS, EDITOR_POINTER_KEYS, type EditorKeySection, editorKeyLabel, editorKeyName, keysOf, PHASE1_KEYS } from "./editorKeys";
+import { EDITOR_KEYS, EDITOR_POINTER_KEYS, type EditorKey, type EditorKeySection, editorKeyLabel, editorKeyName, keysOf, PHASE1_KEYS, QUEUE_KEYS } from "./editorKeys";
 import { useKeyBindings } from "./keyBindings";
 
 const SECTIONS: EditorKeySection[] = ["Post", "Edit", "Text box", "Help"];
@@ -51,14 +51,14 @@ function Keys({ keys }: { keys: string[] }) {
   );
 }
 
-const COPY_POSTED_LABEL = PHASE1_KEYS.find((k) => k.id === "post.copyPosted")?.label ?? "Copy & Posted";
+const COPY_POSTED_LABEL = PHASE1_KEYS.find((k) => k.id === "post.copyPosted")?.label ?? "Copy & Mark Posted";
 
 const rowSx = { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: 1.5, py: 0.6 } as const;
 const headSx = { fontSize: "0.75rem", fontWeight: 700, color: "text.secondary", mt: 2, mb: 0.25 } as const;
 
 /**
- * `phase1` lists the phase 1 text editor's keys (Copy & Posted, no card canvas). `copyPosted`: the card
- * editor in phase 1, where Ctrl+Enter is Copy & Posted instead of Post to X.
+ * `phase1` lists the phase 1 text editor's keys (Copy & Mark Posted, no card canvas). `copyPosted`: the card
+ * editor in phase 1, where Ctrl+Enter is Copy & Mark Posted instead of Post to X.
  */
 export function EditorShortcutsSheet({ open, onClose, phase1, copyPosted }: { open: boolean; onClose: () => void; phase1?: boolean; copyPosted?: boolean }) {
   // The person's own keys from their profile; an action they turned off reads "Off"
@@ -77,8 +77,8 @@ export function EditorShortcutsSheet({ open, onClose, phase1, copyPosted }: { op
       <Box sx={{ px: 2.5, pb: 2.5, overflowY: "auto" }}>
         <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", lineHeight: 1.5 }}>
           {phase1
-            ? "While you type in a box, only Save and Copy & Posted work; Esc leaves the box first."
-            : `While you type in a box, only Save and ${copyPosted ? "Copy & Posted" : "Post"} work; Esc leaves the box first. Undo covers the card, the post text, hashtags, mentions, the photo and which card posts.`}
+            ? "While you type in a box, only Save and Copy & Mark Posted work; Esc leaves the box first."
+            : `While you type in a box, only Save and ${copyPosted ? "Copy & Mark Posted" : "Post"} work; Esc leaves the box first. Undo covers the card, the post text, hashtags, mentions, the photo and which card posts.`}
         </Typography>
         {SECTIONS.filter((section) => keys.some((k) => k.section === section)).map((section) => (
           <Box key={section} component="section" aria-label={section}>
@@ -111,6 +111,67 @@ export function EditorShortcutsSheet({ open, onClose, phase1, copyPosted }: { op
               </Box>
             ))}
           </>
+        )}
+      </Box>
+    </Dialog>
+  );
+}
+
+function KeyRow({ k, label }: { k: EditorKey; label?: string }) {
+  const keys = k.show ?? keysOf(k);
+  return (
+    <Box sx={rowSx}>
+      <Typography sx={{ fontSize: "0.8125rem" }}>{label ?? k.label}</Typography>
+      {keys.length ? (
+        <Keys keys={keys} />
+      ) : (
+        <Typography component="span" sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
+          Off
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+/**
+ * The desk queue's sheet ("?" on the queue): the queue's own keys, then the studio's main action. Read from
+ * editorKeys.ts and the person's own keys, so a key changed on the profile shows here at once.
+ */
+export function QueueShortcutsSheet({ open, onClose, phase1 }: { open: boolean; onClose: () => void; phase1: boolean }) {
+  useKeyBindings();
+  const approve = EDITOR_KEYS.find((k) => k.id === "post.approve");
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth aria-labelledby="x-queue-keys-title" slotProps={{ paper: { sx: { borderRadius: "14px", backgroundImage: "none" } } }}>
+      <Box sx={{ display: "flex", alignItems: "center", px: 2.5, pt: 2, pb: 0.5 }}>
+        <Typography id="x-queue-keys-title" component="h2" sx={{ fontWeight: 700, fontSize: "1rem", flex: 1 }}>
+          Keyboard shortcuts
+        </Typography>
+        <IconButton size="small" onClick={onClose} aria-label="Close shortcuts" sx={{ mr: -0.75 }}>
+          <CloseIcon size={18} />
+        </IconButton>
+      </Box>
+      <Box sx={{ px: 2.5, pb: 2.5, overflowY: "auto" }}>
+        <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", lineHeight: 1.5 }}>
+          Change these on your profile, under Keyboard shortcuts.
+        </Typography>
+        <Box component="section" aria-label="Queue">
+          <Typography component="h3" sx={headSx}>
+            Queue
+          </Typography>
+          {QUEUE_KEYS.map((k) => (
+            <KeyRow key={k.id} k={k} />
+          ))}
+        </Box>
+        {approve && (
+          <Box component="section" aria-label="Studio">
+            <Typography component="h3" sx={headSx}>
+              Studio
+            </Typography>
+            <KeyRow k={approve} label={phase1 ? COPY_POSTED_LABEL : "Post to X"} />
+            {EDITOR_KEYS.filter((k) => k.id === "story.next" || k.id === "story.prev" || k.id === "editor.close").map((k) => (
+              <KeyRow key={k.id} k={k} label={k.id === "editor.close" ? "Back to the desk" : undefined} />
+            ))}
+          </Box>
         )}
       </Box>
     </Dialog>

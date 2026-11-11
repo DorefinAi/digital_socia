@@ -57,7 +57,7 @@ export default function TemplatePicker({ layout, media, format, tag, handle, onP
       <Typography sx={{ ...sectionLabel, mt: 2.5, mb: 0.75 }}>Accent colour</Typography>
       <Swatches name="Accent colour" value={layout.accent ?? tagAccent(tag)} onChange={onAccent} colors={ACCENTS} auto={{ active: !layout.accent, onPick: () => onAccent(undefined) }} />
       <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.75 }}>
-        Colours the bands, bars and tag. &ldquo;A&rdquo; follows the story&apos;s tag: yellow for Big Breaking, red for Breaking.
+        Colours the bands, bars and tag. &ldquo;A&rdquo; follows the story&apos;s tag: yellow for BIG Breaking, red for Breaking.
       </Typography>
     </>
   );

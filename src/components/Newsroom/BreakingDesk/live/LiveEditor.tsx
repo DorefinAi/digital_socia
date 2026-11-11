@@ -35,6 +35,8 @@ interface Opened {
 }
 
 interface LiveEditorProps {
+  /** The desk's queue in its current filter order (Prev / Next and the story after Copy & Mark Posted) */
+  queueOrder?: readonly FtpNewsItem[];
   item: FtpNewsItem;
   platform: SocialPlatform;
   onClose: () => void;
@@ -47,7 +49,7 @@ interface LiveEditorProps {
 const leaseOf = (d: DraftView): Lease =>
   d.status === "claimed" && d.claim?.mine ? { kind: "mine" } : d.claim && !d.claim.mine ? { kind: "held", name: d.claim.name } : { kind: "read" };
 
-export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved, onLinkSlug }: LiveEditorProps) {
+export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved, onLinkSlug, queueOrder }: LiveEditorProps) {
   const desk = useLiveDesk();
   const canAct = !!desk?.canAct;
   const [opened, setOpened] = useState<Opened | null>(null);
@@ -184,7 +186,7 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
   }
 
   const live: LiveEditing = { draft: shown.draft, lease: shown.lease, onDraft, onLeaseLost, onHeldBy, claimAgain, onFinished };
-  // Phase 1 (set on the server) opens the same editor; it swaps Post to X for Copy & Posted itself.
+  // Phase 1 (set on the server) opens the same editor; it swaps Post to X for Copy & Mark Posted itself.
   // phase1/Phase1Editor.tsx (the text-first editor) stays in the repo, unused.
-  return <PostEditor item={story} platform={platform} onClose={onClose} onSwitch={onSwitch} onSaved={onSaved} live={live} />;
+  return <PostEditor queueOrder={queueOrder} item={story} platform={platform} onClose={onClose} onSwitch={onSwitch} onSaved={onSaved} live={live} />;
 }

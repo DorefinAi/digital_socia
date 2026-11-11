@@ -1,12 +1,14 @@
 "use client";
 
-import React from "react";
-import { Box, Typography, Slider, Select, MenuItem, ListSubheader, Switch, Tooltip, Button, IconButton } from "@mui/material";
-import { AlignCenter, AlignLeft, AlignRight, Bold, CaseUpper, Italic, RotateCcw, Underline } from "lucide-react";
+import React, { useState } from "react";
+import { Box, Typography, Slider, Select, MenuItem, ListSubheader, Switch, Tooltip, Button, IconButton, Popover } from "@mui/material";
+import { AlignCenter, AlignLeft, AlignRight, Bold, CaseUpper, Italic, RotateCcw, Underline, Minus, Plus, MoreHorizontal, Undo2, Redo2 } from "lucide-react";
 import { CardTextStyle, TextAlign } from "@/types/newsroom";
 import { TEMPLATE_FONTS, fontById, nearestWeight, FontGroup } from "./templateFonts";
 import { BIG_BREAKING_YELLOW, BREAKING_RED, ResolvedStyle } from "./cardRender";
 import { sectionLabel } from "./composerParts";
+import { steppedTextSize, textSizePreset } from "./deskRules";
+import { withEditorShortcut } from "./editorKeys";
 
 const SELECT_BLUE = "#2F7BFF";
 
@@ -97,10 +99,12 @@ interface TextControlsProps {
   /** Headline only: its colour can follow the template */
   autoColor?: { active: boolean; onPick: () => void };
   onReset: () => void;
+  history?: { undo: () => void; redo: () => void; canUndo: boolean; canRedo: boolean };
 }
 
 /** Canva-style text settings for the headline or a text box. */
-export default function TextControls({ style: s, onChange, size, autoColor, onReset }: TextControlsProps) {
+export default function TextControls({ style: s, onChange, size, autoColor, onReset, history }: TextControlsProps) {
+  const [moreAnchor, setMoreAnchor] = useState<HTMLElement | null>(null);
   const font = fontById(s.font);
   const weight = nearestWeight(font, s.weight);
   const bold = weight >= 700;
@@ -108,7 +112,38 @@ export default function TextControls({ style: s, onChange, size, autoColor, onRe
   return (
     <Box>
       <Typography sx={labelSx}>Font</Typography>
-      <FontSelect value={s.font} onChange={(id) => onChange({ font: id, weight: nearestWeight(fontById(id), s.weight) })} />
+      <Box sx={{ ...rowSx, gap: 0.5 }}>
+        <Box sx={{ flex: 1, minWidth: 0 }}><FontSelect value={s.font} onChange={(id) => onChange({ font: id, weight: nearestWeight(fontById(id), s.weight) })} /></Box>
+        {history && <>
+          <Tooltip title={withEditorShortcut("Undo", "edit.undo")}><span><IconButton aria-label="Undo" disabled={!history.canUndo} onClick={history.undo} sx={toggleSx(false)}><Undo2 size={15} /></IconButton></span></Tooltip>
+          <Tooltip title={withEditorShortcut("Redo", "edit.redo")}><span><IconButton aria-label="Redo" disabled={!history.canRedo} onClick={history.redo} sx={toggleSx(false)}><Redo2 size={15} /></IconButton></span></Tooltip>
+        </>}
+      </Box>
+      <Typography sx={labelSx}>Size</Typography>
+      <Box sx={{ ...rowSx, gap: 0.5, flexWrap: "wrap" }}>
+        <Tooltip title="Smaller text (10%)"><span><IconButton aria-label="Smaller text" disabled={size.value <= size.min} onClick={() => size.onChange(steppedTextSize(size.value, -1, size.min, size.max, size.step))} sx={toggleSx(false)}><Minus size={15} /></IconButton></span></Tooltip>
+        <Typography sx={{ fontSize: "0.75rem", fontWeight: 700, width: 44, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{size.format(size.value)}</Typography>
+        <Tooltip title="Larger text (10%)"><span><IconButton aria-label="Larger text" disabled={size.value >= size.max} onClick={() => size.onChange(steppedTextSize(size.value, 1, size.min, size.max, size.step))} sx={toggleSx(false)}><Plus size={15} /></IconButton></span></Tooltip>
+        <Box role="group" aria-label="Text size presets" sx={{ display: "flex", gap: 0.25 }}>
+          {(["S", "M", "L"] as const).map((preset) => <Tooltip key={preset} title={{ S: "Small", M: "Medium", L: "Large" }[preset]}><Button aria-label={`${preset} text size`} aria-pressed={Math.abs(size.value - textSizePreset(preset, size.min, size.max)) < 0.001} onClick={() => size.onChange(textSizePreset(preset, size.min, size.max))} sx={{ ...toggleSx(Math.abs(size.value - textSizePreset(preset, size.min, size.max)) < 0.001), minWidth: 30, width: 30, p: 0 }}>{preset}</Button></Tooltip>)}
+        </Box>
+      </Box>
+
+      <Typography sx={labelSx}>Style</Typography>
+      <Box sx={{ ...rowSx, flexWrap: "wrap", gap: 0.75 }}>
+        <Tooltip title="Bold"><IconButton aria-label="Bold" aria-pressed={bold} onClick={() => onChange({ weight: nearestWeight(font, bold ? 400 : 700) })} sx={toggleSx(bold)}><Bold size={15} /></IconButton></Tooltip>
+        <Tooltip title="Italic"><IconButton aria-label="Italic" aria-pressed={s.italic} onClick={() => onChange({ italic: !s.italic })} sx={toggleSx(s.italic)}><Italic size={15} /></IconButton></Tooltip>
+        <Tooltip title="Underline"><IconButton aria-label="Underline" aria-pressed={s.underline} onClick={() => onChange({ underline: !s.underline })} sx={toggleSx(s.underline)}><Underline size={15} /></IconButton></Tooltip>
+        <Tooltip title="More text settings"><IconButton aria-label="More text settings" aria-haspopup="dialog" aria-expanded={!!moreAnchor} onClick={(e) => setMoreAnchor(e.currentTarget)} sx={toggleSx(!!moreAnchor)}><MoreHorizontal size={17} /></IconButton></Tooltip>
+      </Box>
+      <Typography sx={labelSx}>Colour</Typography>
+      <Swatches name="Text colour" value={s.color} onChange={(color) => onChange({ color })} colors={TEXT_COLORS} auto={autoColor} />
+      <Typography sx={labelSx}>Highlight</Typography>
+      <Swatches name="Highlight colour" value={s.highlight} onChange={(highlight) => onChange({ highlight })} colors={TEXT_COLORS} />
+
+      <Popover open={!!moreAnchor} anchorEl={moreAnchor} onClose={() => setMoreAnchor(null)} anchorOrigin={{ vertical: "bottom", horizontal: "right" }} transformOrigin={{ vertical: "top", horizontal: "right" }} slotProps={{ paper: { sx: { width: 300, maxWidth: "calc(100vw - 32px)", maxHeight: "70dvh", p: 2, borderRadius: "8px" } } }}>
+      <Box role="dialog" aria-label="More text settings">
+      <Typography sx={sectionLabel}>Weight</Typography>
       <Box sx={{ ...rowSx, mt: 1 }}>
         <Select size="small" value={weight} onChange={(e) => onChange({ weight: Number(e.target.value) })} inputProps={{ "aria-label": "Weight" }} sx={{ flex: 1, borderRadius: "8px", fontSize: "0.8125rem" }}>
           {font.weights.map((w) => (
@@ -118,25 +153,9 @@ export default function TextControls({ style: s, onChange, size, autoColor, onRe
           ))}
         </Select>
       </Box>
-      <LabeledSlider label="Size" {...size} />
 
-      <Typography sx={labelSx}>Style</Typography>
+      <Typography sx={labelSx}>Case and alignment</Typography>
       <Box sx={{ ...rowSx, flexWrap: "wrap", gap: 0.75 }}>
-        <Tooltip title="Bold">
-          <IconButton aria-label="Bold" aria-pressed={bold} onClick={() => onChange({ weight: nearestWeight(font, bold ? 400 : 700) })} sx={toggleSx(bold)}>
-            <Bold size={15} />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="Italic">
-          <IconButton aria-label="Italic" aria-pressed={s.italic} onClick={() => onChange({ italic: !s.italic })} sx={toggleSx(s.italic)}>
-            <Italic size={15} />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="Underline">
-          <IconButton aria-label="Underline" aria-pressed={s.underline} onClick={() => onChange({ underline: !s.underline })} sx={toggleSx(s.underline)}>
-            <Underline size={15} />
-          </IconButton>
-        </Tooltip>
         <Tooltip title="Capitals (English letters)">
           <IconButton aria-label="Capitals" aria-pressed={s.uppercase} onClick={() => onChange({ uppercase: !s.uppercase })} sx={toggleSx(s.uppercase)}>
             <CaseUpper size={16} />
@@ -151,13 +170,6 @@ export default function TextControls({ style: s, onChange, size, autoColor, onRe
           </Tooltip>
         ))}
       </Box>
-
-      <Typography sx={labelSx}>Colour</Typography>
-      <Swatches name="Text colour" value={s.color} onChange={(color) => onChange({ color })} colors={TEXT_COLORS} auto={autoColor} />
-
-      <Typography sx={labelSx}>Highlight colour</Typography>
-      <Swatches name="Highlight colour" value={s.highlight} onChange={(highlight) => onChange({ highlight })} colors={TEXT_COLORS} />
-      <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.5 }}>Words inside **double asterisks** take this colour.</Typography>
 
       <Typography sx={labelSx}>Spacing</Typography>
       <LabeledSlider label="Letter spacing" value={s.letterSpacing} min={-0.05} max={0.3} step={0.01} format={(v) => `${Math.round(v * 100)}`} onChange={(letterSpacing) => onChange({ letterSpacing })} />
@@ -188,6 +200,8 @@ export default function TextControls({ style: s, onChange, size, autoColor, onRe
       <Button size="small" onClick={onReset} startIcon={<RotateCcw size={13} />} sx={{ mt: 1.5, px: 0.5, color: "text.secondary", fontSize: "0.75rem" }}>
         Reset text style
       </Button>
+      </Box>
+      </Popover>
     </Box>
   );
 }

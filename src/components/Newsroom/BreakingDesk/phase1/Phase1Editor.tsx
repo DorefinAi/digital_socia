@@ -1,9 +1,9 @@
 "use client";
 
 // Phase 1's editor: a breaking file turned into a ready X post. The file as the desk wrote it sits beside the
-// post (read-only, to check facts); the post can be edited, and one button, Copy & Posted, puts the text on
+// post (read-only, to check facts); the post can be edited, and one button, Copy & Mark Posted, puts the text on
 // the clipboard and moves the story to Posted (phase1-contract.md §3). Most posts go without a picture, so the
-// card is off until "Add card" asks the server for one (§4); then Copy & Posted saves the card as well.
+// card is off until "Add card" asks the server for one (§4); then Copy & Mark Posted saves the card as well.
 // Opened by LiveEditor in place of PostEditor when the server says phase 1; claim and heartbeat stay there.
 
 import React, { useEffect, useRef, useState } from "react";
@@ -20,7 +20,6 @@ import { EditorShortcutsSheet } from "../EditorShortcutsSheet";
 import { isEditorTypingTarget, isTextEntryTarget, keysById, PHASE1_KEYS, phase1KeyFor, phase1Shortcut } from "../editorKeys";
 import { ariaKeyShortcuts, useKeyBindings } from "../keyBindings";
 import { PlatformIcon, rejectedNotice, srOnly, TAG_TINT, tagTint } from "../shared";
-import { BREAKING_RED } from "../cardRender";
 import { credentialsFor, errorCode, errorText, fileUrl, useLiveDesk } from "../live/LiveDesk";
 import type { LiveEditing } from "../live/LiveEditor";
 import XPostPreview, { XCountRing, X_COLORS } from "./XPostPreview";
@@ -89,7 +88,7 @@ export default function Phase1Editor({ item, onClose, onSaved, live }: Phase1Edi
   const [saveError, setSaveError] = useState<string | null>(null);
   const [retryTick, setRetryTick] = useState(0);
   const retries = useRef(0);
-  // Copy & Posted copied the text but the server didn't mark it: a blocking state until retried or edited
+  // Copy & Mark Posted copied the text but the server didn't mark it: a blocking state until retried or edited
   const [notPosted, setNotPosted] = useState<string | null>(null);
   // Someone already posted this story (409 already_posted)
   const [alreadyPosted, setAlreadyPosted] = useState<string | null>(null);
@@ -348,7 +347,7 @@ export default function Phase1Editor({ item, onClose, onSaved, live }: Phase1Edi
     }
   };
 
-  // ── Copy & Posted ──
+  // ── Copy & Mark Posted ──
   let blockedReason = "";
   if (alreadyPosted) blockedReason = "Already posted";
   else if (live.lease.kind === "held") blockedReason = `${live.lease.name} is working on this story`;
@@ -755,7 +754,7 @@ export default function Phase1Editor({ item, onClose, onSaved, live }: Phase1Edi
                       value={tagDraft}
                       onChange={(e) => setTagDraft(e.target.value)}
                       onKeyDown={(e) => {
-                        // Ctrl/Cmd+Enter (or the person's own Alt combo) is Copy & Posted; it takes the typed tag in itself
+                        // Ctrl/Cmd+Enter (or the person's own Alt combo) is Copy & Mark Posted; it takes the typed tag in itself
                         if (e.ctrlKey || e.metaKey || e.altKey) return;
                         if (e.key === "Enter" || e.key === "," || e.key === " ") {
                           if (!tagDraft.trim()) return;
@@ -811,9 +810,9 @@ export default function Phase1Editor({ item, onClose, onSaved, live }: Phase1Edi
                             disabled={!canCopy}
                             aria-keyshortcuts={ariaKeyShortcuts(keysById(PHASE1_KEYS, "post.copyPosted"))}
                             startIcon={busy === "copy" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <ClipboardCopy size={15} />}
-                            sx={{ minHeight: 38, px: 2, borderRadius: "19px", fontWeight: 700, textTransform: "none", whiteSpace: "nowrap", backgroundColor: BREAKING_RED, color: "#fff", boxShadow: "none", "&:hover": { backgroundColor: "#B50F14", boxShadow: "none" }, "&.Mui-disabled": { backgroundColor: "rgba(215,20,26,0.35)", color: "rgba(255,255,255,0.8)" } }}
+                            sx={{ minHeight: 38, px: 2, borderRadius: "19px", fontWeight: 700, textTransform: "none", whiteSpace: "nowrap", backgroundColor: "#111", color: "#fff", boxShadow: "none", "&:hover": { backgroundColor: "#333", boxShadow: "none" }, "&.Mui-disabled": { backgroundColor: "rgba(17,17,17,0.35)", color: "rgba(255,255,255,0.8)" } }}
                           >
-                            Copy &amp; Posted
+                            Copy &amp; Mark Posted
                           </Button>
                         </span>
                       </Tooltip>

@@ -136,7 +136,7 @@ export default function PostedPostsList({ platform, limit, emptyHint, bare, allo
               {post.postUrl.replace(/^https:\/\/(www\.)?/, "")}
             </MuiLink>
             ) : (
-              // Copy & Posted records no link: the post was pasted into X by hand
+              // Copy & Mark Posted records no link: the post was pasted into X by hand
               <Typography sx={{ mt: 0.25, fontSize: "0.6875rem", color: "text.secondary" }}>Copied and posted by hand, no link</Typography>
             )}
             <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.25 }}>
