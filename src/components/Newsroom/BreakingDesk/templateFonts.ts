@@ -64,12 +64,22 @@ const VARIABLE = [400, 500, 600, 700, 800];
  * digits fall through to a bold sans, as on the desk's own cards; Noto Sans covers Hindi if Mangal can't load.
  */
 export const MANGAL_FAMILY = `"SociaMangal", Arial, "Helvetica Neue", ${noto.style.fontFamily}`;
-/** The desk templates' card face: headline, story and date */
+/** The desk templates' card face: headline and story */
 export const ORG_CARD_FONT = "mangal";
+/**
+ * Mardoto Bold (globals.css "SociaMardoto", bundled in public/fonts, SIL OFL 1.1): the date in a desk
+ * template's date tag, as on the desk's own cards. Latin only, so anything else falls through to Noto Sans.
+ */
+export const MARDOTO_FAMILY = `"SociaMardoto", Arial, "Helvetica Neue", ${noto.style.fontFamily}`;
+/** The desk templates' date face */
+export const ORG_DATE_FONT = "mardoto";
 
 export const TEMPLATE_FONTS: TemplateFont[] = [
   // First in the menu: the default on the desk's X templates (Mangal ships regular and bold only)
   { id: "mangal", label: "Mangal", group: "Sans", family: MANGAL_FAMILY, weights: [400, 700] },
+  // Bold only, and Latin letters only (Hindi falls back to Noto): the desk templates' date face. Listed, so the
+  // date box shows its own font, and labelled so nobody picks it for Hindi words
+  { id: "mardoto", label: "Mardoto (Latin only)", group: "Sans", family: MARDOTO_FAMILY, weights: [700] },
   { id: "noto", label: "Noto Sans", group: "Sans", family: noto.style.fontFamily, weights: [...VARIABLE, 900] },
   // Roboto has no Hindi letters; Noto Sans covers them in the same voice
   { id: "roboto", label: "Roboto", group: "Sans", family: `${roboto.style.fontFamily}, ${noto.style.fontFamily}`, weights: [...VARIABLE, 900] },

@@ -8,6 +8,7 @@ import type { BreakingTag } from "@/types/newsroom";
 import { fontsReady, istDate, paintCardText } from "./backgroundCard";
 import { templateImage } from "./orgCanvas";
 import { keyHash } from "./useBackgroundCard";
+import { CARD_DRAW_VERSION } from "./cardFit";
 
 // ─── The design picked for a draft (PostEditor's choiceStore, same browser) ──────────────────────────
 const CHOICE_PREFIX = "socia_card_choice_";
@@ -153,7 +154,7 @@ function storeFailed(key: string, retryIn = RETRY_MS) {
 /** Identifies one drawing: draft, design and its version, size, today's date (when shown) and the words. */
 export function thumbKey(draftId: string, designKey: string, template: DrawableCardTemplate, px: number, headline: string, body: string): string {
   const date = template.layout.date ? istDate(template.layout.date.format) : "";
-  return `${draftId}|${designKey}|${template.updatedAt}|${px}|${date}|${keyHash(JSON.stringify([template.backgroundUrl, template.layout, headline, body]))}`;
+  return `${CARD_DRAW_VERSION}|${draftId}|${designKey}|${template.updatedAt}|${px}|${date}|${keyHash(JSON.stringify([template.backgroundUrl, template.layout, headline, body]))}`;
 }
 
 // ─── Backgrounds: each loaded once, scaled once per thumbnail width ──────────────────────────────────

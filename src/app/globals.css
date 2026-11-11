@@ -165,3 +165,15 @@ p {
   font-display: swap;
   unicode-range: U+0900-097F, U+1CD0-1CFF, U+200C-200D, U+25CC, U+A830-A839, U+A8E0-A8FF;
 }
+
+/*
+ * Mardoto Bold (SIL Open Font License 1.1, public/fonts/Mardoto-OFL.txt), the date face of the desk's X
+ * templates. Bold only; canvas code waits for it with Mangal (backgroundCard.fontsReady).
+ */
+@font-face {
+  font-family: "SociaMardoto";
+  src: url("/fonts/Mardoto-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
