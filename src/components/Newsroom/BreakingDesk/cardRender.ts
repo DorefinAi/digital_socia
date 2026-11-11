@@ -12,6 +12,8 @@ export const TEMPLATE_FORMATS: Record<TemplateFormat, { w: number; h: number; la
 };
 
 export const BREAKING_RED = "#D7141A";
+/** The desk's Breaking tag (queue rows, filter dots, feed tint): softer than the card's red, with black text */
+export const BREAKING_PINK = "#F06E64";
 export const BIG_BREAKING_YELLOW = "#FFD400";
 export const DEFAULT_TEXT_Y: Record<TemplateFormat, number> = { x: 0.68, ig_post: 0.72, ig_reel: 0.7 };
 

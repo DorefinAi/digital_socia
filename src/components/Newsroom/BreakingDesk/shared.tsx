@@ -5,7 +5,8 @@ import { Box, Typography } from "@mui/material";
 import { BreakingTag, FtpNewsItem, SocialPlatform } from "@/types/newsroom";
 import { CHANNEL } from "@/constants";
 import type { QueueItem, StoryPriority } from "@/lib/socia/types";
-import { BIG_BREAKING_YELLOW, BREAKING_RED } from "./TemplateCanvas";
+import { BIG_BREAKING_YELLOW } from "./TemplateCanvas";
+import { BREAKING_PINK } from "./cardRender";
 
 // Shared with pages outside the desk; they live in ui/controls so those pages need not load the card canvas
 export { CONTROL_HEIGHT, SegmentedControl, srOnly, type SegmentOption } from "../ui/controls";
@@ -54,8 +55,8 @@ export const TagChip: React.FC<{ tag: BreakingTag }> = ({ tag }) => {
         lineHeight: 1.5,
         borderRadius: "3px",
         whiteSpace: "nowrap",
-        backgroundColor: isBig ? BIG_BREAKING_YELLOW : BREAKING_RED,
-        color: isBig ? "#111" : "#fff",
+        backgroundColor: isBig ? BIG_BREAKING_YELLOW : BREAKING_PINK,
+        color: "#111",
       }}
     >
       {isBig ? "BIG BREAKING" : "BREAKING"}
@@ -63,10 +64,10 @@ export const TagChip: React.FC<{ tag: BreakingTag }> = ({ tag }) => {
   );
 };
 
-// In the editor the tag is carried by a tint instead of a chip: yellow for Big Breaking, red for Breaking
+// In the editor the tag is carried by a tint instead of a chip: yellow for BIG Breaking, pink for Breaking
 export const TAG_TINT: Record<BreakingTag, { label: string; rgb: string; light: [number, number]; dark: [number, number] }> = {
-  big_breaking: { label: "Big breaking", rgb: "255, 212, 0", light: [0.42, 0.08], dark: [0.26, 0.05] },
-  breaking: { label: "Breaking", rgb: "215, 20, 26", light: [0.2, 0.04], dark: [0.32, 0.06] },
+  big_breaking: { label: "BIG Breaking", rgb: "255, 212, 0", light: [0.42, 0.08], dark: [0.26, 0.05] },
+  breaking: { label: "Breaking", rgb: "240, 110, 100", light: [0.2, 0.04], dark: [0.32, 0.06] },
 };
 
 /** Samvadia's priority as a desk tag: "breaking" is Big Breaking, "high" is Breaking, anything else none. */
@@ -130,8 +131,9 @@ export const rejectedNotice = (headline: string) => `Rejected "${headline}". ${R
 export const isRejectedNotice = (notice: string) => notice.endsWith(REJECTED_NOTICE_END);
 
 
-export function timeAgo(iso: string): string {
-  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+/** "5 min ago"; `now` lets a memoised row re-render on the list's minute tick */
+export function timeAgo(iso: string, now = Date.now()): string {
+  const mins = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60000));
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins} min ago`;
   const hours = Math.round(mins / 60);

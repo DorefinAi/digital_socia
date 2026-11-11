@@ -23,22 +23,27 @@ export interface EditorKey {
   global?: boolean;
   /** Can't be changed on the profile (Esc, the arrow groups, the standard menu keys) */
   fixed?: boolean;
-  /** The saved-keys id when it differs from `id` (phase 1's Copy & Posted shares the Post action's keys) */
+  /** The saved-keys id when it differs from `id` (phase 1's Copy & Mark Posted shares the Post action's keys) */
   bind?: string;
 }
 
-/** The desk's queue: J/K move (phase 1 also the up and down arrows), Enter or E opens, R rejects */
+/** The desk's queue: J/K move (phase 1 also the up and down arrows), Enter or E opens, R rejects, / searches, ? lists the keys */
 export const QUEUE_KEYS: EditorKey[] = [
   { id: "queue.next", label: "Next story", section: "Post", keys: ["j", "arrowdown"] },
   { id: "queue.prev", label: "Previous story", section: "Post", keys: ["k", "arrowup"] },
   { id: "queue.open", label: "Open the selected story", section: "Post", keys: ["enter", "e"] },
   { id: "queue.reject", label: "Reject the selected story", section: "Post", keys: ["r"] },
+  { id: "queue.search", label: "Search", section: "Post", keys: ["/"] },
+  { id: "queue.clear", label: "Clear the search", section: "Post", keys: ["escape"], fixed: true },
+  { id: "queue.help", label: "Show these shortcuts", section: "Help", keys: ["?"] },
 ];
 
 export const EDITOR_KEYS: EditorKey[] = [
   { id: "post.approve", label: "Post to X (as the Post button)", section: "Post", keys: ["mod+enter"], global: true },
   { id: "post.save", label: "Save draft", section: "Post", keys: ["mod+s"], global: true },
   { id: "editor.close", label: "Close the editor (asks about unsaved changes)", section: "Post", keys: ["escape"], fixed: true },
+  { id: "story.next", label: "Next story (in the queue's order; saves first)", section: "Post", keys: ["j"] },
+  { id: "story.prev", label: "Previous story (saves first)", section: "Post", keys: ["k"] },
 
   { id: "edit.undo", label: "Undo", section: "Edit", keys: ["mod+z"] },
   { id: "edit.redo", label: "Redo", section: "Edit", keys: ["mod+shift+z", "mod+y"] },
@@ -53,11 +58,11 @@ export const EDITOR_KEYS: EditorKey[] = [
 ];
 
 /**
- * Phase 1's text editor (Phase1Editor): no card canvas and no X API posting, so Ctrl+Enter is Copy & Posted
+ * Phase 1's text editor (Phase1Editor): no card canvas and no X API posting, so Ctrl+Enter is Copy & Mark Posted
  * (the one main button, as Post to X is in phase 2).
  */
 export const PHASE1_KEYS: EditorKey[] = [
-  { id: "post.copyPosted", label: "Copy & Posted (copies the post and moves it to Posted)", section: "Post", keys: ["mod+enter"], global: true, bind: "post.approve" },
+  { id: "post.copyPosted", label: "Copy & Mark Posted (copies the post and moves it to Posted)", section: "Post", keys: ["mod+enter"], global: true, bind: "post.approve" },
   { id: "post.save", label: "Save the text now (it also saves by itself)", section: "Post", keys: ["mod+s"], global: true },
   { id: "editor.close", label: "Back to the desk", section: "Post", keys: ["escape"], fixed: true },
   { id: "help.keys", label: "Show these shortcuts", section: "Help", keys: ["?"] },
@@ -76,7 +81,11 @@ function lookup(list: EditorKey[]) {
     const v = getKeyBindingState().version;
     if (v !== version) {
       map = new Map();
-      for (const k of list) for (const key of keysOf(k)) if (!map.has(key)) map.set(key, k);
+      // Keys the person set on their profile first: a default (say J for a newer action) never takes a key
+      // they already gave to something else
+      const own = (k: EditorKey) => !k.fixed && hasOverride(k.bind ?? k.id);
+      for (const k of list) if (own(k)) for (const key of keysOf(k)) if (!map.has(key)) map.set(key, k);
+      for (const k of list) if (!own(k)) for (const key of keysOf(k)) if (!map.has(key)) map.set(key, k);
       version = v;
     }
     return map.get(combo);
@@ -208,10 +217,10 @@ export interface KeyGroup {
   keys: EditorKey[];
 }
 
-/** Every action a person sees on their profile, by area. `phase1`: the Post action is Copy & Posted. */
+/** Every action a person sees on their profile, by area. `phase1`: the Post action is Copy & Mark Posted. */
 export function profileKeyGroups(phase1: boolean): KeyGroup[] {
   const post = EDITOR_KEYS.filter((k) => k.section === "Post").map((k) =>
-    k.id === "post.approve" ? { ...k, label: phase1 ? "Copy & Posted (copies the post and moves it to Posted)" : "Post to X" } : k
+    k.id === "post.approve" ? { ...k, label: phase1 ? "Copy & Mark Posted (copies the post and moves it to Posted)" : "Post to X" } : k
   );
   const editor = (section: EditorKeySection) => EDITOR_KEYS.filter((k) => k.section === section);
   return [
@@ -249,8 +258,9 @@ export function isEditorTypingTarget(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
   if (!el || !el.tagName) return false;
   if (isTextEntryTarget(el) || el.tagName === "SELECT") return true;
+  // A popover or menu over the editor (More text settings, a font list) keeps the bare keys for itself
   return !!el.closest?.(
-    '[role="slider"], [role="menu"], [role="menubar"], [role="listbox"], [role="combobox"], [role="radiogroup"], [role="tab"], [role="tablist"], [role="toolbar"], [role="spinbutton"], [role="switch"], [role="tree"], [role="grid"]'
+    '.MuiPopover-root, [role="slider"], [role="menu"], [role="menubar"], [role="listbox"], [role="combobox"], [role="radiogroup"], [role="tab"], [role="tablist"], [role="toolbar"], [role="spinbutton"], [role="switch"], [role="tree"], [role="grid"]'
   );
 }
 

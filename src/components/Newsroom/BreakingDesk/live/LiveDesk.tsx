@@ -38,6 +38,7 @@ import type {
 } from "@/lib/socia/types";
 import type { FtpMedia, FtpNewsItem, SocialPost } from "@/types/newsroom";
 import { draftCardHeadline, queueCardBody } from "../cardWords";
+import { istToday } from "../deskRules";
 
 /** A queue or feed story on the live desk: the demo shape plus the draft it came from. */
 export interface LiveNewsItem extends FtpNewsItem {
@@ -177,7 +178,7 @@ export function postToSocial(p: PublishedPost): SocialPost {
     mentions: [],
     mediaKind: "image",
     thumbUrl: fileUrl(p.cardUrl),
-    // Copy & Posted records no link
+    // Copy & Mark Posted records no link
     postUrl: p.permalink ?? "",
     postedAt: p.publishedAt,
     postedBy: p.publishedBy ?? (p.manual ? "Posted by hand" : "Socia"),
@@ -190,7 +191,7 @@ export function postToSocial(p: PublishedPost): SocialPost {
 }
 
 /**
- * A post waiting out the server's 10-second undo window, then its outcome. Phase 1's Copy & Posted
+ * A post waiting out the server's 10-second undo window, then its outcome. Phase 1's Copy & Mark Posted
  * uses the same toast (`copied`): the post is already in Posted and Undo puts it back in the queue.
  */
 export interface LivePending {
@@ -201,11 +202,11 @@ export interface LivePending {
   headline: string;
   outcome?:
     { kind: "posted"; permalink: string } | { kind: "failed"; message: string };
-  /** Copy & Posted: the server allows Undo until `undoUntil`; the toast offers it while it is shown */
+  /** Copy & Mark Posted: the server allows Undo until `undoUntil`; the toast offers it while it is shown */
   copied?: { undoUntil: string; withCard: boolean };
 }
 
-/** How long the Copy & Posted toast stays (Undo stays in the Posted tab for the server's 5 minutes) */
+/** How long the Copy & Mark Posted toast stays (Undo stays in the Posted tab for the server's 5 minutes) */
 const COPIED_TOAST_MS = 12_000;
 
 interface LiveDeskValue {
@@ -222,23 +223,27 @@ interface LiveDeskValue {
   orgCardTemplates: Polled<OrgCardTemplate[]>;
   /** The inbox, in the desk's story shape */
   queue: LiveNewsItem[];
-  /** Phase 1 (set on the server): ready posts from the breaking files, Copy & Posted, no X API posting */
+  /** Phase 1 while an earlier day is shown: today's inbox (for the new-posts pill); null otherwise */
+  todayQueue: LiveNewsItem[] | null;
+  /** Phase 1 (set on the server): ready posts from the breaking files, Copy & Mark Posted, no X API posting */
   phase1: boolean;
   /** The phase has been read from /me; until then the desk shows a loading state, not phase 2 */
   phaseKnown: boolean;
   /** Phase 1: the server-side filters the inbox and Posted views are fetched with */
   queueQuery: QueueQuery;
   setQueueQuery: (q: QueueQuery) => void;
-  /** Phase 1: drafts marked with Copy & Posted (newest first), with the same filters */
+  /** Phase 1: drafts marked with Copy & Mark Posted (newest first), with the same filters */
   postedView: Polled<QueueResponse>;
   /** Phase 1: counts for the filter menus, over the whole view */
   facets: { inbox: Polled<QueueFacets>; posted: Polled<QueueFacets> };
-  /** Copy & Posted went through: show the toast with Undo */
+  /** Copy & Mark Posted went through: show the toast with Undo */
   addCopied: (p: { draftId: string; postId: string; headline: string; undoUntil: string; withCard: boolean }) => void;
-  /** Undo a Copy & Posted from the Posted list (within the server's window). Resolves to an error sentence or null. */
+  /** Undo a Copy & Mark Posted from the Posted list (within the server's window). Resolves to an error sentence or null. */
   undoCopied: (draftId: string) => Promise<string | null>;
   /** Polls everything now; resolves to the number of stories that were not in the inbox before */
   refreshAll: () => Promise<number>;
+  /** Polls everything now (the queue's refresh icon); rejects when the queue itself could not be loaded */
+  refreshStrict: () => Promise<void>;
   pending: LivePending[];
   addPending: (p: Omit<LivePending, "id">) => void;
   undo: (id: string) => Promise<string | null>;
@@ -277,6 +282,16 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
   // Phase 1 filters on the server, so a day's ~700 files stay quick to narrow; the key refetches on change
   const [queueQuery, setQueueQuery] = useState<QueueQuery>({});
   const queryKey = phase1 ? JSON.stringify(queueQuery) : "";
+  // The day picks the inbox only; Posted is always today's
+  const postedQuery = useMemo(() => {
+    const { day: _day, ...rest } = queueQuery;
+    void _day;
+    return rest;
+  }, [queueQuery]);
+  const postedKey = phase1 ? JSON.stringify(postedQuery) : "";
+  // While an earlier day is shown, today's inbox is still watched so new arrivals can be announced
+  const todayIst = istToday();
+  const pastDay = phase1 && !!queueQuery.day && queueQuery.day !== todayIst;
 
   const inbox = usePolled(
     () => socia.fetchQueue("inbox", 200, phase1 ? queueQuery : undefined),
@@ -298,10 +313,16 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
     phaseKnown && !phase1,
   );
   const postedView = usePolled(
-    () => socia.fetchQueue("posted", 200, queueQuery),
+    () => socia.fetchQueue("posted", 200, postedQuery),
     POLL_MS.posts,
-    `posted${queryKey}`,
+    `posted${postedKey}`,
     phaseKnown && phase1,
+  );
+  const todayInbox = usePolled(
+    () => socia.fetchQueue("inbox", 200, { ...postedQuery, day: todayIst ?? undefined }),
+    POLL_MS.queue,
+    `inbox-today${postedKey}${todayIst}`,
+    phaseKnown && pastDay,
   );
   const inboxFacets = usePolled(() => socia.fetchQueueFacets("inbox"), POLL_MS.counts, "facets-inbox", phaseKnown && phase1);
   const postedFacets = usePolled(() => socia.fetchQueueFacets("posted"), POLL_MS.counts, "facets-posted", phaseKnown && phase1);
@@ -333,6 +354,8 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
     () => (inbox.data?.items ?? []).map(stableQueueToNews),
     [inbox.data],
   );
+  const todayData = pastDay ? todayInbox.data : null;
+  const todayQueue = useMemo(() => (todayData ? todayData.items.map(stableQueueToNews) : null), [todayData]);
 
   const pollers = () =>
     phase1
@@ -352,6 +375,10 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
     const fresh = await socia.fetchQueue("inbox", 200, phase1 ? queueQuery : undefined).catch(() => null);
     await Promise.all(refreshers.current.map((r) => r()));
     return fresh ? fresh.items.filter((i) => !before.has(i.id)).length : 0;
+  }, [phase1, queueQuery]);
+  const refreshStrict = useCallback(async () => {
+    await socia.fetchQueue("inbox", 1, phase1 ? queueQuery : undefined);
+    await Promise.all(refreshers.current.map((r) => r()));
   }, [phase1, queueQuery]);
   const refreshSoon = useCallback(
     () => void Promise.all(refreshers.current.map((r) => r())),
@@ -559,6 +586,7 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
       cardTemplate,
       orgCardTemplates,
       queue,
+      todayQueue,
       phase1,
       phaseKnown,
       queueQuery,
@@ -568,6 +596,7 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
       addCopied,
       undoCopied,
       refreshAll,
+      refreshStrict,
       pending,
       addPending,
       undo,
@@ -588,6 +617,7 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
       cardTemplate,
       orgCardTemplates,
       queue,
+      todayQueue,
       phase1,
       phaseKnown,
       queueQuery,
@@ -596,6 +626,7 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
       addCopied,
       undoCopied,
       refreshAll,
+      refreshStrict,
       pending,
       addPending,
       undo,

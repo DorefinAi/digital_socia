@@ -7,7 +7,7 @@ import React from "react";
 import { Box } from "@mui/material";
 import { AlertTriangle } from "lucide-react";
 import type { FileTags, NeedsCheckCode } from "@/lib/socia/types";
-import { BIG_BREAKING_YELLOW } from "../cardRender";
+import { BIG_BREAKING_YELLOW, BREAKING_PINK } from "../cardRender";
 
 const NEEDS_CHECK_LABEL: Record<string, string> = {
   empty: "Empty file",
@@ -41,10 +41,11 @@ export const needsCheckHint = (code: NeedsCheckCode) => NEEDS_CHECK_HINT[code] ?
  * and may still report "desk_note"; the desk decided not to be told about it, so that reason is never shown. */
 export const shownNeedsCheck = (codes: NeedsCheckCode[] | undefined): NeedsCheckCode[] => (codes ?? []).filter((c) => c !== "desk_note");
 
-type Tone = "big" | "update" | "warn" | "plain";
+type Tone = "big" | "breaking" | "update" | "warn" | "plain";
 
 const toneSx: Record<Tone, object> = {
   big: { backgroundColor: BIG_BREAKING_YELLOW, color: "#111", borderColor: "transparent", fontWeight: 800, letterSpacing: "0.04em" },
+  breaking: { backgroundColor: BREAKING_PINK, color: "#111", borderColor: "transparent", fontWeight: 800, letterSpacing: "0.04em" },
   update: { backgroundColor: "rgba(29, 155, 240, 0.12)", color: "#0B6BB0", borderColor: "rgba(29, 155, 240, 0.35)", fontWeight: 700 },
   warn: { backgroundColor: "rgba(237, 108, 2, 0.1)", color: "warning.dark", borderColor: "rgba(237, 108, 2, 0.35)", fontWeight: 600 },
   plain: { backgroundColor: "transparent", color: "text.secondary", borderColor: "divider", fontWeight: 600 },
@@ -72,10 +73,9 @@ interface Phase1BadgesProps {
 /** BIG, UPDATE, then each needs-check reason (never the desk note). */
 export function Phase1Badges({ tags, needsCheck }: Phase1BadgesProps) {
   const reasons = shownNeedsCheck(needsCheck);
-  if (!tags?.big && !tags?.update && !tags?.exclusive && !reasons.length) return null;
   return (
     <>
-      {tags?.big && <Badge tone="big">BIG</Badge>}
+      {tags?.big ? <Badge tone="big">BIG</Badge> : <Badge tone="breaking">BREAKING</Badge>}
       {tags?.update && <Badge tone="update">UPDATE</Badge>}
       {tags?.exclusive && <Badge tone="plain">Exclusive</Badge>}
       {reasons.map((r) => (

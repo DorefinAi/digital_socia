@@ -2,10 +2,10 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import Link from "next/link";
-import { Box, Button, Typography, TextField, InputAdornment, Snackbar, LinearProgress } from "@mui/material";
+import { Box, Button, IconButton, Tooltip, Typography, TextField, InputAdornment, Snackbar, Popover } from "@mui/material";
+import { keyframes } from "@mui/material/styles";
 import ResponsiveTabs from "@/components/Layout/ResponsiveTabs";
-import { Search, LayoutGrid, List } from "lucide-react";
+import { Search, LayoutGrid, List, Keyboard, RefreshCw } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { BreakingTag, FtpNewsItem, PostPayload, SocialPlatform } from "@/types/newsroom";
 import { usePermissions } from "@/lib/access/usePermissions";
@@ -18,28 +18,32 @@ import TemplatesPanel from "./TemplatesPanel";
 import CardBackgroundPanel from "./live/CardBackgroundPanel";
 import OrgTemplateGallery from "./live/OrgTemplateGallery";
 import UndoToast from "./UndoToast";
-import { FtpRefresh } from "./FtpStatus";
+import RejectedNews from "../RejectedNews";
 import { countMedia, QueueCards, QueueTable } from "./QueueViews";
 import NewStoriesPill from "./NewStoriesPill";
 import { CONTROL_HEIGHT, EmptyState, isRejectedNotice, PLATFORM_META, PlatformIcon, rejectedNotice, SegmentedControl, storyCategory, storyTag, TAG_TINT } from "./shared";
-import { activeFilterCount, ActiveFilterChips, type FilterFacts, matchesOtherFilters, matchesPriority, phase1Filters, QueueFiltersButton, type QueueFilterState, readQueueFilters, saveQueueFilters, sortStories, toQueueQuery } from "./QueueFilters";
+import { activeFilterCount, type FilterFacts, matchesOtherFilters, matchesPriority, phase1Filters, QueueFiltersButton, type QueueFilterState, readQueueFilters, saveQueueFilters, sortStories, toQueueQuery } from "./QueueFilters";
 import { Phase1PostedList, Phase1QueueList } from "./phase1/Phase1Queue";
 import SourceStatus from "./phase1/SourceStatus";
-import QueuePreviewPanel from "./phase1/QueuePreviewPanel";
 import * as socia from "@/lib/socia/api";
 import { stableQueueToNews } from "./live/LiveDesk";
 import { phase1RowId } from "./phase1/Phase1Queue";
-import { REJECTED_NEWS_PATH } from "@/lib/rejectedNews";
 import { readPrefill, type TrendPrefill } from "@/lib/trendPrefill";
+import { REJECTED_NEWS_PERMISSION } from "@/lib/rejectedNews";
 import { LiveSendingList } from "./DraftLists";
 import LiveEditor from "./live/LiveEditor";
 import { isLiveItem, useLiveDesk } from "./live/LiveDesk";
 import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
 import { useTabBusy } from "@/lib/browserTidy";
-import { eventKey, queueHint, queueKeyFor } from "./editorKeys";
+import { eventKey, keyLabel, keysById, QUEUE_KEYS, queueHint, queueKeyFor } from "./editorKeys";
+import { QueueShortcutsSheet } from "./EditorShortcutsSheet";
 import { useKeyBindings } from "./keyBindings";
+import { dayChipLabel, isDayKey, istDay } from "./deskRules";
+import VolumeStrip, { VOLUME_STRIP_HEIGHT } from "./VolumeStrip";
+import DayCalendar from "./DayCalendar";
 
-type ConsoleTab = "queue" | "scheduled" | "published" | "templates";
+type ConsoleTab = "queue" | "scheduled" | "published" | "rejected" | "templates";
+
 
 const VIEW_KEY = "socia_queue_view";
 
@@ -70,7 +74,7 @@ function trendToNews(p: TrendPrefill): FtpNewsItem {
   };
 }
 
-/** A priority choice: the tag's colour dot (yellow Big breaking, red Breaking), its name and count */
+/** A priority choice: the tag's colour dot (yellow BIG Breaking, pink Breaking), its name and count */
 function PriorityLabel({ value, count }: { value: "all" | BreakingTag; count?: number }) {
   return (
     <>
@@ -85,11 +89,12 @@ function PriorityLabel({ value, count }: { value: "all" | BreakingTag; count?: n
   );
 }
 
-// Phase 1 on wide screens: the list (about 63%) beside the "As it will read on X" panel; one column below lg (1200px)
-const queueGridSx = { display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", lg: "minmax(0, 63fr) minmax(0, 37fr)" }, gap: 2 } as const;
-const panelCellSx = { display: { xs: "none", lg: "block" }, minWidth: 0 } as const;
 // Arrow keys belong to these widgets (tabs, menus, segmented controls) when they hold focus
 const ARROW_OWNERS = "[role='tablist'], [role='menu'], [role='menubar'], [role='radiogroup'], [role='slider'], [role='combobox'], select";
+
+const spin = keyframes`to { transform: rotate(360deg); }`;
+// The refresh icon turns while a refresh runs; still for people who ask for less motion
+const spinSx = { animation: `${spin} 0.9s linear infinite`, "@media (prefers-reduced-motion: reduce)": { animation: "none" } } as const;
 
 const tileSx = { backgroundColor: "background.paper", borderRadius: "12px", px: 2, py: 1.5, border: "1px solid", borderColor: "divider", boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.03)" };
 
@@ -103,15 +108,17 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   // The server lets post.publish decline a draft too (Digital Team rejects on the desk)
   const canReject = canAct && (can("draft.reject") || can("post.publish"));
   const meta = PLATFORM_META[platform];
-  // Phase 1 (set on the server): breaking files as ready posts, Copy & Posted, nothing sent through the X API
+  // Phase 1 (set on the server): breaking files as ready posts, Copy & Mark Posted, nothing sent through the X API
   const p1 = !!desk?.phase1;
   const otherPlatforms = (["X (Twitter)", "Instagram", "Facebook"] as SocialPlatform[]).filter((p) => p !== platform);
 
   // ?tab=templates opens the Templates tab (the profile page links there for card backgrounds)
   const initialTab = useSearchParams().get("tab");
-  const [tabState, setTab] = useState<ConsoleTab>(() => (initialTab === "templates" || initialTab === "published" || initialTab === "scheduled" ? initialTab : "queue"));
+  const [tabState, setTab] = useState<ConsoleTab>(() => (initialTab === "templates" || initialTab === "published" || initialTab === "scheduled" || initialTab === "rejected" ? initialTab : "queue"));
   // Phase 1 has no Sending tab (nothing is sent through the X API)
-  const tab: ConsoleTab = p1 && tabState === "scheduled" ? "queue" : tabState;
+  // Rejected needs page.rejected_news (the same as the Rejected news page)
+  const canSeeRejected = can(REJECTED_NEWS_PERMISSION);
+  const tab: ConsoleTab = (p1 && tabState === "scheduled") || (tabState === "rejected" && !canSeeRejected) ? "queue" : tabState;
   // The saved view is applied after mount: the page is prerendered, and reading storage while rendering would not match the server's HTML
   const [viewMode, setViewMode] = useState<"cards" | "list">("cards");
   useEffect(() => {
@@ -128,7 +135,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const [savedFilters, setFiltersState] = useState<QueueFilterState>(readQueueFilters);
   // Phase 1 reads them through phase1Filters: priority is the All / Big breaking / Breaking tabs (an old
   // BIG-only choice becomes Big breaking) and a remembered desk code is dropped, as that filter is gone
-  const filters = p1 ? phase1Filters(savedFilters) : savedFilters;
+  const filters = useMemo(() => (p1 ? phase1Filters(savedFilters) : savedFilters), [p1, savedFilters]);
   // The clock the "received" filters read; ticks each minute so "last hour" keeps moving
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -139,13 +146,45 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     setFiltersState(next);
     saveQueueFilters(next);
   };
-  // Phase 1: district, priority (BIG or not), UPDATE and needs-check are applied by the server
-  const serverQuery = JSON.stringify(toQueueQuery(filters));
+  // Date filter (phase 1): one IST day, today by default. null = today, so the desk rolls over at midnight IST
+  // on its own; a picked day that is not a real day, or is later than today, falls back to today.
+  const [pickedDay, setDay] = useState<string | null>(null);
+  const today = istDay(now) ?? "";
+  const day = pickedDay && isDayKey(pickedDay) && pickedDay <= today ? pickedDay : today;
+  const pastDay = p1 && day !== today;
+  // Phase 1: district, priority (BIG or not), UPDATE, needs-check and the day are applied by the server
+  const serverQuery = JSON.stringify({ ...toQueueQuery(filters), ...(day ? { day } : {}) });
   const setQueueQuery = desk?.setQueueQuery;
   useEffect(() => {
     if (p1 && setQueueQuery) setQueueQuery(JSON.parse(serverQuery));
   }, [p1, serverQuery, setQueueQuery]);
   const [query, setQuery] = useState("");
+  const [dateAnchor, setDateAnchor] = useState<HTMLElement | null>(null);
+  const [notice, setNotice] = useState("");
+  // Last time the queue answered, and a manual refresh
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const inboxAnswer = desk?.inbox.data;
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (inboxAnswer) setUpdatedAt(Date.now());
+  }, [inboxAnswer]);
+  // "Updated" moves only when the queue really answered; a failed refresh says so and keeps the last time
+  const refreshStrict = desk?.refreshStrict;
+  const refreshNow = useCallback(async () => {
+    if (!refreshStrict || refreshing) return;
+    setRefreshing(true);
+    try {
+      await refreshStrict();
+      setUpdatedAt(Date.now());
+    } catch (err) {
+      setNotice(`Couldn't refresh the queue: ${err instanceof Error && err.message ? err.message : "the server didn't answer"}`);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshStrict, refreshing, setNotice]);
+  const updatedLabel = updatedAt ? `Updated ${new Date(updatedAt).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}` : "Updating";
+  const [keysOpen, setKeysOpen] = useState(false);
   // Links into the editor: ?story=<linkSlug> (readable, resolved to a draft below) or the older ?compose=<news id>
   const searchParams = useSearchParams();
   const composeId = searchParams.get("compose");
@@ -189,13 +228,6 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const [focusIndex, setFocusIndex] = useState(0);
   // Stories the operator has already seen; new arrivals wait behind the "new stories" pill so the list never moves under the cursor
   const [seenUntil, setSeenUntil] = useState(() => Date.now());
-  // Live drafts count as new from when the server made them (a story can be filed long before it is approved)
-  const stampOf = (n: FtpNewsItem) => new Date(isLiveItem(n) ? (n.live.createdAt ?? n.receivedAt) : n.receivedAt).getTime();
-  // A story without a readable time counts as seen, so it can never hold the pill (or seenUntil) open
-  const isSeen = (n: FtpNewsItem) => {
-    const t = stampOf(n);
-    return !Number.isFinite(t) || t <= seenUntil;
-  };
   // Stories just shown, highlighted for a moment: the ones stamped inside this window. A window rather than
   // a list of ids, so a Refresh highlights what its fetch brought in even though that arrives after the click.
   const [flash, setFlash] = useState<{ from: number; to: number } | null>(null);
@@ -219,47 +251,92 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
-  const [notice, setNotice] = useState("");
 
   const drafts = useMemo(() => socialDrafts.filter((d) => d.platform === platform), [socialDrafts, platform]);
-  const draftFor = (newsId: string) => drafts.find((d) => d.newsId === newsId);
-  const pendingHere = new Set(pendingPosts.filter((p) => p.payload.platform === platform && !p.post).map((p) => p.payload.newsId));
+  const draftFor = useCallback((newsId: string) => drafts.find((d) => d.newsId === newsId), [drafts]);
 
   // The queue holds every story not yet live here, not waiting to post, and not scheduled, rejected or dismissed
-  const queue: FtpNewsItem[] = desk
-    ? desk.queue.filter((n) => !desk.pending.some((p) => p.draftId === n.id && !p.outcome))
-    : ftpNews.filter((n) => {
-        const status = draftFor(n.id)?.status;
-        return !isLiveOn(socialPosts, n.id, platform) && !pendingHere.has(n.id) && (!status || status === "saved");
-      });
-  const facts: FilterFacts = {
-    media: countMedia,
-    status: (n) => {
-      if (isLiveItem(n)) return n.live.claim ? (n.live.claim.mine ? "mine" : "held") : "new";
-      return draftFor(n.id)?.status === "saved" ? "mine" : "new";
-    },
-  };
+  const deskQueue = desk?.queue;
+  const deskPending = desk?.pending;
+  const queue: FtpNewsItem[] = useMemo(() => {
+    if (deskQueue) return deskQueue.filter((n) => !deskPending?.some((p) => p.draftId === n.id && !p.outcome));
+    const pendingHere = new Set(pendingPosts.filter((p) => p.payload.platform === platform && !p.post).map((p) => p.payload.newsId));
+    return ftpNews.filter((n) => {
+      const status = draftFor(n.id)?.status;
+      return !isLiveOn(socialPosts, n.id, platform) && !pendingHere.has(n.id) && (!status || status === "saved");
+    });
+  }, [deskQueue, deskPending, ftpNews, draftFor, socialPosts, pendingPosts, platform]);
+  const facts: FilterFacts = useMemo(
+    () => ({
+      media: countMedia,
+      status: (n) => {
+        if (isLiveItem(n)) return n.live.claim ? (n.live.claim.mine ? "mine" : "held") : "new";
+        return draftFor(n.id)?.status === "saved" ? "mine" : "new";
+      },
+    }),
+    [draftFor],
+  );
   const q = query.trim().toLowerCase();
-  const matchesSearchAndFilters = (n: FtpNewsItem) => (!q || [n.headline, n.shortText, n.area, n.ftpPath, storyCategory(n) ?? "", (isLiveItem(n) && n.live.postText) || ""].some((field) => field.toLowerCase().includes(q))) && matchesOtherFilters(n, filters, facts, now, p1);
-  // Seen stories matching the search and every filter but priority; the priority switch counts within these
-  const matching = queue.filter((n) => isSeen(n) && matchesSearchAndFilters(n));
-  // New stories waiting behind the pill; only the ones the filters would show are counted
-  const unseen = queue.filter((n) => !isSeen(n));
-  const arrived = unseen.filter((n) => matchesSearchAndFilters(n) && matchesPriority(n, filters.priority));
-  // The newest waiting story's time (isSeen already counts unreadable times as seen, so this stays finite)
-  const latestUnseen = unseen.reduce((latest, n) => Math.max(latest, stampOf(n)), seenUntil);
-  const highlight: ReadonlySet<string> = new Set(
-    flash
-      ? queue.filter((n) => {
-          const t = stampOf(n);
-          return t > flash.from && t <= flash.to;
-        }).map((n) => n.id)
-      : [],
+  const matchesSearchAndFilters = useCallback(
+    (n: FtpNewsItem) =>
+      (!q || [n.headline, n.shortText, n.area, n.ftpPath, storyCategory(n) ?? "", (isLiveItem(n) && n.live.postText) || ""].some((field) => field.toLowerCase().includes(q))) &&
+      matchesOtherFilters(n, filters, facts, now, p1),
+    [q, filters, facts, now, p1],
+  );
+  // Each story's IST day, worked out once per story object (unchanged stories keep their objects across polls)
+  const [dayOf] = useState(() => new WeakMap<FtpNewsItem, string | null>());
+  const storyDay = useCallback(
+    (n: FtpNewsItem) => {
+      if (!dayOf.has(n)) dayOf.set(n, istDay(n.receivedAt));
+      return dayOf.get(n) ?? null;
+    },
+    [dayOf],
+  );
+  // Live drafts count as new from when the server made them (a story can be filed long before it is approved);
+  // a story without a readable time counts as seen, so it can never hold the pill (or seenUntil) open
+  const stampOfItem = useCallback((n: FtpNewsItem) => new Date(isLiveItem(n) ? (n.live.createdAt ?? n.receivedAt) : n.receivedAt).getTime(), []);
+  const seenBy = useCallback(
+    (n: FtpNewsItem) => {
+      const t = stampOfItem(n);
+      return !Number.isFinite(t) || t <= seenUntil;
+    },
+    [stampOfItem, seenUntil],
+  );
+  // Seen stories on the shown day matching the search and every filter but priority; the priority switch counts within these.
+  // The server already sends only that day (?day=); checking it here too keeps an older server's answer to one day.
+  const matching = useMemo(
+    () => queue.filter((n) => seenBy(n) && (!p1 || storyDay(n) === day) && matchesSearchAndFilters(n)),
+    [queue, seenBy, p1, day, storyDay, matchesSearchAndFilters],
+  );
+  // New stories waiting behind the pill: today's, also while an earlier day is shown (the desk watches today then)
+  const todayQueue = desk?.todayQueue;
+  const arrivalsFrom = useMemo(() => (pastDay ? (todayQueue ?? []) : queue), [pastDay, todayQueue, queue]);
+  const unseen = useMemo(() => arrivalsFrom.filter((n) => !seenBy(n)), [arrivalsFrom, seenBy]);
+  const arrived = useMemo(
+    () => unseen.filter((n) => (!p1 || storyDay(n) === today) && matchesSearchAndFilters(n) && matchesPriority(n, filters.priority)),
+    [unseen, p1, storyDay, today, matchesSearchAndFilters, filters.priority],
+  );
+  // The newest waiting story's time (unreadable times count as seen, so this stays finite)
+  const latestUnseen = unseen.reduce((latest, n) => Math.max(latest, stampOfItem(n)), seenUntil);
+  const highlight: ReadonlySet<string> = useMemo(
+    () =>
+      new Set(
+        flash
+          ? queue
+              .filter((n) => {
+                const t = stampOfItem(n);
+                return t > flash.from && t <= flash.to;
+              })
+              .map((n) => n.id)
+          : [],
+      ),
+    [flash, queue, stampOfItem],
   );
   /** Merges the waiting stories into the list (highlighted for a moment). */
   const mergeArrived = () => revealUntil(latestUnseen);
-  /** The pill: merge, then bring the top of the list into view. */
+  /** The pill: back to today if an earlier day is shown, merge, then bring the top of the list into view. */
   const showArrived = () => {
+    if (pastDay) setDay(null);
     mergeArrived();
     if (!listRef.current) return;
     const y = listRef.current.getBoundingClientRect().top + window.scrollY - 16;
@@ -267,16 +344,14 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   };
   // At the top and not pointing at the list: nothing moves under the operator, so merge straight away.
   // Guarded so it runs once per arrival: after it, latestUnseen equals seenUntil and nothing is waiting.
-  if (tab === "queue" && arrived.length > 0 && latestUnseen > seenUntil && atTop && !pointerInList && !composing) mergeArrived();
+  // Not while an earlier day is shown: today's arrivals wait behind the pill until the operator goes back.
+  if (tab === "queue" && !pastDay && arrived.length > 0 && latestUnseen > seenUntil && atTop && !pointerInList && !composing) mergeArrived();
   const priorityCounts = { all: matching.length, big_breaking: 0, breaking: 0 };
   for (const n of matching) {
     const t = storyTag(n);
     if (t) priorityCounts[t] += 1;
   }
-  const visible = sortStories(
-    matching.filter((n) => matchesPriority(n, filters.priority)),
-    filters.sort,
-  );
+  const visible = useMemo(() => sortStories(matching.filter((n) => matchesPriority(n, filters.priority)), filters.sort), [matching, filters.priority, filters.sort]);
   const narrowed = !!q || activeFilterCount(filters) > 0;
   // The priority tabs mirror a single-priority choice made in Filters (phase 1 has no priority in Filters)
   const quickPriority: "all" | BreakingTag | null = !filters.priority.length ? "all" : filters.priority.length === 1 && filters.priority[0] !== "normal" ? filters.priority[0] : null;
@@ -297,7 +372,6 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const publishedCount = desk ? (desk.posts.data?.items.length ?? 0) : postsHere.length;
   const cap = desk && liveCap ? liveCap.cap : DAILY_CAP[platform];
   const capUsed = desk && liveCap ? liveCap.used : publishedToday;
-  const capShare = capUsed / cap;
 
   const focused = visible[Math.min(focusIndex, visible.length - 1)];
 
@@ -324,9 +398,25 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     if (tab !== "queue" || composing || rejecting) return;
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (e.isComposing || target.closest("input, textarea, select, [contenteditable='true'], [role='dialog']")) return;
+      // Not while typing, and not behind a dialog, popover or menu (the date picker, Filters): its keys are its own
+      if (e.isComposing || target.closest("input, textarea, select, [contenteditable='true'], [role='dialog'], [role='menu'], .MuiPopover-root")) return;
+      if (document.querySelector(".MuiPopover-root, .MuiDialog-root")) return;
       const cmd = queueKeyFor(e, p1);
       if (!cmd) return;
+      if (cmd.id === "queue.search") {
+        e.preventDefault();
+        document.getElementById("desk-search")?.focus();
+        return;
+      }
+      if (cmd.id === "queue.help") {
+        e.preventDefault();
+        setKeysOpen(true);
+        return;
+      }
+      if (cmd.id === "queue.clear") {
+        setQuery("");
+        return;
+      }
       const combo = eventKey(e);
       // Enter or Space on a focused button or link (the new-stories pill, card actions) presses that control instead
       if ((combo === "enter" || combo === "space" || combo === "shift+enter") && target.closest("button, a, [role='button']")) return;
@@ -357,7 +447,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
 
 
   // Phase 1: when the editor closes, focus goes back to the queue: the story's row if it is still there,
-  // else the row now in its place (the next story after a Copy & Posted), else the list's tab
+  // else the row now in its place (the next story after a Copy & Mark Posted), else the list's tab
   const returnFocus = useRef<{ id: string; index: number } | null>(null);
   const closeEditor = () => {
     if (p1 && composing) returnFocus.current = { id: composing.id, index: Math.max(0, visible.findIndex((n) => n.id === composing.id)) };
@@ -394,17 +484,17 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const stats = p1
     ? [
         // Today's stories (IST) from the facets; the whole view on an older server, the loaded page as a last fallback
-        { label: "To post", value: inboxToday?.total ?? facetsInbox?.total ?? queue.length, tone: "text.primary" },
+        { label: "To post", value: inboxToday?.total ?? facetsInbox?.total ?? queue.length, tone: "text.secondary" },
         { label: "Needs check", value: inboxToday?.needsCheck ?? facetsInbox?.needsCheck ?? 0, tone: (inboxToday?.needsCheck ?? facetsInbox?.needsCheck ?? 0) > 0 ? "warning.main" : "text.primary" },
         { label: "Posted today", value: publishedToday, tone: "success.main" },
       ]
     : [
-        { label: "To post", value: queue.length, tone: "text.primary" },
+        { label: "To post", value: queue.length, tone: "text.secondary" },
         { label: desk ? "Sending" : "Scheduled", value: scheduledCount, tone: "text.primary" },
         { label: "Published today", value: publishedToday, tone: "success.main" },
       ];
 
-  // Phase 1 Posted tab: drafts marked with Copy & Posted, filtered like the queue
+  // Phase 1 Posted tab: drafts marked with Copy & Mark Posted, filtered like the queue
   const postedData = desk?.postedView.data;
   // Mapped once per answer; unchanged stories keep their objects, so the rows skip re-rendering
   const postedNews = useMemo(() => (p1 ? (postedData?.items ?? []).map(stableQueueToNews) : []), [p1, postedData]);
@@ -444,9 +534,6 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     if (composingId) url.searchParams.set(composingSlug ? "story" : "compose", composingSlug ?? composingId);
     if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url.href);
   }, [liveDesk, storyLink, composingId, composingSlug]);
-  // The panel beside the list (wide screens): the selected story, and who else holds it
-  const focusedHeld = focused && isLiveItem(focused) && focused.live.claim && !focused.live.claim.mine ? focused.live.claim.name : null;
-  const showPanel = p1 && !!desk?.inbox.data && visible.length > 0;
 
   // Until /me has said which phase this is, show neither desk (phase 2 must not flash on a phase 1 desk)
   if (desk && !desk.phaseKnown) {
@@ -459,19 +546,21 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 2 }}>
+      {/* Volume today: a thin strip that stays at the top while scrolling */}
+      <VolumeStrip name={meta.short} used={capUsed} cap={cap} />
       {/* Header */}
       <Box sx={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
         <Box>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <PlatformIcon platform={platform} size={16} />
             <Typography component="h1" sx={{ fontWeight: 600, fontSize: "1.125rem", letterSpacing: "-0.01em" }}>
-              {p1 ? `${meta.short} ready posts` : `${meta.short} draft console`}
+              {p1 ? "Post Draft" : `${meta.short} draft console`}
             </Typography>
           </Box>
           <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.25 }}>
             {p1
-              ? `Breaking files from the newsroom share, written as @${meta.handle} posts. Check, copy, paste into X.`
-              : `Stories tagged Breaking or Big Breaking on the FTP, ready for the @${meta.handle} template.`}
+              ? "This dashboard is linked with FTP. Click on Open, check the content and click on \"Copy & Mark Posted\"."
+              : `Stories tagged Breaking or BIG Breaking on the FTP, ready for the @${meta.handle} template.`}
           </Typography>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap", minWidth: 0 }}>
@@ -487,45 +576,41 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
             ]}
           />
           )}
-          <FtpRefresh
-            onDone={(added) => {
-              // A check the operator asked for shows everything it found straight away, highlighted
-              revealUntil(Date.now() + 1000);
-              setNotice(
-                p1
-                  ? added ? `${added} new breaking ${added === 1 ? "file" : "files"} from the share` : "Up to date. No new breaking files."
-                  : added ? `${added} new breaking ${added === 1 ? "story" : "stories"} pulled from FTP` : "Up to date. No new breaking stories.",
-              );
-            }}
-          />
+          {p1 && (
+            <Tooltip title={keysById(QUEUE_KEYS, "queue.help").length ? `Shortcuts (${keyLabel(keysById(QUEUE_KEYS, "queue.help")[0])})` : "Shortcuts"}>
+              <IconButton size="small" onClick={() => setKeysOpen(true)} aria-label="Shortcuts" sx={{ color: "text.secondary" }}>
+                <Keyboard size={16} />
+              </IconButton>
+            </Tooltip>
+          )}
+          {desk && (
+            <Tooltip title="Refresh now">
+              <Box
+                component="button"
+                type="button"
+                onClick={() => void refreshNow()}
+                aria-label={`${updatedLabel}. Refresh now`}
+                aria-busy={refreshing}
+                sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, border: 0, background: "none", p: 0.5, minHeight: 32, cursor: "pointer", color: "text.secondary", fontSize: "0.6875rem", fontFamily: "inherit", "&:hover": { color: "text.primary" }, "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", borderRadius: "4px" } }}
+              >
+                <Box component="span" aria-hidden sx={{ display: "inline-flex", ...(refreshing ? spinSx : {}) }}>
+                  <RefreshCw size={12} />
+                </Box>
+                {updatedLabel}
+              </Box>
+            </Tooltip>
+          )}
         </Box>
       </Box>
 
       {/* Today */}
-      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(3, minmax(0, 1fr))", md: "repeat(3, 1fr) 1.4fr" }, gap: 1.5 }}>
+      <Box sx={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 1.5 }}>
         {stats.map((s) => (
           <Box key={s.label} sx={tileSx}>
             <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>{s.label}</Typography>
             <Typography sx={{ fontSize: "1.375rem", fontWeight: 700, color: s.tone, fontVariantNumeric: "tabular-nums", lineHeight: 1.3 }}>{s.value}</Typography>
           </Box>
         ))}
-        <Box sx={{ ...tileSx, gridColumn: { xs: "1 / -1", md: "auto" } }}>
-          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-            <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>{meta.short} volume today</Typography>
-            <Typography sx={{ fontSize: "0.8125rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-              {capUsed} / {cap}
-            </Typography>
-          </Box>
-          <LinearProgress
-            variant="determinate"
-            value={Math.min(100, capShare * 100)}
-            color={capShare >= 0.95 ? "error" : capShare >= 0.8 ? "warning" : "success"}
-            sx={{ mt: 1, height: 6, borderRadius: 3 }}
-          />
-          <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.75 }}>
-            {platform === "Instagram" ? "Meta allows 100 API posts per 24 hours" : "Daily plan for the X desk"}
-          </Typography>
-        </Box>
       </Box>
 
       {/* Tabs + filters */}
@@ -537,14 +622,16 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
           items={
             p1
               ? [
-                  { value: "queue", label: p1Narrowed ? `New (${visible.length} shown)` : `New (${inboxToday?.total ?? facetsInbox?.total ?? queue.length})` },
-                  { value: "published", label: p1Narrowed ? `Posted today (${postedItems.length} shown)` : `Posted today (${postedTotal})` },
+                  { value: "queue", label: `New (${p1Narrowed || pastDay ? visible.length : inboxToday?.total ?? facetsInbox?.total ?? queue.length})` },
+                  { value: "published", label: `Posted today (${p1Narrowed ? postedItems.length : postedTotal})` },
+                  ...(canSeeRejected ? [{ value: "rejected" as const, label: "Rejected" }] : []),
                   { value: "templates", label: "Templates" },
                 ]
               : [
                   { value: "queue", label: narrowed ? `Queue (${visible.length} of ${queue.length})` : `Queue (${queue.length})` },
                   { value: "scheduled", label: `${desk ? "Sending" : "Scheduled"} (${scheduledCount})` },
                   { value: "published", label: `Published (${publishedCount})` },
+                  ...(canSeeRejected ? [{ value: "rejected" as const, label: "Rejected" }] : []),
                   { value: "templates", label: "Templates" },
                 ]
           }
@@ -559,10 +646,17 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
               options={(["all", "big_breaking", "breaking"] as const).map((v) => ({ value: v, label: <PriorityLabel value={v} count={tabCounts[v]} /> }))}
             />
             <TextField
-              placeholder={p1 ? "Search headline, district, post" : "Search headline, area, category"}
+              placeholder={p1 ? "Search" : "Search headline, area, category"}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                // Esc empties the search, then leaves the box
+                if (e.key !== "Escape") return;
+                if (query) setQuery("");
+                else (e.target as HTMLElement).blur();
+              }}
               size="small"
+              id="desk-search"
               slotProps={{
                 input: {
                   startAdornment: (
@@ -572,8 +666,31 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
                   ),
                 },
               }}
-              sx={{ flex: { xs: 1, sm: "none" }, minWidth: 0, width: { sm: 240 }, "& .MuiOutlinedInput-root": { borderRadius: "8px", fontSize: "0.8125rem", height: CONTROL_HEIGHT } }}
+              sx={{ flex: { xs: "1 1 160px", sm: "none" }, minWidth: 0, width: { sm: query ? 220 : 150 }, transition: "width 160ms ease", "&:focus-within": { width: { sm: 220 } }, "& .MuiOutlinedInput-root": { borderRadius: "8px", fontSize: "0.8125rem", height: CONTROL_HEIGHT } }}
             />
+            {p1 && tab === "queue" && (
+              <Box sx={{ position: "relative", flexShrink: 0 }}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={(e) => setDateAnchor(e.currentTarget)}
+                  aria-label={`${dayChipLabel(day)}, pick a day`}
+                  aria-haspopup="dialog"
+                  aria-expanded={!!dateAnchor}
+                  sx={{ height: CONTROL_HEIGHT, borderRadius: "8px", textTransform: "none", fontWeight: 600, fontSize: "0.8125rem", borderColor: "divider", color: "text.primary", whiteSpace: "nowrap", px: 1.25 }}
+                >
+                  {dayChipLabel(day)}
+                </Button>
+                <Popover open={!!dateAnchor} anchorEl={dateAnchor} onClose={() => setDateAnchor(null)} anchorOrigin={{ vertical: "bottom", horizontal: "left" }} slotProps={{ paper: { sx: { borderRadius: "10px", mt: 0.5 } } }}>
+                  <DayCalendar value={day} today={today} onPick={(d) => { setDay(d === today ? null : d); setDateAnchor(null); }} />
+                </Popover>
+              </Box>
+            )}
+            {p1 && tab === "queue" && (
+              <Button size="small" onClick={() => setDay(null)} tabIndex={pastDay ? 0 : -1} aria-hidden={!pastDay} sx={{ height: CONTROL_HEIGHT, minWidth: 56, textTransform: "none", fontWeight: 600, visibility: pastDay ? "visible" : "hidden", display: { xs: pastDay ? "inline-flex" : "none", sm: "inline-flex" } }}>
+                Today
+              </Button>
+            )}
             <QueueFiltersButton
               filters={filters}
               onChange={setFilters}
@@ -589,22 +706,30 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       {/* Queue */}
       {tab === "queue" && (
         <>
-          <ActiveFilterChips filters={filters} onChange={setFilters} live={!!desk} />
-          <Box sx={showPanel ? queueGridSx : { display: "contents" }}>
           <Box ref={listRef} onPointerEnter={() => setPointerInList(true)} onPointerLeave={() => setPointerInList(false)} sx={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-          <NewStoriesPill count={arrived.length} onShow={showArrived} top={12} />
+          <NewStoriesPill count={arrived.length} onShow={showArrived} top={VOLUME_STRIP_HEIGHT + 10} noun={p1 ? ["post", "posts"] : undefined} />
           {desk && !desk.inbox.data ? (
             desk.inbox.error ? <LoadError error={desk.inbox.error} onRetry={() => void desk.inbox.refresh()} /> : <LoadingRows rows={3} height={120} />
           ) : visible.length === 0 ? (
             <Box sx={{ py: 6, textAlign: "center", border: "1px dashed", borderColor: "divider", borderRadius: "12px" }}>
               <Typography sx={{ fontSize: "0.9375rem", fontWeight: 600 }}>
-                {p1 ? (queue.length === 0 && activeFilterCount(filters) === 0 ? "Nothing waiting to post" : "No posts match these filters") : queue.length === 0 ? "All drafts cleared" : "No stories match these filters"}
+                {p1
+                  ? p1Narrowed
+                    ? "No posts match these filters"
+                    : pastDay
+                      ? `No stories waiting from ${dayChipLabel(day)}`
+                      : "Nothing waiting to post"
+                  : queue.length === 0
+                    ? "All drafts cleared"
+                    : "No stories match these filters"}
               </Typography>
               <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", mt: 0.5 }}>
                 {p1
-                  ? queue.length === 0 && activeFilterCount(filters) === 0
-                    ? "New breaking files show up here within seconds of landing on the share."
-                    : "Clear the search or the filters to see more."
+                  ? p1Narrowed
+                    ? "Clear the search or the filters to see more."
+                    : pastDay
+                      ? "Pick another day, or press Today."
+                      : "New breaking files show up here within seconds of landing on the share."
                   : queue.length === 0
                     ? "New breaking stories appear here as the FTP is checked automatically."
                     : "Clear the search or the filters to see more."}
@@ -632,15 +757,9 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
                     }
                   : {}),
               };
-              if (p1) return <Phase1QueueList {...props} highlightIds={highlight} />;
+              if (p1) return <Phase1QueueList {...props} highlightIds={highlight} now={now} />;
               return viewMode === "list" ? <QueueTable {...props} highlightIds={highlight} /> : <QueueCards {...props} highlightIds={highlight} />;
             })()
-          )}
-          </Box>
-          {showPanel && (
-            <Box sx={panelCellSx}>
-              <QueuePreviewPanel item={focused} held={focusedHeld} canAct={canAct} canReject={canReject} onOpen={setComposing} onReject={setRejecting} org={desk?.orgCardTemplates.data} own={desk?.cardTemplate.data?.template} />
-            </Box>
           )}
           </Box>
           <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", display: { xs: "none", md: "block" } }}>
@@ -652,19 +771,19 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       {tab === "scheduled" && (desk ? <LiveSendingList /> : <ScheduledList platform={platform} onEdit={openStory} />)}
       {tab === "published" && p1 && desk && (
         <>
-          <ActiveFilterChips filters={filters} onChange={setFilters} live />
           {!desk.postedView.data ? (
             desk.postedView.error ? <LoadError error={desk.postedView.error} onRetry={() => void desk.postedView.refresh()} /> : <LoadingRows rows={3} height={96} />
           ) : postedItems.length === 0 ? (
             <EmptyState
               title={p1Narrowed ? "No posts match these filters" : "Nothing posted today yet"}
-              hint={p1Narrowed ? "Clear the search or the filters to see more." : "Today's posts land here when someone presses Copy & Posted."}
+              hint={p1Narrowed ? "Clear the search or the filters to see more." : "Today's posts land here when someone presses Copy & Mark Posted."}
             />
           ) : (
             <Phase1PostedList items={sortStories(postedItems, filters.sort)} onNotice={setNotice} />
           )}
         </>
       )}
+      {tab === "rejected" && <RejectedNews platform={platform} />}
       {tab === "published" && !p1 && <PostedPostsList platform={platform} allowRecall emptyHint={`No posts on ${meta.short} yet. Approved stories land here with their link.`} />}
       {tab === "templates" &&
         (desk ? (
@@ -679,9 +798,9 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
 
       {composing &&
         (desk ? (
-          <LiveEditor item={composing} platform={platform} onClose={closeEditor} onSwitch={setComposing} onSaved={setNotice} onLinkSlug={onLinkSlug} />
+          <LiveEditor queueOrder={visible} item={composing} platform={platform} onClose={closeEditor} onSwitch={setComposing} onSaved={setNotice} onLinkSlug={onLinkSlug} />
         ) : (
-          <PostEditor item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />
+          <PostEditor queueOrder={visible} item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />
         ))}
       {rejecting && (
         <RejectDialog
@@ -703,16 +822,18 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
         />
       )}
 
-      <UndoToast />
+      <QueueShortcutsSheet open={keysOpen} onClose={() => setKeysOpen(false)} phase1={p1} />
+
+      <UndoToast keyboardUndo={!composing} />
       <Snackbar
         open={!!notice}
         autoHideDuration={isRejectedNotice(notice) ? 6000 : 3500}
         onClose={() => setNotice("")}
         message={notice}
         action={
-          isRejectedNotice(notice) ? (
-            <Button component={Link} href={REJECTED_NEWS_PATH} size="small" sx={{ color: "inherit", fontWeight: 700, textDecoration: "underline" }}>
-              Open News - Desk Rejected
+          isRejectedNotice(notice) && canSeeRejected ? (
+            <Button onClick={() => { setNotice(""); setTab("rejected"); }} size="small" sx={{ color: "inherit", fontWeight: 700, textDecoration: "underline" }}>
+              Open Rejected
             </Button>
           ) : undefined
         }

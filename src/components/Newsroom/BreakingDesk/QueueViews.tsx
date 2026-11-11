@@ -39,6 +39,8 @@ export interface QueueViewProps {
   savedLabel?: string;
   /** Stories just shown from the "new stories" pill; they get a brief highlight */
   highlightIds?: ReadonlySet<string>;
+  /** The list's clock, moved once a minute, so "x min ago" and the age dot keep up inside memoised rows */
+  now?: number;
 }
 
 export const countMedia = (item: FtpNewsItem) => {

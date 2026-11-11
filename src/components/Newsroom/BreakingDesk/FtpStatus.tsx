@@ -25,43 +25,6 @@ async function ingestOrNull(): Promise<IngestStatus | null> {
 
 const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
-/** Checks the FTP for new stories on demand; the automatic checks keep running in the background. */
-export function FtpRefresh({ onDone }: { onDone?: (added: number) => void }) {
-  const { fetchFtpNews } = useNewsroom();
-  const desk = useLiveDesk();
-  const [checking, setChecking] = useState(false);
-
-  const refresh = () => {
-    setChecking(true);
-    // Live: the backend's worker reads the FTP and Samvadia; this asks the server for what it has now
-    if (desk) {
-      void desk.refreshAll().then((added) => {
-        setChecking(false);
-        onDone?.(added);
-      });
-      return;
-    }
-    // Brief delay stands in for the FTP round-trip
-    setTimeout(() => {
-      const added = fetchFtpNews();
-      setChecking(false);
-      onDone?.(added);
-    }, 600);
-  };
-
-  return (
-    <Button
-      variant="outlined"
-      onClick={refresh}
-      disabled={checking}
-      startIcon={checking ? <CircularProgress size={14} color="inherit" /> : <RefreshCw size={14} />}
-      sx={{ height: 36, flexShrink: 0, fontWeight: 600, borderColor: "divider", color: "text.primary", whiteSpace: "nowrap" }}
-    >
-      {checking ? "Refreshing" : "Refresh"}
-    </Button>
-  );
-}
-
 /** Shows that the FTP is being checked automatically, when it last ran, and what recent checks brought in. */
 export default function FtpStatus({ onManualFetch, compact }: { onManualFetch?: (added: number) => void; compact?: boolean }) {
   const { ftpSyncedAt, ftpFetchLog, fetchFtpNews, nextFetchAt } = useNewsroom();

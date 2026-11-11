@@ -42,7 +42,7 @@ export interface Me {
   catalogue?: { key: string; group: string; label: string; description: string }[];
   /** Optional: who to ask for access, when the server says */
   adminName?: string | null;
-  /** phase1-contract.md §0: 1 = files to ready posts with Copy & Posted; absent or 2 = everything as before */
+  /** phase1-contract.md §0: 1 = files to ready posts with Copy & Mark Posted; absent or 2 = everything as before */
   phase?: SociaPhase;
   /** phase1-contract.md §0 */
   features?: SociaFeatures;
@@ -83,6 +83,8 @@ export interface QueueQuery {
   /** Desk/shift code from the file name (NDR, VKS, ...) */
   desk?: string;
   needsCheck?: boolean;
+  /** Inbox only: one IST day "YYYY-MM-DD" (today or earlier; 400 bad_day otherwise). Absent: the newest stories. */
+  day?: string;
 }
 
 /** What the breaking file's name said (phase1-contract.md §1); null for non-breaking stories */
@@ -106,11 +108,11 @@ export type NeedsCheckCode = "empty" | "no_hindi" | "very_long" | "no_district" 
 
 export type CardState = "none" | "rendering" | "ready" | "failed";
 
-/** A draft marked posted with Copy & Posted */
+/** A draft marked posted with Copy & Mark Posted */
 export interface PostedMark {
   at: string;
   by: { id: string; name: string };
-  /** Copy & Posted can be undone until then (5 minutes) */
+  /** Copy & Mark Posted can be undone until then (5 minutes) */
   undoUntil: string;
 }
 
@@ -388,7 +390,7 @@ export interface DraftView {
     needsCheck?: NeedsCheckCode[];
     updateOfDraftId?: string | null;
   };
-  /** phase 1: set once Copy & Posted marked it */
+  /** phase 1: set once Copy & Mark Posted marked it */
   posted?: PostedMark | null;
   /** new */
   media?: DraftMedia[];
@@ -439,7 +441,7 @@ export interface PublishedPost {
   draftId: string;
   platform: string;
   text: string;
-  /** null for a post marked with Copy & Posted (no link asked) */
+  /** null for a post marked with Copy & Mark Posted (no link asked) */
   permalink: string | null;
   publishedAt: string;
   publishedBy: string | null;
@@ -454,7 +456,7 @@ export interface PublishedPost {
   slug?: string;
   /** v1.1: recorded by hand with "Save as posted" */
   manual?: boolean;
-  /** phase 1: marked with Copy & Posted */
+  /** phase 1: marked with Copy & Mark Posted */
   copied?: boolean;
 }
 

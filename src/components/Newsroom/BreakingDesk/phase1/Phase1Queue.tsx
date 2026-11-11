@@ -1,7 +1,8 @@
 "use client";
 
-// Phase 1's queue and Posted list: text-first rows (most posts have no picture), each showing the ready post
-// as X will read it, with the file's badges. Rows are plain and light so a day of ~700 files stays quick.
+// Phase 1's queue and Posted list: text-first rows (most posts have no picture). Queue rows show the headline
+// with the file's badges, district, time and an age dot; the post itself is read in the studio. Rows are plain
+// and light so a day of ~700 files stays quick.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, IconButton, Tooltip, Typography } from "@mui/material";
@@ -17,6 +18,9 @@ import { timeAgo } from "../shared";
 import { X_LIMIT } from "../socialText";
 import { XRichText, X_COLORS } from "./XPostPreview";
 import { Badge, Phase1Badges } from "./badges";
+import { ageTone } from "../deskRules";
+
+const AGE_COLOR = { fresh: "success.main", recent: "warning.main", old: "text.disabled" } as const;
 
 const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
 
@@ -35,7 +39,7 @@ function RowMeta({ live }: { live: QueueItem }) {
   );
 }
 
-/** The ready post, clamped to three lines, in X's colours */
+/** The post as it went out (Posted list), clamped to three lines, in X's colours */
 function PostText({ text, length }: { text: string; length?: number }) {
   const over = typeof length === "number" && length > X_LIMIT;
   return (
@@ -57,9 +61,9 @@ function PostText({ text, length }: { text: string; length?: number }) {
 const rowFocusedSx = { ...rowSx, backgroundColor: "action.selected", boxShadow: "inset 3px 0 0 0 currentColor" } as const;
 const rowIdleSx = { ...rowSx, "&:hover": { backgroundColor: "action.hover" } } as const;
 // Off-screen rows skip layout and paint until scrolled near (a day can hold hundreds)
-const lazyRowSx = { contentVisibility: "auto", containIntrinsicSize: "auto 150px" } as const;
-const rejectSx = { width: { xs: 40, md: 34 }, height: { xs: 40, md: 34 }, borderRadius: "8px", color: "text.secondary", "&:hover": { color: "error.main" } } as const;
-const openSx = { minHeight: { xs: 40, md: 34 }, borderRadius: "8px", textTransform: "none", fontSize: "0.8125rem", fontWeight: 600, whiteSpace: "nowrap", boxShadow: "none" } as const;
+const lazyRowSx = { contentVisibility: "auto", containIntrinsicSize: "auto 76px" } as const;
+const rejectSx = { width: { xs: 40, md: 34 }, height: { xs: 40, md: 34 }, borderRadius: "8px", color: "error.main", "&:hover": { backgroundColor: "rgba(211, 47, 47, 0.08)" } } as const;
+const openSx = { minHeight: { xs: 40, md: 34 }, borderRadius: "8px", textTransform: "none", fontSize: "0.8125rem", fontWeight: 600, whiteSpace: "nowrap", boxShadow: "none", "&.MuiButton-contained": { backgroundColor: "text.primary", color: "background.paper", "&:hover": { backgroundColor: "text.primary", opacity: 0.88 } } } as const;
 
 /** The DOM id of a queue row, so the desk can return focus to it after the editor closes */
 export const phase1RowId = (id: string) => `p1-row-${id}`;
@@ -72,13 +76,15 @@ interface RowProps {
   canAct: boolean;
   canReject: boolean;
   highlighted: boolean;
+  /** The list's minute clock (see QueueViewProps.now) */
+  now?: number;
   onFocusId: (id: string) => void;
   onOpen: (item: FtpNewsItem) => void;
   onReject: (item: FtpNewsItem) => void;
 }
 
 /** One ready post. Memoised: a poll that changes nothing about this story doesn't re-render it. */
-const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, canReject, highlighted, onFocusId, onOpen, onReject }: RowProps) {
+const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, canReject, highlighted, now, onFocusId, onOpen, onReject }: RowProps) {
   const live = isLiveItem(item) ? item.live : null;
   return (
     <Box
@@ -93,8 +99,11 @@ const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, can
       sx={[focused ? rowFocusedSx : rowIdleSx, lazyRowSx, highlighted ? freshHighlightSx : {}, { "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: -2 } }]}
     >
       <Box sx={{ display: { xs: "none", md: "block" }, pt: 0.25 }}>
-        <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{clock(item.receivedAt)}</Typography>
-        <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary" }}>{timeAgo(item.receivedAt)}</Typography>
+        <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, fontVariantNumeric: "tabular-nums", display: "flex", alignItems: "center", gap: 0.5 }}>
+          <Box component="span" aria-hidden sx={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, backgroundColor: AGE_COLOR[ageTone(item.receivedAt, now)] }} />
+          {clock(item.receivedAt)}
+        </Typography>
+        <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary" }}>{timeAgo(item.receivedAt, now)}</Typography>
       </Box>
       <Box sx={{ minWidth: 0 }}>
         {live && <RowMeta live={live} />}
@@ -104,9 +113,13 @@ const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, can
           </Box>
           {item.headline || "No headline"}
         </Typography>
-        {live?.postText && <PostText text={live.postText} length={live.length} />}
+        {held && (
+          <Tooltip title={`${held} is working on this story`}>
+            <Box component="span" sx={{ display: "inline-flex", mt: 0.5, px: 0.75, py: 0.125, borderRadius: "4px", fontSize: "0.6875rem", fontWeight: 600, backgroundColor: "action.selected", color: "text.secondary" }}>In Progress</Box>
+          </Tooltip>
+        )}
       </Box>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, justifyContent: { xs: "flex-start", md: "flex-end" } }} onClick={(e) => e.stopPropagation()}>
+      <Box sx={{ gridColumn: { xs: 1, md: "auto" }, display: "flex", alignItems: "center", gap: 0.5, justifyContent: { xs: "flex-start", md: "flex-end" } }} onClick={(e) => e.stopPropagation()}>
         {canReject && !held && (
           <Tooltip title="Reject (R)">
             <IconButton size="small" aria-label={`Reject ${item.headline}`} onClick={() => onReject(item)} sx={rejectSx}>
@@ -127,7 +140,7 @@ const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, can
 });
 
 /** Phase 1 queue: one row per ready post, a listbox whose selection the preview panel shows. Same props as the cards and table, so J/K/Enter/R keep working. */
-export function Phase1QueueList({ items, focusedId, onFocus, onOpen, onReject, canAct, canReject = canAct, heldBy, highlightIds }: QueueViewProps) {
+export function Phase1QueueList({ items, focusedId, onFocus, onOpen, onReject, canAct, canReject = canAct, heldBy, highlightIds, now }: QueueViewProps) {
   // Rows report focus by id; the desk keeps an index. Read through refs so the callback never changes.
   const latest = useRef({ items, onFocus });
   useEffect(() => {
@@ -149,6 +162,7 @@ export function Phase1QueueList({ items, focusedId, onFocus, onOpen, onReject, c
           canAct={canAct}
           canReject={canReject}
           highlighted={!!highlightIds?.has(item.id)}
+          now={now}
           onFocusId={onFocusId}
           onOpen={onOpen}
           onReject={onReject}
@@ -164,7 +178,7 @@ const previewSx = { minHeight: 44, minWidth: 44, borderRadius: "8px", textTransf
  * What the preview shows for a Posted row, best source first: the post record the queue row carries
  * (`posted.text`, exactly what went out, with its card and link); from an older server without it, the matching
  * record among the desk's loaded GET /posts; failing that, the draft's own postText and card, which is what
- * Copy & Posted recorded unless the draft changed afterwards.
+ * Copy & Mark Posted recorded unless the draft changed afterwards.
  */
 function postedPreview(item: FtpNewsItem, live: QueueItem | null, loaded: PublishedPost | undefined): SocialPost {
   const posted = live?.posted;
@@ -204,7 +218,7 @@ function postedPreview(item: FtpNewsItem, live: QueueItem | null, loaded: Publis
   };
 }
 
-/** Phase 1 Posted tab: posts marked with Copy & Posted, newest first, with Undo inside the server's window. */
+/** Phase 1 Posted tab: posts marked with Copy & Mark Posted, newest first, with Undo inside the server's window. */
 export function Phase1PostedList({ items, onNotice }: { items: FtpNewsItem[]; onNotice: (message: string) => void }) {
   const desk = useLiveDesk();
   const { can } = usePermissions();

@@ -154,8 +154,10 @@ const LeftNavigation: React.FC = () => {
   const studioItems = AI_CONTENT_PLATFORMS.filter((p) => can(postStudioKey(p.platformKey)) && showsPlatform(p.platformKey)).map((p) => ({ label: p.label, icon: p.icon(16), platformKey: p.platformKey, path: p.path }));
   const canManageAccess = can("page.settings") && canAny(["roles.manage", "users.manage"]);
 
+  // Rejected news is a tab on the X desk now; the side menu keeps it only for people who can't open that desk
+  const rejectedOnly = can(REJECTED_NEWS_PERMISSION) && !studioItems.some((p) => p.platformKey === "X");
   const navItems = [
-    { label: REJECTED_NEWS_LABEL, icon: <Archive size={20} />, path: REJECTED_NEWS_PATH, accessible: can(REJECTED_NEWS_PERMISSION) },
+    ...(rejectedOnly ? [{ label: REJECTED_NEWS_LABEL, icon: <Archive size={20} />, path: REJECTED_NEWS_PATH, accessible: true }] : []),
     { label: "Digital Dashboard", icon: <BarChart3 size={20} />, path: "/digital", accessible: can("page.dashboard") },
     { label: "Web Scraper", icon: <Globe size={20} />, path: "/web-scraper", accessible: can("page.web_scraper") },
     {

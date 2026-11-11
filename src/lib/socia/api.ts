@@ -41,6 +41,7 @@ export function fetchQueue(view: QueueView, limit = 100, query?: QueueQuery) {
   if (query?.big !== undefined) params.set("big", String(query.big));
   if (query?.update !== undefined) params.set("update", String(query.update));
   if (query?.needsCheck !== undefined) params.set("needsCheck", String(query.needsCheck));
+  if (query?.day) params.set("day", query.day);
   return api<QueueResponse>("GET", `/x/queue?${params}`);
 }
 /** Counts for the queue filters over the whole view (phase 1) */
@@ -74,7 +75,7 @@ export const resetCard = (id: string, version: number) => api<DraftView>("DELETE
 /** Records a post the operator made by hand on X, with its link. */
 export const markPosted = (id: string, version: number, permalink: string) =>
   api<{ postId: string; permalink: string }>("POST", `/drafts/${enc(id)}/mark-posted`, { version, permalink });
-/** Copy & Posted: the browser has copied the post text; this moves the draft to Posted (no link). */
+/** Copy & Mark Posted: the browser has copied the post text; this moves the draft to Posted (no link). */
 export const copyPosted = (id: string, version: number) => api<CopyPostedResult>("POST", `/drafts/${enc(id)}/copy-posted`, { version });
 /** Within `undoUntil`: back to the queue */
 export const undoCopyPosted = (id: string) => api<DraftView>("POST", `/drafts/${enc(id)}/copy-posted/undo`);
