@@ -10,11 +10,13 @@ import { usePermissions } from "@/lib/access/usePermissions";
 import { usePhase, type PhaseInfo } from "@/lib/socia/usePhase";
 import { useSociaSession } from "@/providers/SociaSessionProvider";
 
-/** Pages the server's phase 1 switches off (kept in the code, hidden): Video Studio and the non-X desks. */
+/** Pages the server's phase 1 switches off (kept in the code, hidden): Video Studio and the non-X desks (Templates follows X). */
 function hiddenInPhase(pathname: string, phase: PhaseInfo): boolean {
   if (!phase.phase1) return false;
   if (pathname === "/video-studio" || pathname.startsWith("/video-studio/")) return true;
   const desk = pathname.match(/^\/ai-content\/([^/]+)/)?.[1];
+  // Post Studio → Templates is not a desk: it holds the X templates, so it is on whenever the X desk is
+  if (desk === "templates") return !phase.showsPlatform("x");
   return !!desk && !phase.showsPlatform(desk);
 }
 

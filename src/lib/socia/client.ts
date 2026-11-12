@@ -34,7 +34,12 @@ export function onSignedOut(listener: SignedOutListener): () => void {
 
 const MUTATING = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 
-async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
+/** Per-request options: `signal` cancels the request (an aborted request rejects with the signal's reason) */
+export interface RequestOptions {
+  signal?: AbortSignal;
+}
+
+async function send<T>(method: string, path: string, body?: unknown, options?: RequestOptions): Promise<T> {
   const headers: Record<string, string> = {};
   // A Blob goes up as raw bytes with its own type (the card PNG); anything else as JSON
   const raw = typeof Blob !== "undefined" && body instanceof Blob;
@@ -49,8 +54,11 @@ async function send<T>(method: string, path: string, body?: unknown): Promise<T>
       credentials: "include",
       cache: "no-store",
       body: body === undefined ? undefined : raw ? (body as Blob) : JSON.stringify(body),
+      signal: options?.signal,
     });
-  } catch {
+  } catch (err) {
+    // Cancelled on purpose: not an outage, and the caller drops the answer
+    if (options?.signal?.aborted) throw err;
     throw new ApiError(0, "offline", "Can't reach the Socia server. Check that it is running, then try again.");
   }
 
@@ -80,14 +88,14 @@ async function send<T>(method: string, path: string, body?: unknown): Promise<T>
  * One request with the two recoveries every screen needs: a stale CSRF token is refreshed from /me
  * and the request retried once; a lost session tells the listeners so the app can sign in again.
  */
-export async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function api<T>(method: string, path: string, body?: unknown, options?: RequestOptions): Promise<T> {
   try {
-    return await send<T>(method, path, body);
+    return await send<T>(method, path, body, options);
   } catch (err) {
     if (err instanceof ApiError && err.code === "csrf" && path !== "/me") {
       const me = await send<{ csrfToken: string }>("GET", "/me");
       setCsrfToken(me.csrfToken);
-      return send<T>(method, path, body);
+      return send<T>(method, path, body, options);
     }
     if (err instanceof ApiError && err.code === "signed_out" && path !== "/me") {
       signedOutListeners.forEach((l) => l());

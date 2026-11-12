@@ -68,17 +68,27 @@ interface Phase1BadgesProps {
   needsCheck?: NeedsCheckCode[];
   /** Ignored: the desk-note reason is not shown (kept so older callers still compile) */
   deskNoteRemoved?: boolean;
+  /** false leaves the needs-check reasons out (the queue row shows them beside Reject, with NeedsCheckBadges) */
+  showReasons?: boolean;
 }
 
 /** BIG, UPDATE, then each needs-check reason (never the desk note). */
-export function Phase1Badges({ tags, needsCheck }: Phase1BadgesProps) {
-  const reasons = shownNeedsCheck(needsCheck);
+export function Phase1Badges({ tags, needsCheck, showReasons = true }: Phase1BadgesProps) {
   return (
     <>
       {tags?.big ? <Badge tone="big">BIG</Badge> : <Badge tone="breaking">BREAKING</Badge>}
       {tags?.update && <Badge tone="update">UPDATE</Badge>}
       {tags?.exclusive && <Badge tone="plain">Exclusive</Badge>}
-      {reasons.map((r) => (
+      {showReasons && <NeedsCheckBadges needsCheck={needsCheck} />}
+    </>
+  );
+}
+
+/** Only the needs-check reasons (No district, Needs check, ...), each in the warn tag; never the desk note */
+export function NeedsCheckBadges({ needsCheck }: { needsCheck?: NeedsCheckCode[] }) {
+  return (
+    <>
+      {shownNeedsCheck(needsCheck).map((r) => (
         <Badge key={r} tone="warn" title={needsCheckHint(r) ?? undefined}>
           <AlertTriangle size={11} aria-hidden />
           {needsCheckLabel(r)}

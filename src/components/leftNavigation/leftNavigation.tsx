@@ -24,6 +24,7 @@ import {
   ChevronsRight,
   Globe,
   ShieldCheck,
+  LayoutTemplate,
 } from "lucide-react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { REJECTED_NEWS_LABEL, REJECTED_NEWS_PATH, REJECTED_NEWS_PERMISSION } from "@/lib/rejectedNews";
@@ -166,7 +167,10 @@ const LeftNavigation: React.FC = () => {
       path: "/ai-content",
       accessible: studioItems.length > 0,
       hasSubmenu: true,
-      subItems: studioItems,
+      // Templates sits last, for anyone who may open the X desk (it holds the X templates)
+      subItems: studioItems.some((p) => p.platformKey === "X")
+        ? [...studioItems, { label: "Templates", icon: <LayoutTemplate size={16} />, platformKey: "templates", path: "/ai-content/templates" }]
+        : studioItems,
     },
     // Admin-only: hidden rather than shown locked, since most people never need it
     ...(canManageAccess ? [{ label: "Access", icon: <ShieldCheck size={20} />, path: "/settings/access", accessible: true }] : []),

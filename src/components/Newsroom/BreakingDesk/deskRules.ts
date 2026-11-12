@@ -71,3 +71,28 @@ export function storyAfterPosted<T extends { id: string }>(stories: readonly T[]
 export function workableOrder<T extends { id: string }>(stories: readonly T[], currentId: string, skip: (story: T) => boolean): T[] {
   return stories.filter((story) => story.id === currentId || !skip(story));
 }
+
+/** All / BIG Breaking / Breaking over `stories`: a story without a BIG / Breaking tag counts in All only. */
+export function priorityCounts<T>(stories: readonly T[], tag: (story: T) => "big_breaking" | "breaking" | null | undefined): { all: number; big_breaking: number; breaking: number } {
+  const counts = { all: 0, big_breaking: 0, breaking: 0 };
+  for (const story of stories) {
+    counts.all += 1;
+    const t = tag(story);
+    if (t) counts[t] += 1;
+  }
+  return counts;
+}
+
+/**
+ * All / BIG Breaking / Breaking for the date box's day (today, or the picked earlier day): only stories whose
+ * IST day is `day` count, so the numbers are that day's, not every day still waiting. The priority switch,
+ * the search and the other filters narrow the list, never these numbers.
+ */
+export function dayPriorityCounts<T>(
+  stories: readonly T[],
+  day: string,
+  dayOf: (story: T) => string | null,
+  tag: (story: T) => "big_breaking" | "breaking" | null | undefined,
+): { all: number; big_breaking: number; breaking: number } {
+  return priorityCounts(stories.filter((story) => dayOf(story) === day), tag);
+}

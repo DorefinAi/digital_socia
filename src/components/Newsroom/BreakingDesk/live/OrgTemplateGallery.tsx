@@ -1,6 +1,6 @@
 "use client";
 
-// Templates tab, live desk: the desk's shared X card templates (GET /card-templates) as a grid. Anyone who
+// Post Studio → Templates (X tab), live desk: the desk's shared X card templates (GET /card-templates) as a grid. Anyone who
 // edits drafts uploads; the uploader or an admin renames one or moves its text area (the "⋮" menu); only an
 // admin sets the defaults per story tag or deletes. The server says what each user may do per template
 // (canEdit / canSetDefault / canDelete), the same flags the editor's picker reads.

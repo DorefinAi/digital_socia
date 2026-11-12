@@ -137,7 +137,7 @@ export default function BasicDetails({
       </DetailRow>
       {showCardLink && (
         <DetailRow label="Card backgrounds">
-          <Button component={Link} href="/ai-content/x?tab=templates" size="small" startIcon={<ImageIcon size={15} />} sx={{ px: 0.75, ml: -0.75, color: "text.primary" }}>
+          <Button component={Link} href="/ai-content/templates" size="small" startIcon={<ImageIcon size={15} />} sx={{ px: 0.75, ml: -0.75, color: "text.primary" }}>
             Manage your card backgrounds
           </Button>
         </DetailRow>

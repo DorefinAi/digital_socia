@@ -153,6 +153,8 @@ export const ROUTE_ACCESS: { prefix: string; any: string[]; title: string }[] = 
   { prefix: "/rejected-news", any: ["page.rejected_news"], title: "News - Desk Rejected" },
   { prefix: "/ai-content", any: POST_STUDIO_PAGES, title: "Post Studio" },
   { prefix: "/ai-content/x", any: ["page.post_studio.x"], title: "Post Studio: X" },
+  // Post Studio → Templates holds the X desk's templates, so it follows the X desk's rule
+  { prefix: "/ai-content/templates", any: ["page.post_studio.x"], title: "Post Studio: Templates" },
   { prefix: "/ai-content/instagram", any: ["page.post_studio.instagram"], title: "Post Studio: Instagram" },
   { prefix: "/ai-content/facebook", any: ["page.post_studio.facebook"], title: "Post Studio: Facebook" },
   { prefix: "/ai-content/youtube", any: ["page.post_studio.youtube"], title: "Post Studio: YouTube" },

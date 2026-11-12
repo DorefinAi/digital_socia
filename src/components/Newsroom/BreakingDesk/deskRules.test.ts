@@ -3,7 +3,7 @@
 //   node --import ./src/components/Newsroom/BreakingDesk/video/timeline/__checks__/resolve-ts.mjs --test src/components/Newsroom/BreakingDesk/deskRules.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { adjacentStory, ageTone, counterTone, dayChipLabel, dayKey, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
+import { adjacentStory, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
 
 const now = Date.parse("2026-11-11T07:13:00Z");
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -97,4 +97,25 @@ test("prev / next and the story after posting step over stories someone else hol
   // The open story stays in the order even if it reads as held
   assert.equal(adjacentStory(workableOrder(order, "held", held), "held", 1)?.id, "b");
   assert.equal(storyAfterPosted(workableOrder([{ id: "a" }, { id: "held" }], "a", held), "a"), undefined);
+});
+
+test("All / BIG Breaking / Breaking count the chosen day only, and BIG + Breaking = All", () => {
+  const today = istDay(now) ?? "";
+  const yesterday = istDay(now - 86_400_000) ?? "";
+  const stories = [
+    { at: ago(60_000), big: true },
+    { at: ago(120_000), big: false },
+    { at: ago(180_000), big: false },
+    { at: ago(86_400_000), big: false },
+    // Late last night in India: yesterday's, though it is the same UTC day as `now`
+    { at: "2026-11-10T18:00:00Z", big: true },
+    { at: "not a time", big: true },
+  ];
+  const count = (day: string) => dayPriorityCounts(stories, day, (s) => istDay(s.at), (s) => (s.big ? "big_breaking" : "breaking"));
+  assert.deepEqual(count(today), { all: 3, big_breaking: 1, breaking: 2 });
+  assert.deepEqual(count(yesterday), { all: 2, big_breaking: 1, breaking: 1 });
+  assert.deepEqual(count("2026-01-01"), { all: 0, big_breaking: 0, breaking: 0 });
+  for (const day of [today, yesterday]) assert.equal(count(day).big_breaking + count(day).breaking, count(day).all);
+  // An untagged story counts in All only
+  assert.deepEqual(dayPriorityCounts([{ at: ago(0) }], today, (s) => istDay(s.at), () => null), { all: 1, big_breaking: 0, breaking: 0 });
 });

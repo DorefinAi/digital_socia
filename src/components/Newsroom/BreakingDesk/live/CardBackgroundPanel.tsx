@@ -1,6 +1,6 @@
 "use client";
 
-// Templates tab, live desk: the operator's own X card background. One per user per platform, kept on
+// Post Studio → Templates (X tab), live desk: the operator's own X card background. One per user per platform, kept on
 // the server until they replace or remove it. The editor draws every X card on it (backgroundCard.ts).
 
 import React, { useRef, useState } from "react";

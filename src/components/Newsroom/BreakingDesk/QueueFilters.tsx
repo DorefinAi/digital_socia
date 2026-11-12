@@ -10,7 +10,7 @@ import React from "react";
 import { Box, TextField } from "@mui/material";
 import { FilterChips, type FilterChip, FilterEmpty, FilterOption, FiltersButton, FilterSection, toggleValue } from "../ui/FilterKit";
 import { BreakingTag, FtpNewsItem } from "@/types/newsroom";
-import type { QueueFacets, QueueQuery } from "@/lib/socia/types";
+import type { QueueFacets, QueueItem, QueueQuery } from "@/lib/socia/types";
 import { SegmentedControl, storyCategory, storyTag, TAG_TINT } from "./shared";
 
 export type PriorityValue = BreakingTag | "normal";
@@ -61,13 +61,14 @@ export function phase1Filters(f: QueueFilterState): QueueFilterState {
   return { ...f, priority: tab ? [tab] : [], big: false, desks: [] };
 }
 
-/** The phase 1 filters the server applies (pass phase1Filters' result) */
+/**
+ * The phase 1 filters the server applies to the Posted view (pass phase1Filters' result). The inbox is read by
+ * day only and narrowed in the browser (matchesOtherFilters), so the day's All / BIG Breaking / Breaking
+ * counts never change with a filter; priority is browser-side for both.
+ */
 export function toQueueQuery(f: QueueFilterState): QueueQuery {
-  const tab = phase1Priority(f);
   return {
     ...(f.districts[0] ? { district: f.districts[0] } : {}),
-    // Big breaking = BIG in the file name, Breaking = the rest (the server's big=false)
-    ...(tab ? { big: tab === "big_breaking" } : {}),
     ...(f.update ? { update: true } : {}),
     ...(f.needsCheck ? { needsCheck: true } : {}),
   };
@@ -132,9 +133,14 @@ export interface FilterFacts {
  * Everything but priority, so the priority switch can count what each choice would show. `serverSide`
  * (phase 1): the server already applied district, BIG (the priority tab), UPDATE and needs-check.
  */
-export function matchesOtherFilters(item: FtpNewsItem, f: QueueFilterState, facts: FilterFacts, now: number, serverSide = false): boolean {
+export function matchesOtherFilters(item: FtpNewsItem, f: QueueFilterState, facts: FilterFacts, now: number): boolean {
   if (f.categories.length && !f.categories.includes(storyCategory(item) ?? "")) return false;
-  if (!serverSide && f.districts.length && !f.districts.includes(item.area)) return false;
+  // "none" (phase 1's No district) is a story without one, as the server's district=none
+  if (f.districts.length && !f.districts.includes(item.area) && !(!item.area && f.districts.includes(NO_DISTRICT))) return false;
+  // Phase 1's UPDATE and Needs check, as the server reads them (a removed desk note is not a reason to check)
+  const live = "live" in item ? (item as FtpNewsItem & { live: QueueItem }).live : null;
+  if (f.update && live && !live.tags?.update) return false;
+  if (f.needsCheck && live && !(live.needsCheck ?? []).some((c) => c !== "desk_note")) return false;
   if (f.media.length) {
     const { images, videos } = facts.media(item);
     const ok = f.media.some((m) => (m === "photos" ? images > 0 : m === "video" ? videos > 0 : images + videos === 0));

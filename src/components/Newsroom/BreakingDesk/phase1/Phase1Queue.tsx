@@ -17,7 +17,7 @@ import { freshHighlightSx } from "../NewStoriesPill";
 import { timeAgo } from "../shared";
 import { X_LIMIT } from "../socialText";
 import { XRichText, X_COLORS } from "./XPostPreview";
-import { Badge, Phase1Badges } from "./badges";
+import { Badge, NeedsCheckBadges, Phase1Badges, shownNeedsCheck } from "./badges";
 import { ageTone } from "../deskRules";
 
 const AGE_COLOR = { fresh: "success.main", recent: "warning.main", old: "text.disabled" } as const;
@@ -27,12 +27,12 @@ const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour:
 const rowSx = { display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", md: "52px minmax(0, 1fr) auto" }, gap: { xs: 1, md: 1.5 }, alignItems: "start", px: { xs: 1.5, md: 2 }, py: 1.5, borderTop: "1px solid", borderColor: "divider" } as const;
 const frameSx = { backgroundColor: "background.paper", border: "1px solid", borderColor: "divider", borderRadius: "12px", overflow: "hidden", "& > :first-of-type": { borderTop: 0 } } as const;
 
-/** Where the file came from and what it said, on one wrapping line */
-function RowMeta({ live }: { live: QueueItem }) {
+/** Where the file came from and what it said, on one wrapping line; `reasons` false leaves the needs-check tags out */
+function RowMeta({ live, reasons = true }: { live: QueueItem; reasons?: boolean }) {
   const place = [live.district, live.town].filter(Boolean).join(" · ");
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap", fontSize: "0.75rem", color: "text.secondary" }}>
-      <Phase1Badges tags={live.tags} needsCheck={live.needsCheck} />
+      <Phase1Badges tags={live.tags} needsCheck={live.needsCheck} showReasons={reasons} />
       {place && <span>{place}</span>}
       {live.card?.state === "ready" && <Badge tone="plain">Card</Badge>}
     </Box>
@@ -62,6 +62,8 @@ const rowFocusedSx = { ...rowSx, backgroundColor: "action.selected", boxShadow: 
 const rowIdleSx = { ...rowSx, "&:hover": { backgroundColor: "action.hover" } } as const;
 // Off-screen rows skip layout and paint until scrolled near (a day can hold hundreds)
 const lazyRowSx = { contentVisibility: "auto", containIntrinsicSize: "auto 76px" } as const;
+// The needs-check tags just left of Reject: they wrap among themselves, so a long list never squeezes the headline
+const issueTagsSx = { display: "flex", flexWrap: "wrap", alignItems: "center", gap: 0.5, justifyContent: { xs: "flex-start", md: "flex-end" }, maxWidth: { md: 240 }, mr: { md: 0.5 } } as const;
 const rejectSx = { width: { xs: 40, md: 34 }, height: { xs: 40, md: 34 }, borderRadius: "8px", color: "error.main", "&:hover": { backgroundColor: "rgba(211, 47, 47, 0.08)" } } as const;
 const openSx = { minHeight: { xs: 40, md: 34 }, borderRadius: "8px", textTransform: "none", fontSize: "0.8125rem", fontWeight: 600, whiteSpace: "nowrap", boxShadow: "none", "&.MuiButton-contained": { backgroundColor: "text.primary", color: "background.paper", "&:hover": { backgroundColor: "text.primary", opacity: 0.88 } } } as const;
 
@@ -106,7 +108,7 @@ const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, can
         <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary" }}>{timeAgo(item.receivedAt, now)}</Typography>
       </Box>
       <Box sx={{ minWidth: 0 }}>
-        {live && <RowMeta live={live} />}
+        {live && <RowMeta live={live} reasons={false} />}
         <Typography lang="hi" sx={{ mt: 0.5, fontSize: "0.9375rem", fontWeight: 600, lineHeight: 1.45, overflowWrap: "anywhere" }}>
           <Box component="span" sx={{ display: { md: "none" }, color: "text.secondary", fontWeight: 500, fontVariantNumeric: "tabular-nums", mr: 0.75 }}>
             {clock(item.receivedAt)}
@@ -120,6 +122,11 @@ const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, can
         )}
       </Box>
       <Box sx={{ gridColumn: { xs: 1, md: "auto" }, display: "flex", alignItems: "center", gap: 0.5, justifyContent: { xs: "flex-start", md: "flex-end" } }} onClick={(e) => e.stopPropagation()}>
+        {live && shownNeedsCheck(live.needsCheck).length > 0 && (
+          <Box sx={issueTagsSx}>
+            <NeedsCheckBadges needsCheck={live.needsCheck} />
+          </Box>
+        )}
         {canReject && !held && (
           <Tooltip title="Reject (R)">
             <IconButton size="small" aria-label={`Reject ${item.headline}`} onClick={() => onReject(item)} sx={rejectSx}>

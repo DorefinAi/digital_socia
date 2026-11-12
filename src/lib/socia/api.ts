@@ -1,6 +1,7 @@
 // Every Socia endpoint the desk uses, one function each. Shapes: ./types.ts.
 
 import { ApiError, api, setCsrfToken } from "./client";
+import { QUEUE_PAGE_MAX, type QueueDay, readQueueView } from "./queueDay";
 import type {
   CardTemplateLayout, CopyPostedResult, Counts, DeskHandle, DraftPatch, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, OrgCardTemplate, OrgCardTemplateLayout, OrgCardTemplatePatch, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, UserCardTemplate,
 } from "./types";
@@ -34,15 +35,25 @@ export async function logout() {
 
 // ─── Queue ───────────────────────────────────────────────────────────────────
 /** `query` filters on the server (phase1-contract.md §1); unset fields are left out */
-export function fetchQueue(view: QueueView, limit = 100, query?: QueueQuery) {
+export function fetchQueue(view: QueueView, limit = 100, query?: QueueQuery, before?: string, signal?: AbortSignal) {
   const params = new URLSearchParams({ view, limit: String(limit) });
+  if (before) params.set("before", before);
   if (query?.district) params.set("district", query.district);
   if (query?.desk) params.set("desk", query.desk);
   if (query?.big !== undefined) params.set("big", String(query.big));
   if (query?.update !== undefined) params.set("update", String(query.update));
   if (query?.needsCheck !== undefined) params.set("needsCheck", String(query.needsCheck));
   if (query?.day) params.set("day", query.day);
-  return api<QueueResponse>("GET", `/x/queue?${params}`);
+  return api<QueueResponse>("GET", `/x/queue?${params}`, undefined, { signal });
+}
+export { QUEUE_DAY_PAGES, QUEUE_PAGE_MAX, mergeQueueHead, type QueueDay } from "./queueDay";
+
+/**
+ * Every story of one IST day (`query.day`), page by page (queueDay.readQueueDay), so the desk can count the
+ * whole day. Without a day it reads one page only: the undated inbox has no end worth reading.
+ */
+export async function fetchQueueDay(view: QueueView, query?: QueueQuery, signal?: AbortSignal): Promise<QueueDay> {
+  return readQueueView((before, s) => fetchQueue(view, QUEUE_PAGE_MAX, query, before, s), !!query?.day, signal);
 }
 /** Counts for the queue filters over the whole view (phase 1) */
 export const fetchQueueFacets = (view: "inbox" | "posted") => api<QueueFacets>("GET", `/x/queue/facets?view=${view}`);

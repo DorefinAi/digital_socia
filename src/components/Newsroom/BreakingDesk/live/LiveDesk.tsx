@@ -211,7 +211,8 @@ const COPIED_TOAST_MS = 12_000;
 
 interface LiveDeskValue {
   canAct: boolean;
-  inbox: Polled<QueueResponse>;
+  /** Phase 1: the chosen day's whole inbox (`truncated` when the page cap left older stories out) */
+  inbox: Polled<socia.QueueDay>;
   sending: Polled<QueueResponse>;
   failed: Polled<QueueResponse>;
   rejected: Polled<QueueResponse>;
@@ -273,15 +274,28 @@ const tryAction = async (fn: () => Promise<unknown>) => {
   }
 };
 
-export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
+/** How often the whole chosen day is read again; between reads only its first page is (every POLL_MS.queue) */
+const DAY_REREAD_MS = 60_000;
+
+/**
+ * `templatesOnly`: for Post Studio → Templates, which needs only the card templates, the actions on them and
+ * canAct. Every other poller stays off, so that page sends nothing but template calls.
+ */
+export function LiveDeskProvider({ children, templatesOnly = false }: { children: React.ReactNode; templatesOnly?: boolean }) {
   // Opening a story to work on it needs draft.edit; the finer actions check their own permission
   const { can } = usePermissions();
   const canAct = can("draft.edit");
   // Nothing is fetched until the phase is known, so a phase 1 desk never starts on phase 2's views
-  const { phase1, known: phaseKnown } = usePhase();
+  const { phase1, known: phaseRead } = usePhase();
+  // The desk's pollers wait for the phase, and stay off on the Templates page
+  const phaseKnown = phaseRead && !templatesOnly;
   // Phase 1 filters on the server, so a day's ~700 files stay quick to narrow; the key refetches on change
   const [queueQuery, setQueueQuery] = useState<QueueQuery>({});
-  const queryKey = phase1 ? JSON.stringify(queueQuery) : "";
+  // The inbox is read by day only (the desk narrows it in the browser, so the day's counts stay whole); the
+  // other filters go to the server for Posted
+  const day = queueQuery.day;
+  const inboxQuery = useMemo<QueueQuery>(() => (day ? { day } : {}), [day]);
+  const queryKey = phase1 ? JSON.stringify(inboxQuery) : "";
   // The day picks the inbox only; Posted is always today's
   const postedQuery = useMemo(() => {
     const { day: _day, ...rest } = queueQuery;
@@ -293,12 +307,40 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
   const todayIst = istToday();
   const pastDay = phase1 && !!queueQuery.day && queueQuery.day !== todayIst;
 
-  const inbox = usePolled(
-    () => socia.fetchQueue("inbox", 200, phase1 ? queueQuery : undefined),
+  // Phase 1 holds the whole chosen day, so its All / BIG Breaking / Breaking counts are the day's. Every page is
+  // read when the day changes, on the refresh icon, after a failed read (so Try again reads it all), and every
+  // DAY_REREAD_MS; the 5 s tick reads only the first page and joins it to the held day (mergeQueueHead).
+  const dayHeld = useRef<{ key: string; day: socia.QueueDay; readAt: number } | null>(null);
+  const rereadDay = useRef(false);
+  /** The inbox's latest answer, set as it lands (refreshAll counts new stories against it) */
+  const lastInbox = useRef<socia.QueueDay | null>(null);
+  const inbox = usePolled<socia.QueueDay>(
+    async (signal) => {
+      try {
+        if (!phase1) return (lastInbox.current = { ...(await socia.fetchQueue("inbox", 200, undefined, undefined, signal)), truncated: false });
+        const held = dayHeld.current;
+        if (held && held.key === queryKey && !rereadDay.current && Date.now() - held.readAt < DAY_REREAD_MS) {
+          const head = await socia.fetchQueue("inbox", socia.QUEUE_PAGE_MAX, inboxQuery, undefined, signal);
+          const merged = socia.mergeQueueHead(head, held.day);
+          if (merged) {
+            dayHeld.current = { ...held, day: merged };
+            return (lastInbox.current = merged);
+          }
+        }
+        const whole = await socia.fetchQueueDay("inbox", inboxQuery, signal);
+        dayHeld.current = { key: queryKey, day: whole, readAt: Date.now() };
+        rereadDay.current = false;
+        return (lastInbox.current = whole);
+      } catch (err) {
+        if (!signal.aborted) rereadDay.current = true;
+        throw err;
+      }
+    },
     POLL_MS.queue,
     `inbox${queryKey}`,
     phaseKnown,
   );
+  const refreshInbox = inbox.refresh;
   // Phase 1 posts nothing through the X API, so nothing is ever sending or failed
   const sending = usePolled(
     () => socia.fetchQueue("sending", 100),
@@ -319,9 +361,9 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
     phaseKnown && phase1,
   );
   const todayInbox = usePolled(
-    () => socia.fetchQueue("inbox", 200, { ...postedQuery, day: todayIst ?? undefined }),
+    (signal) => socia.fetchQueue("inbox", 200, { day: todayIst ?? undefined }, undefined, signal),
     POLL_MS.queue,
-    `inbox-today${postedKey}${todayIst}`,
+    `inbox-today${todayIst}`,
     phaseKnown && pastDay,
   );
   const inboxFacets = usePolled(() => socia.fetchQueueFacets("inbox"), POLL_MS.counts, "facets-inbox", phaseKnown && phase1);
@@ -341,14 +383,14 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
     phaseKnown,
   );
 
-  // Changes only from the Templates tab, which refreshes it; the slow poll picks up another tab's change
+  // Changes only from the Templates page, which refreshes it; the slow poll picks up another tab's change
   const cardTemplate = usePolled(
     () => socia.fetchCardTemplate("x"),
     POLL_MS.cardTemplate,
     "card-template",
-    phaseKnown,
+    phaseRead,
   );
-  const orgCardTemplates = usePolled(() => socia.fetchOrgCardTemplates("x"), POLL_MS.cardTemplate, "org-card-templates", phaseKnown);
+  const orgCardTemplates = usePolled(() => socia.fetchOrgCardTemplates("x"), POLL_MS.cardTemplate, "org-card-templates", phaseRead);
 
   const queue = useMemo(
     () => (inbox.data?.items ?? []).map(stableQueueToNews),
@@ -359,8 +401,8 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
 
   const pollers = () =>
     phase1
-      ? [inbox.refresh, rejected.refresh, posts.refresh, counts.refresh, postedView.refresh, inboxFacets.refresh, postedFacets.refresh]
-      : [inbox.refresh, sending.refresh, failed.refresh, rejected.refresh, posts.refresh, counts.refresh];
+      ? [refreshInbox, rejected.refresh, posts.refresh, counts.refresh, postedView.refresh, inboxFacets.refresh, postedFacets.refresh]
+      : [refreshInbox, sending.refresh, failed.refresh, rejected.refresh, posts.refresh, counts.refresh];
   const refreshers = useRef(pollers());
   useEffect(() => {
     refreshers.current = pollers();
@@ -370,16 +412,21 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
     if (inbox.data) known.current = new Set(inbox.data.items.map((i) => i.id));
   }, [inbox.data]);
 
+  // The inbox is read once here (its own poller, first page joined to the held day), then counted against
+  // what was shown before
   const refreshAll = useCallback(async () => {
     const before = known.current;
-    const fresh = await socia.fetchQueue("inbox", 200, phase1 ? queueQuery : undefined).catch(() => null);
+    const answerBefore = lastInbox.current;
     await Promise.all(refreshers.current.map((r) => r()));
-    return fresh ? fresh.items.filter((i) => !before.has(i.id)).length : 0;
-  }, [phase1, queueQuery]);
+    const answer = lastInbox.current;
+    return answer && answer !== answerBefore ? answer.items.filter((i) => !before.has(i.id)).length : 0;
+  }, []);
+  // The refresh icon: a one-story check that rejects when the queue cannot be loaded, then the whole day again
   const refreshStrict = useCallback(async () => {
-    await socia.fetchQueue("inbox", 1, phase1 ? queueQuery : undefined);
+    await socia.fetchQueue("inbox", 1, phase1 ? inboxQuery : undefined);
+    rereadDay.current = true;
     await Promise.all(refreshers.current.map((r) => r()));
-  }, [phase1, queueQuery]);
+  }, [phase1, inboxQuery]);
   const refreshSoon = useCallback(
     () => void Promise.all(refreshers.current.map((r) => r())),
     [],
@@ -588,7 +635,7 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
       queue,
       todayQueue,
       phase1,
-      phaseKnown,
+      phaseKnown: phaseRead,
       queueQuery,
       setQueueQuery,
       postedView,
@@ -619,7 +666,7 @@ export function LiveDeskProvider({ children }: { children: React.ReactNode }) {
       queue,
       todayQueue,
       phase1,
-      phaseKnown,
+      phaseRead,
       queueQuery,
       postedView,
       facets,

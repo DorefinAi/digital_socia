@@ -1,6 +1,6 @@
 "use client";
 
-// Templates tab, live desk: where the date and the story go on the operator's X background. Both places
+// Post Studio → Templates (X tab), live desk: where the date and the story go on the operator's X background. Both places
 // are moved and resized on a live sample card (drawn by the same code the editor posts with), then
 // saved with PATCH /me/card-template. The editor redraws every card with the saved places.
 

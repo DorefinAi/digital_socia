@@ -618,7 +618,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // One decoded picture per template, shared with the Template tab and the feed; the canvas repaints only
   // when it arrives or the design changes, never on the desk's polls
   const orgImage = useTemplateImage(orgMode ? orgTpl.backgroundUrl : null);
-  // Words go onto a desk template only once Mangal is in (or has failed), so they are measured in it
+  // Words go onto a desk template only once Mardoto and Mangal are in (or have failed), so they are measured in them
   const orgFontsIn = useOrgFontsReady();
   const orgW = orgMode ? orgTpl.width || orgImage.image?.naturalWidth || 1080 : 0;
   const orgH = orgMode ? orgTpl.height || orgImage.image?.naturalHeight || 1080 : 0;
@@ -888,7 +888,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const addLayer = (preset: (typeof LAYER_PRESETS)[number]) => {
     const id = newLayerId();
     const count = layout.layers?.length ?? 0;
-    const style: CardTextStyle = preset.id === "label" ? { ...preset.style, boxColor: accent, color: inkOn(accent) } : preset.style;
+    const base: CardTextStyle = preset.id === "label" ? { ...preset.style, boxColor: accent, color: inkOn(accent) } : preset.style;
+    // On a desk template a new text box starts in the card's face (Mardoto Bold), like the headline and story
+    const style: CardTextStyle = layout.orgTemplate ? { ...base, font: ORG_CARD_FONT, weight: 700 } : base;
     const layer: CardTextLayer = { id, text: preset.text, x: 0.5, y: Math.min(0.85, 0.32 + count * 0.07), width: preset.width, size: preset.size, style };
     setLayout((l) => ({ ...l, layers: [...(l.layers ?? []), layer] }));
     editText(`layer:${id}`);
@@ -2552,7 +2554,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   </>
                 ) : panel === "template" && cardChoices.length > 0 ? null : (
                   <Typography sx={{ fontSize: "0.8125rem", color: "text.secondary", lineHeight: 1.6 }}>
-                    {"This card is drawn on your X background from the Templates tab: today's date, the headline and the whole story."}
+                    {"This card is drawn on your X background from Post Studio → Templates: today's date, the headline and the whole story."}
                   </Typography>
                 )}
                 <Alert
