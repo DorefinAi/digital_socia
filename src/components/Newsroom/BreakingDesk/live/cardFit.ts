@@ -10,9 +10,10 @@
 
 /**
  * Which way cards are drawn. Part of every drawn card's cache key (useBackgroundCard, storyThumbs), so a
- * card drawn and uploaded the earlier way is drawn and sent again once. Raise it whenever the drawing changes.
+ * card drawn and uploaded the earlier way is drawn and sent again once. Raise it whenever the drawing changes
+ * (3: Mardoto Bold became the cards' face).
  */
-export const CARD_DRAW_VERSION = 2;
+export const CARD_DRAW_VERSION = 3;
 
 /** Line pitch for heading and story alike, in font sizes */
 export const CARD_LINE = 1.49;

@@ -23,7 +23,7 @@ export const ORG_DATE_ID = "org-date";
 // ─── One decoded picture per template version, shared by the canvas, the picker and the feed ────────
 const images = new Map<string, Promise<HTMLImageElement>>();
 
-// ─── Mangal and Mardoto before measuring: a card placed on a fallback face would be sized wrong ──────
+// ─── Mardoto and Mangal before measuring: a card placed on a fallback face would be sized wrong ──────
 let fontsIn = typeof document === "undefined";
 let fontsWait: Promise<void> | null = null;
 /**
@@ -57,7 +57,7 @@ export function useOrgFontsReady(): boolean {
 
 /** The template's picture, fetched with the session and decoded once. A failed load is tried again next time. */
 export function templateImage(backgroundUrl: string): Promise<HTMLImageElement> {
-  // The card's Mangal starts downloading with the first template, so the words are measured in it
+  // The card's faces (Mardoto, Mangal for Hindi) start downloading with the first template, so the words are measured in them
   void orgFontsReady();
   let p = images.get(backgroundUrl);
   if (!p) {
@@ -110,8 +110,8 @@ const GAP = CARD_GAP_LINES;
 /** Boxes are planned this many px taller than their lines, so the card's own fit never shrinks the words */
 const SLACK_PX = 1;
 
-// Headline and story are bold Mangal, centred (the headline's look is cardRender.ORG_HEADLINE); the date is
-// Mardoto Bold, as on the desk's posts
+// Headline, story and date are Mardoto Bold (Hindi letters from Mangal Bold), centred (the headline's look is
+// cardRender.ORG_HEADLINE)
 export const BODY_STYLE: CardTextStyle = { font: ORG_CARD_FONT, weight: 700, align: "center", lineHeight: BODY_LINE, shadow: 0 };
 // Line height 1: the date's box is one line tall (dateBox), and a taller line would make the
 // card shrink it to fit the box, smaller than backgroundCard.ts draws it
@@ -134,7 +134,7 @@ const measure = () => {
   return measurer;
 };
 
-// A layer without its own font draws in the desk-template face (Mangal), so it is measured in it too; measuring
+// A layer without its own font draws in the desk-template face (Mardoto), so it is measured in it too; measuring
 // in the general fallback (Noto, wider) sized the date about 10% under its slot and the words under their box
 const fontFor = (fontId: string | undefined, weight: number, px: number) => {
   const font = fontById(fontId ?? ORG_CARD_FONT);
@@ -337,7 +337,7 @@ export function switchOrgTemplate(layout: TemplateLayout, from: OrgCardTemplate 
   // Not on a desk template yet (a photo card): start a fresh one, keeping the operator's own text boxes
   if (!layout.orgTemplate || !from || !bodyLayer) return orgLayout(to, words, { ...layout, photoBox: layout.photoBox });
 
-  // An unset headline font is Mangal on a desk template (ORG_HEADLINE); unset text boxes draw in the old default
+  // An unset headline font is Mardoto on a desk template (ORG_HEADLINE); unset text boxes draw in the old default
   const fonts: OrgFonts = { head: layout.headlineStyle?.font ?? ORG_CARD_FONT, body: bodyLayer.style.font, date: layout.layers?.find((l) => l.id === ORG_DATE_ID)?.style.font, headWeight: layout.headlineStyle?.weight, bodyWeight: bodyLayer.style.weight };
   const fresh = orgPlacement(to, words, fonts);
   const a = frameOf(from);

@@ -4,17 +4,17 @@
 // fontMaxPx to fontMinPx until both fit. Pure canvas, no React.
 
 import type { DrawableCardTemplate, OrgCardTemplateLayout } from "@/lib/socia/types";
-import { MANGAL_FAMILY, MARDOTO_FAMILY } from "../templateFonts";
+import { MARDOTO_FAMILY } from "../templateFonts";
 import { cardBodyText } from "../cardWords";
 import { CARD_GAP_LINES, CARD_LINE, type PxRect, cardTextArea, largestFit } from "./cardFit";
 import { fitDate } from "./cardDate";
 import { isTainted, rgbPng } from "./rgbPng";
 
 /**
- * Mangal is the Hindi face the cards use (globals.css "SociaMangal": installed, else bundled); Latin falls
- * through to a bold sans, and Noto Sans Devanagari stands in if Mangal can't load.
+ * Mardoto Bold is the cards' face (globals.css "SociaMardoto"); it has no Hindi letters, so those come from
+ * Mangal ("SociaMangal": installed, else bundled), and Noto Sans Devanagari stands in if Mangal can't load.
  */
-const family = () => `${MANGAL_FAMILY}, "Nirmala UI", sans-serif`;
+const family = () => `${MARDOTO_FAMILY}, "Nirmala UI", sans-serif`;
 // Line pitch and the gap are cardFit's, shared with the editor's card (orgCanvas.ts)
 const LINE_HEIGHT = CARD_LINE;
 const GAP = CARD_GAP_LINES;
@@ -40,7 +40,7 @@ export function istDate(format: string, now = new Date()): string {
   return format.replace("YYYY", parts.year).replace("MM", parts.month).replace("DD", parts.day);
 }
 
-const NOT_LOADED = "Your X background didn't load. Check the Templates tab, or try again.";
+const NOT_LOADED = "Your X background didn't load. Check Post Studio → Templates, or try again.";
 
 /**
  * Loads the background with the session cookie (fetch, credentials included) and decodes it from a local
@@ -73,7 +73,7 @@ export async function loadImage(url: string): Promise<HTMLImageElement> {
 /** The date tag's face (Mardoto Bold), at `px` */
 const dateFont = (px: number) => `700 ${px}px ${MARDOTO_FAMILY}`;
 
-/** Waits for the Hindi faces and the date's face so the first draw is not measured on a fallback font. */
+/** Waits for Mardoto, the Hindi faces and the date's face so the first draw is not measured on a fallback font. */
 export async function fontsReady() {
   if (typeof document === "undefined" || !document.fonts) return;
   const sample = "क ख A 1";

@@ -167,8 +167,9 @@ p {
 }
 
 /*
- * Mardoto Bold (SIL Open Font License 1.1, public/fonts/Mardoto-OFL.txt), the date face of the desk's X
- * templates. Bold only; canvas code waits for it with Mangal (backgroundCard.fontsReady).
+ * Mardoto Bold (SIL Open Font License 1.1, public/fonts/Mardoto-OFL.txt), the default face of every text on
+ * the desk's X templates. Bold and Latin only: Hindi falls back to Mangal. Canvas code waits for both
+ * (backgroundCard.fontsReady).
  */
 @font-face {
   font-family: "SociaMardoto";
