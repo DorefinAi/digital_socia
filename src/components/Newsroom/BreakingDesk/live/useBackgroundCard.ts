@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DrawableCardTemplate } from "@/lib/socia/types";
 import { apiFileUrl } from "./LiveDesk";
 import { type DrawnCard, drawBackgroundCard, istDate } from "./backgroundCard";
-import { CARD_DRAW_VERSION } from "./cardFit";
+import { backgroundCardKey, keyScope } from "./cardKey";
 
 export interface BackgroundCard {
   /** "none" when there is nothing to draw (no background, or not in use) */
@@ -35,15 +35,7 @@ interface Deferred {
   promise: Promise<{ key: string; card: DrawnCard }>;
 }
 
-/** The draft a drawing was made for (the first part of its key). */
-export const keyScope = (key: string): string | null => {
-  try {
-    const parsed: unknown = JSON.parse(key);
-    return Array.isArray(parsed) && typeof parsed[0] === "string" ? parsed[0] : null;
-  } catch {
-    return null;
-  }
-};
+export { keyScope };
 
 /** A short fingerprint of a drawing key, to remember which drawing a draft's card is without storing the whole story. */
 export function keyHash(key: string): string {
@@ -60,7 +52,7 @@ export function keyHash(key: string): string {
 
 /** `scope` names what the drawing is for (the draft id) and is part of its key. */
 export function useBackgroundCard(template: DrawableCardTemplate | null | undefined, headline: string, body: string, maxBytes: number, scope = ""): BackgroundCard {
-  const key = template ? JSON.stringify([CARD_DRAW_VERSION, scope, template.backgroundUrl, template.updatedAt, template.layout, template.layout.date ? istDate(template.layout.date.format) : null, headline, body]) : "";
+  const key = template ? backgroundCardKey(scope, template, template.layout.date ? istDate(template.layout.date.format) : null, headline, body) : "";
   const [result, setResult] = useState<Result | null>(null);
   const pending = useRef<Deferred | null>(null);
   const shownUrl = useRef<string | null>(null);
