@@ -330,12 +330,16 @@ export default function Phase1Editor({ item, onClose, onSaved, live }: Phase1Edi
   /** Saves the card next to the post; false when the browser couldn't. */
   const downloadCard = async (): Promise<boolean> => {
     if (!d.card.url) return false;
-    const name = d.fileStem ? `${d.fileStem}.png` : `${d.story.slug || d.id}-card.png`;
     try {
       const src = fileUrl(d.card.url);
       const res = await fetch(src, { credentials: credentialsFor(src) });
       if (!res.ok) throw new Error(String(res.status));
-      const href = URL.createObjectURL(await res.blob());
+      const blob = await res.blob();
+      // Cards are JPEG since 12 Nov, older ones PNG: name the file for what it is
+      // The served type decides; the URL only when the type is missing or not an image
+      const ext = blob.type.startsWith("image/") ? (blob.type === "image/jpeg" ? "jpg" : "png") : /\.jpe?g(?:$|\?)/i.test(d.card.url) ? "jpg" : "png";
+      const name = d.fileStem ? `${d.fileStem}.${ext}` : `${d.story.slug || d.id}-card.${ext}`;
+      const href = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = href;
       a.download = name;
