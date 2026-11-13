@@ -103,9 +103,14 @@ type Caret = { x: number; y: number } | "all" | "end";
 
 /** How far, in screen px, a press on text may wander and still count as a click that starts typing */
 const CLICK_SLOP = 4;
+/** Screen px outside a text box's frame line where a click picks the box to move instead of typing */
+const BORDER_PX = 10;
+/** Screen px inside the frame line that still count as its edge: narrow, so a click on the words types in them */
+const BORDER_IN_PX = 4;
 /** The frame turns this red when the selected text runs off the card (a size set by hand grew it past an edge) */
 const OFF_CARD_RED = "#E53935";
 const offCard = (b: { x: number; y: number; w: number; h: number }) => b.x < -0.5 || b.y < -0.5 || b.x + b.w > 100.5 || b.y + b.h > 100.5;
+const isTextTarget = (t: CanvasSelection | undefined): t is "headline" | `layer:${string}` => !!t && t !== "background";
 
 /** The caret position in `area` nearest a screen point, measured on a copy of the box laid out the same way. */
 function offsetAtPoint(area: HTMLTextAreaElement, x: number, y: number): number {
@@ -168,6 +173,8 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   const [boxes, setBoxes] = useState<Record<string, Rect>>({});
   // Centre guides shown while a snapped box is dragged
   const [guides, setGuides] = useState({ v: false, h: false });
+  /** What the pointer is over, for the cursor: a text box's edge (move) or its words (type) */
+  const [hover, setHover] = useState<"edge" | "text" | null>(null);
   const editable = !!onLayoutChange;
   // Typing right on the card: which text, and where its words were laid out (the canvas leaves them out meanwhile)
   const [typing, setTyping] = useState<TextTarget | null>(null);
@@ -612,6 +619,35 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
 
   const inside = (p: { x: number; y: number }, r: Rect | null) => !!r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
 
+  /** A pointer position on the card, from any event (the typing box's too) */
+  const pointAt = (clientX: number, clientY: number) => {
+    const bounds = frameRef.current?.getBoundingClientRect();
+    if (!bounds || !bounds.width) return null;
+    return { x: ((clientX - bounds.left) / bounds.width) * size.w, y: ((clientY - bounds.top) / bounds.height) * size.h, perPx: size.w / bounds.width };
+  };
+
+  /**
+   * On a box's edge: within BORDER_IN_PX screen px inside its frame line or BORDER_PX outside it (`perPx` turns
+   * screen px into card px). Anywhere further in is the words, where a click types.
+   */
+  const onEdge = (p: { x: number; y: number; perPx: number }, r: Rect | null) => {
+    if (!r) return false;
+    const out = BORDER_PX * p.perPx;
+    if (p.x < r.x - out || p.x > r.x + r.w + out || p.y < r.y - out || p.y > r.y + r.h + out) return false;
+    if (!inside(p, r)) return true;
+    return Math.min(p.x - r.x, r.x + r.w - p.x, p.y - r.y, r.y + r.h - p.y) <= BORDER_IN_PX * p.perPx;
+  };
+
+  /**
+   * What a press picks, and whether it landed on the edge of a text box. The edge of the selected box counts
+   * just outside its frame line too, where the line is drawn.
+   */
+  const pickAt = (p: { x: number; y: number; perPx: number }): { target: CanvasSelection; edge: boolean } => {
+    const hit = hitTest(p);
+    if (isTextTarget(selection) && !isTextTarget(hit) && onEdge(p, rectOf(selection))) return { target: selection, edge: true };
+    return { target: hit, edge: isTextTarget(hit) && onEdge(p, rectOf(hit)) };
+  };
+
   /** Topmost thing under the pointer: text boxes, then the headline, then the media (on a desk template, only inside the photo frame) */
   const hitTest = (p: { x: number; y: number }): CanvasSelection => {
     const ids = (layout.layers ?? []).map((l) => l.id).reverse();
@@ -632,7 +668,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!editable) return;
     const p = toCanvas(e);
-    const target = hitTest(p);
+    const { target, edge } = pickAt(p);
     onSelect?.(target);
     // The template's own picture: nothing to pick or drag
     if (!target) return;
@@ -640,8 +676,10 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     // Right and middle buttons select what is under the pointer but never drag it
     // (Ctrl+click on a Mac is a right-click too)
     if (e.pointerType === "mouse" && (e.button !== 0 || (e.ctrlKey && isMac()))) return;
-    // A plain click on text (no drag) types in it right there, caret under the pointer
-    const typeOnClick = target !== "background" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
+    // A plain click on text (no drag) types in it right there, caret under the pointer. A click on the box's
+    // edge only selects it, so the arrow keys move it; the card keeps the focus for them.
+    if (edge) frameRef.current?.focus({ preventScroll: true });
+    const typeOnClick = target !== "background" && !edge && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
     const pan = target === "background" && (!backdrop || e.altKey);
     dragRef.current = { target, x: p.x, y: p.y, layout, dx: r ? p.x - (r.x + r.w / 2) : 0, dy: r ? p.y - (r.y + r.h / 2) : 0, box: r ? { ...r } : null, clientX: e.clientX, clientY: e.clientY, moved: false, typeOnClick, pan };
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -680,6 +718,10 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
+    if (!drag && editable && e.pointerType === "mouse") {
+      const { target, edge } = pickAt(toCanvas(e));
+      setHover(edge ? "edge" : isTextTarget(target) ? "text" : null);
+    }
     if (!drag || !onLayoutChange) return;
     // A press that wobbles a few px is still a click; the drag starts once it really moves
     if (!drag.moved) {
@@ -846,11 +888,12 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
       ref={frameRef}
       tabIndex={editable ? 0 : undefined}
       role={editable ? "group" : undefined}
-      aria-label={editable ? "Card designer. Click a text to select it. Arrow keys move the selected text; Alt and arrow keys resize it. Right-click for options." : undefined}
+      aria-label={editable ? "Card designer. Click a text to type in it, or click its edge to select it. Arrow keys move the selected text; Escape stops typing; Alt and arrow keys resize it. Right-click for options." : undefined}
       onKeyDown={onKeyDown}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
+      onPointerLeave={() => setHover(null)}
       onPointerCancel={endDrag}
       onContextMenu={(e) => {
         if (!editable || !onContextTarget) return;
@@ -872,7 +915,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
         maxWidth: "100%",
         maxHeight: "100%",
         aspectRatio: `${size.w} / ${size.h}`,
-        cursor: editable ? "move" : "default",
+        cursor: editable ? (hover === "text" ? "text" : "move") : "default",
         touchAction: editable ? "none" : "auto",
         userSelect: "none",
         // Lets the typing box size its words to the card as drawn on screen
@@ -902,8 +945,17 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
           onKeyDown={onTypeKeyDown}
           // Ends typing when focus leaves for something else on the page, not when the window loses it
           onBlur={() => document.hasFocus() && stopTyping(false)}
-          // Clicks, selection drags and the right-click menu inside belong to the text, not the card
-          onPointerDown={(e) => e.stopPropagation()}
+          // Clicks, selection drags and the right-click menu inside belong to the text, not the card. A click on
+          // the box's edge stops typing and goes on to the card, which selects the box to move.
+          onPointerDown={(e) => {
+            const p = pointAt(e.clientX, e.clientY);
+            if (p && typingIn && onEdge(p, rectOf(typingIn))) {
+              e.preventDefault();
+              stopTyping(false);
+              return;
+            }
+            e.stopPropagation();
+          }}
           onDoubleClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.stopPropagation()}
           style={typeCss}
