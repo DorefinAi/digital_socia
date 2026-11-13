@@ -80,20 +80,31 @@ export function offerableHashtag(raw: unknown): string {
   return value && isHashtag(value) && value.slice(1) === tag.replace(/^#+/, "") ? value : "";
 }
 
+/** Reason line for a normal hashtag suggestion that carries none (bare strings, or objects without a reason) */
+export const PLAIN_HASHTAG_REASON = "Suggested";
+
 /**
- * The hashtag suggestions the editor offers. Bare strings (today's API) carry no source and are not listed:
- * the live editor has never shown them, and this change keeps that. Only reporter-group hashtags are added,
- * so the normal hashtag list is exactly what it was.
+ * Every hashtag suggestion the editor offers, unticked. Bare strings and objects with any other source
+ * ("reporter_policy", "district.inferred", none) go in the normal list with their reason when they have one;
+ * reporter_prior/reporter_beat ones go in the "Reporter usually tags" group. Tags already on the draft, and
+ * anything offerableHashtag would have to rewrite, are skipped.
  */
 export function offeredHashtags(suggestions: readonly (string | HashtagSuggestion)[] | undefined, onDraft: readonly string[]): OfferedTag[] {
   const have = new Set(onDraft.map((t) => tagKey(hash(t.trim()))));
   const out: OfferedTag[] = [];
   const index = new Map<string, number>();
   for (const s of suggestions ?? []) {
-    if (typeof s === "string" || !s || !isReporterSource(s.source)) continue;
-    const value = offerableHashtag(s.tag);
+    if (!s) continue;
+    const raw = typeof s === "string" ? s : s.tag;
+    const value = offerableHashtag(raw);
     if (!value) continue;
-    addOffer(out, index, have, { value, reason: text(s.reason) || "Reporter usually tags this", source: s.source, checked: false });
+    if (typeof s === "string") {
+      addOffer(out, index, have, { value, reason: PLAIN_HASHTAG_REASON, checked: false });
+      continue;
+    }
+    const source = text(s.source);
+    const fallback = isReporterSource(source) ? "Reporter usually tags this" : PLAIN_HASHTAG_REASON;
+    addOffer(out, index, have, { value, reason: text(s.reason) || fallback, ...(source ? { source } : {}), checked: false });
   }
   return out;
 }

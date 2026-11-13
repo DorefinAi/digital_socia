@@ -47,21 +47,52 @@ test("nothing is pre-ticked, and handles already on the draft are not offered ag
   assert.ok(rows.every((r) => r.checked === false));
 });
 
-test("hashtags: only reporter-group objects are offered; bare strings keep today's behaviour", () => {
+test("hashtags: every suggestion is offered; reporter ones grouped, the rest normal with their reason", () => {
   const rows = offeredHashtags(
     [
       "#Kota",
       { tag: "#RajGov", source: "reporter_prior", reason: "rituraj files RajGov stories 62% of the time (102 posts)", score: 0.62, n: 102 },
-      { tag: "Jaipur", source: "reporter_beat", reason: "declared beat: Jaipur" },
+      { tag: "Jaipur", source: "reporter_policy", reason: "Video desk tags #Jaipur on rituraj's clips" },
+      { tag: "Ajmer", source: "district.inferred", reason: "Inferred district: Ajmer" },
+      { tag: "Udaipur", source: "reporter_beat", reason: "declared beat: Udaipur" },
       { tag: "#ACB" },
+      "Bikaner",
       { tag: "#Existing", source: "reporter_prior", reason: "x" },
+      "#existing",
     ],
     ["#existing"],
   );
-  assert.deepEqual(values(rows), ["#RajGov", "#Jaipur"]);
-  assert.ok(rows.every((r) => r.checked === false));
-  assert.equal(groupSuggestions(rows).reporter.length, 2);
+  assert.deepEqual(values(rows), ["#Kota", "#RajGov", "#Jaipur", "#Ajmer", "#Udaipur", "#ACB", "#Bikaner"]);
+  const { normal, reporter } = groupSuggestions(rows);
+  assert.deepEqual(values(normal), ["#Kota", "#Jaipur", "#Ajmer", "#ACB", "#Bikaner"]);
+  assert.deepEqual(values(reporter), ["#RajGov", "#Udaipur"]);
+  const by = (v: string) => rows.find((r) => r.value === v)!;
+  assert.equal(by("#Jaipur").reason, "Video desk tags #Jaipur on rituraj's clips");
+  assert.equal(by("#Jaipur").source, "reporter_policy");
+  assert.equal(by("#Ajmer").reason, "Inferred district: Ajmer");
+  assert.equal(by("#Kota").reason, "Suggested");
+  assert.equal("source" in by("#Kota"), false);
+  assert.equal(by("#ACB").reason, "Suggested");
+  assert.equal(by("#RajGov").reason, "rituraj files RajGov stories 62% of the time (102 posts)");
   assert.deepEqual(offeredHashtags(undefined, []), []);
+});
+
+test("hashtags: nothing is pre-ticked, dupes collapse, and tags on the draft are not offered again", () => {
+  const rows = offeredHashtags(
+    ["#Kota", "#kota", { tag: "KOTA", source: "reporter_policy", reason: "p" }, { tag: "#Jaipur", reason: "x" }, " #Tonk ", "#Tonk"],
+    ["Jaipur", " #tonk "],
+  );
+  assert.deepEqual(values(rows), ["#Kota"]);
+  assert.ok(rows.every((r) => r.checked === false));
+  // A reporter duplicate of a plain one takes its place, so its group and reason show
+  const mixed = offeredHashtags(["#Kota", { tag: "#kota", source: "reporter_prior", reason: "rituraj tags Kota 40%" }], []);
+  assert.deepEqual(values(mixed), ["#kota"]);
+  assert.equal(groupSuggestions(mixed).reporter.length, 1);
+  assert.ok(mixed.every((r) => r.checked === false));
+});
+
+test("hashtags: bare strings go through the same normaliser and are dropped when it would rewrite them", () => {
+  assert.deepEqual(values(offeredHashtags(["Jaipur Police", "#Raj.Gov", "#", "  ##Kota ", "", { tag: "Tonk Police", source: "district.inferred" }], [])), ["#Kota"]);
 });
 
 test("hashtags: server tags go through the editor's normaliser; anything it would have to rewrite is dropped", () => {
