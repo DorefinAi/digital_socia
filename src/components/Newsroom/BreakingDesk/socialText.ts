@@ -28,7 +28,8 @@ export function countChars(text: string, platform: SocialPlatform): number {
   const groups =
     typeof Intl !== "undefined" && typeof (Intl as { Segmenter?: unknown }).Segmenter === "function"
       ? [...(graphemeSplitter ??= new Intl.Segmenter("hi", { granularity: "grapheme" })).segment(clean)].map((g) => g.segment)
-      : Array.from(clean);
+      : // An emoji sequence (joined by ZWJ, with a variation selector or skin tone) is one group, as the segmenter has it
+        (clean.match(/\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F|\u200D\p{Extended_Pictographic}|[\u{E0020}-\u{E007F}])*|[\s\S]/gu) ?? []);
   let total = 0;
   for (const group of groups) {
     if (EMOJI.test(group)) {

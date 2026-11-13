@@ -332,6 +332,8 @@ export interface DraftView {
   status: DraftStatus;
   version: number;
   bodyText: string;
+  /** Line 2 as the composer wrote it (b8): "Fit to 280" rebuilds only that. Null for a draft from before, or an older server */
+  composerOriginalLine2?: string | null;
   cardHeadline: string;
   hashtags: string[];
   /**
