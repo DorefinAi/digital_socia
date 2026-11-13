@@ -12,9 +12,11 @@ import type { DraftView } from "@/lib/socia/types";
 import type { FtpNewsItem, SocialPlatform } from "@/types/newsroom";
 import PostEditor from "../PostEditor";
 import { draftToNews, errorCode, errorText, useLiveDesk } from "./LiveDesk";
+import { correctionOpen, fixedByOther, isCorrecting } from "./correction";
+import { abandonCorrection, correctionFailure, hasEditIntent, takeEditIntent } from "./beginCorrection";
 
-/** Whether this operator may change the open story. */
-export type Lease = { kind: "mine" } | { kind: "held"; name: string } | { kind: "lost" } | { kind: "read" };
+/** Whether this operator may change the open story. `fixing`: someone else holds the posted story for a fix. */
+export type Lease = { kind: "mine" } | { kind: "held"; name: string; fixing?: boolean } | { kind: "lost" } | { kind: "read" };
 
 /** What PostEditor needs on the live desk. */
 export interface LiveEditing {
@@ -27,11 +29,21 @@ export interface LiveEditing {
   claimAgain: () => Promise<void>;
   /** The story left the editor's hands (queued, posted by hand or rejected): stop holding it */
   onFinished: () => void;
+  /**
+   * The story was opened with Edit to fix it after posting (status stays "published"): the editor's correction
+   * mode, kept while the hold is lost so the editor never turns back into a posting editor. Leaving ends the
+   * hold (correction/done) instead of releasing a claim.
+   */
+  correcting: boolean;
+  /** Edit on the open story's own Posted row: hold it for a fix in place and reload it. Resolves to the fresh draft or an error sentence. */
+  correctThis: () => Promise<{ draft: DraftView } | { error: string }>;
 }
 
 interface Opened {
   draft: DraftView;
   lease: Lease;
+  /** Opened in fix mode (Edit pressed and allowed) */
+  fix: boolean;
 }
 
 interface LiveEditorProps {
@@ -46,8 +58,15 @@ interface LiveEditorProps {
   onLinkSlug?: (id: string, linkSlug: string) => void;
 }
 
-const leaseOf = (d: DraftView): Lease =>
-  d.status === "claimed" && d.claim?.mine ? { kind: "mine" } : d.claim && !d.claim.mine ? { kind: "held", name: d.claim.name } : { kind: "read" };
+// A posted story is "mine" only in fix mode (Edit pressed and allowed); held by someone else, they are fixing it
+const leaseOf = (d: DraftView, fix: boolean): Lease => {
+  if (fix ? isCorrecting(d) : d.status === "claimed" && !!d.claim?.mine) return { kind: "mine" };
+  const fixer = fixedByOther(d);
+  if (fixer) return { kind: "held", name: fixer, fixing: true };
+  return d.claim && !d.claim.mine ? { kind: "held", name: d.claim.name } : { kind: "read" };
+};
+
+const CANT_FIX = "This post can't be edited.";
 
 export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved, onLinkSlug, queueOrder }: LiveEditorProps) {
   const desk = useLiveDesk();
@@ -59,13 +78,23 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
   // The story the editor shows right now. A release waits a tick and is skipped if the same story is
   // open again by then (React re-runs effects in development, and a re-render must not drop the claim).
   const openId = useRef<string | null>(null);
+  // Drafts held for a fix after posting: letting one go ends the correction, which keeps the story posted
+  const correcting = useRef(new Set<string>());
 
   const release = useCallback((id: string | null) => {
     if (!id) return;
     setTimeout(() => {
       if (openId.current === id) return;
       if (holding.current === id) holding.current = null;
-      void socia.releaseDraft(id).catch(() => undefined);
+      if (correcting.current.delete(id)) void socia.finishCorrection(id).catch(() => undefined);
+      else void socia.releaseDraft(id).catch(() => undefined);
+    }, 0);
+  }, []);
+
+  // A hold Edit took for a story this editor didn't end up opening: ended a tick later unless it is open again
+  const abandonLater = useCallback((id: string) => {
+    setTimeout(() => {
+      if (openId.current !== id) void abandonCorrection(id);
     }, 0);
   }, []);
 
@@ -74,6 +103,8 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
     let cancelled = false;
     const id = item.id;
     openId.current = id;
+    // Edit took a correction hold for this story just before opening it (left in place for a re-run effect)
+    const pressed = hasEditIntent(id);
     (async () => {
       try {
         let d = await socia.fetchDraft(id);
@@ -85,17 +116,31 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
             d = await socia.fetchDraft(id);
           }
         }
-        const lease = leaseOf(d);
+        const { fix, endHold } = correctionOpen(d, pressed);
+        const lease = leaseOf(d, fix);
         if (cancelled) {
-          if (lease.kind === "mine") release(id);
+          if (pressed) abandonLater(id);
+          else if (lease.kind === "mine") release(id);
           return;
         }
+        if (pressed) takeEditIntent(id);
+        // Edit's hold on a story that can't be fixed here (canCorrect not true, or undone meanwhile): end it now
+        if (endHold) void abandonCorrection(id);
+        if (fix) correcting.current.add(id);
         if (lease.kind === "mine") holding.current = id;
         setError(null);
         // The open story is the one that matters from here on; a late answer for an older one is dropped above
-        setOpened({ draft: d, lease });
+        setOpened({ draft: d, lease, fix });
       } catch (err) {
-        if (!cancelled) setError(errorText(err));
+        if (cancelled) {
+          if (pressed) abandonLater(id);
+          return;
+        }
+        if (pressed) {
+          takeEditIntent(id);
+          void abandonCorrection(id);
+        }
+        setError(errorText(err));
       }
     })();
     return () => {
@@ -103,7 +148,7 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
       if (openId.current === id) openId.current = null;
       release(holding.current === id ? id : null);
     };
-  }, [item.id, canAct, release]);
+  }, [item.id, canAct, release, abandonLater]);
 
   const current = opened && opened.draft.id === item.id ? opened : null;
   const mine = current?.lease.kind === "mine";
@@ -113,6 +158,21 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
   useEffect(() => {
     if (openedId && openedSlug) onLinkSlug?.(openedId, openedSlug);
   }, [openedId, openedSlug, onLinkSlug]);
+
+  // ─── A closing tab ends its correction hold at once ────────────────────────
+  // Otherwise the hold lasts up to 5 minutes and can block the poster's Undo for the whole undo window. Best
+  // effort (a keepalive request, never a prompt); the id leaves `correcting` so the unmount release doesn't
+  // end it again (a second end would only be a harmless no-op).
+  useEffect(() => {
+    const onPageHide = () => {
+      const id = holding.current;
+      if (!id || !correcting.current.delete(id)) return;
+      holding.current = null;
+      socia.finishCorrectionOnExit(id);
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => window.removeEventListener("pagehide", onPageHide);
+  }, []);
 
   // ─── Heartbeat: keeps the 5-minute claim alive while the story is open ─────
   useEffect(() => {
@@ -144,17 +204,43 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
   const claimAgain = useCallback(async () => {
     const id = item.id;
     try {
-      const d = await socia.claimDraft(id);
+      // A lost correction hold is taken again as a correction: a posted story can't be claimed
+      const fix = correcting.current.has(id);
+      const d = fix ? await socia.startCorrection(id) : await socia.claimDraft(id);
       holding.current = id;
-      setOpened({ draft: d, lease: leaseOf(d) });
+      setOpened({ draft: d, lease: leaseOf(d, fix), fix });
     } catch (err) {
       if (errorCode(err) === "held_by_other") {
         const name = String((err as { data?: { heldBy?: string } }).data?.heldBy ?? "Someone");
-        setOpened((o) => (o ? { ...o, lease: { kind: "held", name } } : o));
+        setOpened((o) => (o ? { ...o, lease: { kind: "held", name, fixing: o.fix || o.draft.status === "published" } } : o));
       } else throw err;
     }
   }, [item.id]);
+  const correctThis = useCallback(async (): Promise<{ draft: DraftView } | { error: string }> => {
+    const id = item.id;
+    try {
+      await socia.startCorrection(id);
+    } catch (err) {
+      return { error: correctionFailure(err) };
+    }
+    try {
+      // Reload, so the editor carries on from the draft as the server has it now
+      const d = await socia.fetchDraft(id);
+      if (!correctionOpen(d, true).fix) {
+        void abandonCorrection(id);
+        return { error: CANT_FIX };
+      }
+      correcting.current.add(id);
+      holding.current = id;
+      setOpened({ draft: d, lease: leaseOf(d, true), fix: true });
+      return { draft: d };
+    } catch (err) {
+      void abandonCorrection(id);
+      return { error: errorText(err) };
+    }
+  }, [item.id]);
   const onFinished = useCallback(() => {
+    if (holding.current) correcting.current.delete(holding.current);
     holding.current = null;
   }, []);
 
@@ -185,7 +271,7 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
     );
   }
 
-  const live: LiveEditing = { draft: shown.draft, lease: shown.lease, onDraft, onLeaseLost, onHeldBy, claimAgain, onFinished };
+  const live: LiveEditing = { draft: shown.draft, lease: shown.lease, onDraft, onLeaseLost, onHeldBy, claimAgain, onFinished, correctThis, correcting: shown.fix };
   // Phase 1 (set on the server) opens the same editor; it swaps Post to X for Copy & Mark Posted itself.
   // phase1/Phase1Editor.tsx (the text-first editor) stays in the repo, unused.
   return <PostEditor queueOrder={queueOrder} item={story} platform={platform} onClose={onClose} onSwitch={onSwitch} onSaved={onSaved} live={live} />;

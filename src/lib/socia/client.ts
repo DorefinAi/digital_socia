@@ -1,6 +1,7 @@
 // Fetch wrapper for the Socia API: cookie session, X-CSRF on every write, JSON errors as ApiError.
 
 import { SOCIA_API_URL } from "./config";
+import { keepaliveRequest } from "./keepalive";
 
 /** An error answer from the API. `code` is the contract's `error` field; `data` holds the extra fields. */
 export class ApiError extends Error {
@@ -33,6 +34,19 @@ export function onSignedOut(listener: SignedOutListener): () => void {
 }
 
 const MUTATING = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+
+/**
+ * Sends a write while the page is closing (pagehide). Best effort: nothing waits for it, nothing is retried,
+ * and a failure is dropped.
+ */
+export function sendKeepalive(method: string, path: string): void {
+  try {
+    const { url, init } = keepaliveRequest(SOCIA_API_URL, method, path, csrfToken);
+    void fetch(url, init).catch(() => undefined);
+  } catch {
+    // The page is going away; there is nobody to tell
+  }
+}
 
 /** Per-request options: `signal` cancels the request (an aborted request rejects with the signal's reason) */
 export interface RequestOptions {

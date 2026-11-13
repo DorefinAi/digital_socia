@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Tab, Tabs, Typography } from "@mui/material";
+import { Box, Button, CircularProgress, Tab, Tabs, Tooltip, Typography } from "@mui/material";
+import { PenLine } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { BreakingTag, FtpNewsItem, SocialPlatform } from "@/types/newsroom";
 import { isLiveOn } from "@/data/socialDesk";
@@ -12,6 +13,7 @@ import { REJECTED_NEWS_PERMISSION } from "@/lib/rejectedNews";
 import { isLiveItem, stableQueueToNews, useLiveDesk } from "./live/LiveDesk";
 import NewStoriesPill, { freshHighlightSx } from "./NewStoriesPill";
 import StoryThumb, { THUMB_ROOT_ATTR } from "./live/StoryThumb";
+import { canCorrect, editedLabel } from "./live/correction";
 
 const STATUS_STYLE: Record<string, { label: string; color: string }> = {
   posted: { label: "Posted", color: "success.main" },
@@ -32,7 +34,21 @@ const newestFirst = (a: FtpNewsItem, b: FtpNewsItem) => new Date(b.receivedAt).g
  * Live FTP feed beside the editor: the shown day's whole queue, newest first, new arrivals behind their own pill,
  * click to switch story. Its tabs show Posted today and Rejected in place (to read; the story stays open).
  */
-export default function FtpFeedPanel({ platform, currentId, onPick }: { platform: SocialPlatform; currentId: string; onPick: (item: FtpNewsItem) => void }) {
+export default function FtpFeedPanel({
+  platform,
+  currentId,
+  onPick,
+  onEdit,
+  editingId = null,
+}: {
+  platform: SocialPlatform;
+  currentId: string;
+  onPick: (item: FtpNewsItem) => void;
+  /** Posted today: fix a posted story (the row's Edit, shown where the server allows it). It stays posted. */
+  onEdit?: (item: FtpNewsItem) => void;
+  /** The story whose Edit is starting, so its button shows it is working */
+  editingId?: string | null;
+}) {
   const { ftpNews, socialPosts, socialDrafts } = useNewsroom();
   const desk = useLiveDesk();
   const { can } = usePermissions();
@@ -162,9 +178,13 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
             const fresh = new Date(live?.createdAt ?? n.receivedAt).getTime() > openedAt;
             const cover = n.media[0];
             // Live: who has the story open; never when their hold runs out
-            const holder = live?.claim && !current ? (live.claim.mine ? "With you" : `${live.claim.name} is editing`) : null;
+            // A posted story held by someone is being fixed, not edited for posting
+            const holder = live?.claim && !current ? (live.claim.mine ? "With you" : list === "published" ? `${live.claim.name} is fixing` : `${live.claim.name} is editing`) : null;
             // Posted today and Rejected are lists to read: plain rows, not buttons that do nothing
             const pickable = !otherList;
+            // Posted today: a small Edit to fix the post (the row itself stays plain), and a mark once it was fixed
+            const editable = list === "published" && !!onEdit && !!desk?.canAct && canCorrect(live);
+            const edited = list === "published" ? editedLabel(live?.corrected) : null;
             return (
               <Box
                 key={n.id}
@@ -176,7 +196,7 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
                   // Positioned so the screen-reader label stays inside the scrolling list
                   position: "relative",
                   display: "grid",
-                  gridTemplateColumns: "52px minmax(0, 1fr)",
+                  gridTemplateColumns: editable ? "52px minmax(0, 1fr) auto" : "52px minmax(0, 1fr)",
                   gap: 1,
                   alignItems: "center",
                   width: "100%",
@@ -227,8 +247,36 @@ export default function FtpFeedPanel({ platform, currentId, onPick }: { platform
                         {STATUS_STYLE[status].label}
                       </Box>
                     )}
+                    {edited && (
+                      // Focusable, so keyboard users get the tooltip too; screen readers hear "Edited" and then who and when
+                      <>
+                        <Tooltip title={edited} describeChild>
+                          <Box component="span" tabIndex={0} aria-describedby={`edited-${n.id}`} data-testid="edited-mark" sx={{ flexShrink: 0, px: 0.5, borderRadius: "3px", border: "1px solid", borderColor: "divider", color: "text.secondary", fontWeight: 600, "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}>
+                            Edited
+                          </Box>
+                        </Tooltip>
+                        <Box component="span" id={`edited-${n.id}`} sx={srOnly}>
+                          {edited}
+                        </Box>
+                      </>
+                    )}
                   </Box>
                 </Box>
+                {editable && (
+                  // Sits at the row's foot, clear of the needs-check tag in the top corner
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="inherit"
+                    onClick={() => onEdit?.(n)}
+                    disabled={!!editingId}
+                    aria-label={`Edit the posted story: ${n.headline || "No headline"}`}
+                    startIcon={editingId === n.id ? <CircularProgress size={11} color="inherit" /> : <PenLine size={12} aria-hidden />}
+                    sx={{ alignSelf: "end", minWidth: 0, minHeight: 26, px: 0.75, py: 0, borderRadius: "6px", borderColor: "divider", textTransform: "none", fontSize: "0.6875rem", fontWeight: 700, whiteSpace: "nowrap", "& .MuiButton-startIcon": { mr: 0.5 }, "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}
+                  >
+                    Edit
+                  </Button>
+                )}
               </Box>
             );
           })

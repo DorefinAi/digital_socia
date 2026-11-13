@@ -5,7 +5,7 @@
 // and light so a day of ~700 files stays quick.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Box, Button, IconButton, Tooltip, Typography } from "@mui/material";
+import { Box, Button, CircularProgress, IconButton, Tooltip, Typography } from "@mui/material";
 import { Ban, Check, Copy, Eye, Lock, PenLine, Undo2 } from "lucide-react";
 import type { PublishedPost, QueueItem } from "@/lib/socia/types";
 import { usePermissions } from "@/lib/access/usePermissions";
@@ -14,11 +14,12 @@ import { fileUrl, isLiveItem, postToSocial, useLiveDesk } from "../live/LiveDesk
 import PostedPreviewDialog from "../PostedPreviewDialog";
 import type { QueueViewProps } from "../QueueViews";
 import { freshHighlightSx } from "../NewStoriesPill";
-import { timeAgo } from "../shared";
+import { srOnly, timeAgo } from "../shared";
 import { X_LIMIT } from "../socialText";
 import { XRichText, X_COLORS } from "./XPostPreview";
 import { Badge, NeedsCheckBadges, Phase1Badges, shownNeedsCheck } from "./badges";
 import { ageTone } from "../deskRules";
+import { canCorrect, editedLabel } from "../live/correction";
 
 const AGE_COLOR = { fresh: "success.main", recent: "warning.main", old: "text.disabled" } as const;
 
@@ -226,13 +227,23 @@ function postedPreview(item: FtpNewsItem, live: QueueItem | null, loaded: Publis
 }
 
 /** Phase 1 Posted tab: posts marked with Copy & Mark Posted, newest first, with Undo inside the server's window. */
-export function Phase1PostedList({ items, onNotice }: { items: FtpNewsItem[]; onNotice: (message: string) => void }) {
+export function Phase1PostedList({
+  items,
+  onNotice,
+  onEdit,
+}: {
+  items: FtpNewsItem[];
+  onNotice: (message: string) => void;
+  /** Fix a posted story in the editor; it stays posted. Shown on rows the server marks `canCorrect`. */
+  onEdit?: (item: FtpNewsItem) => Promise<void>;
+}) {
   const desk = useLiveDesk();
   const { can } = usePermissions();
   const mayUndo = can("post.mark_posted");
   const [now, setNow] = useState(() => Date.now());
   const [copied, setCopied] = useState<string | null>(null);
   const [undoing, setUndoing] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState<SocialPost | null>(null);
   // The newest post record per draft (GET /posts is newest first)
   const records = useMemo(() => {
@@ -258,6 +269,15 @@ export function Phase1PostedList({ items, onNotice }: { items: FtpNewsItem[]; on
       onNotice("The browser blocked the clipboard. Open the post and copy the text by hand.");
     }
   };
+  const edit = async (item: FtpNewsItem) => {
+    if (!onEdit || editing) return;
+    setEditing(item.id);
+    try {
+      await onEdit(item);
+    } finally {
+      setEditing(null);
+    }
+  };
   const undo = async (id: string, headline: string) => {
     if (!desk) return;
     setUndoing(id);
@@ -272,6 +292,8 @@ export function Phase1PostedList({ items, onNotice }: { items: FtpNewsItem[]; on
         const live = isLiveItem(item) ? item.live : null;
         const posted = live?.posted;
         const canUndo = mayUndo && !!posted?.undoUntil && new Date(posted.undoUntil).getTime() > now;
+        const editable = !!onEdit && !!desk?.canAct && canCorrect(live);
+        const edited = editedLabel(live?.corrected);
         return (
           <Box key={item.id} role="listitem" sx={rowSx}>
             <Box sx={{ display: { xs: "none", md: "block" }, pt: 0.25 }}>
@@ -287,6 +309,19 @@ export function Phase1PostedList({ items, onNotice }: { items: FtpNewsItem[]; on
               {posted && (
                 <Typography sx={{ mt: 0.5, fontSize: "0.75rem", color: "text.secondary" }}>
                   {posted.by ? `Copied by ${posted.by.name}` : "Copied"} at {clock(posted.at)}, file in at {clock(item.receivedAt)}
+                  {edited && (
+                    // Focusable, so keyboard users get the tooltip too; screen readers hear "Edited" and then who and when
+                    <>
+                      <Tooltip title={edited} describeChild>
+                        <Box component="span" tabIndex={0} aria-describedby={`edited-${item.id}`} data-testid="edited-mark" sx={{ display: "inline-block", ml: 1, px: 0.625, borderRadius: "4px", border: "1px solid", borderColor: "divider", fontSize: "0.6875rem", fontWeight: 600, lineHeight: 1.6, color: "text.secondary", verticalAlign: "1px", "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}>
+                          Edited
+                        </Box>
+                      </Tooltip>
+                      <Box component="span" id={`edited-${item.id}`} sx={srOnly}>
+                        {edited}
+                      </Box>
+                    </>
+                  )}
                 </Typography>
               )}
             </Box>
@@ -307,6 +342,23 @@ export function Phase1PostedList({ items, onNotice }: { items: FtpNewsItem[]; on
                   <IconButton size="small" onClick={() => void copy(item.id, live.postText ?? "")} aria-label={`Copy the post again: ${item.headline}`} sx={{ width: 36, height: 36, borderRadius: "8px" }}>
                     {copied === item.id ? <Check size={15} color={X_COLORS.blue} /> : <Copy size={15} />}
                   </IconButton>
+                </Tooltip>
+              )}
+              {editable && (
+                <Tooltip title="Fix the text or card. It stays posted; copy the fixed text and edit the tweet on X by hand.">
+                  <span>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => void edit(item)}
+                      disabled={!!editing}
+                      startIcon={editing === item.id ? <CircularProgress size={13} color="inherit" /> : <PenLine size={14} />}
+                      aria-label={`Edit the posted story: ${item.headline || "No headline"}`}
+                      sx={previewSx}
+                    >
+                      Edit
+                    </Button>
+                  </span>
                 </Tooltip>
               )}
               {canUndo && (

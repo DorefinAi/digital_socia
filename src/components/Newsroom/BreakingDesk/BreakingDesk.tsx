@@ -29,6 +29,8 @@ import { readPrefill, type TrendPrefill } from "@/lib/trendPrefill";
 import { REJECTED_NEWS_PERMISSION } from "@/lib/rejectedNews";
 import { LiveSendingList } from "./DraftLists";
 import LiveEditor from "./live/LiveEditor";
+import { abandonCorrection, beginCorrection } from "./live/beginCorrection";
+import { runEditFlow } from "./live/correction";
 import { isLiveItem, useLiveDesk } from "./live/LiveDesk";
 import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
 import { useTabBusy } from "@/lib/browserTidy";
@@ -499,6 +501,17 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     return () => cancelAnimationFrame(raf);
   }, [p1, composing, visibleIds, desk?.pending]);
 
+  /** Edit on a Posted row: hold the posted story for a fix, then open it in the editor (it stays posted). No story is open here. */
+  const editPosted = async (n: FtpNewsItem) => {
+    const error = await runEditFlow({
+      leave: async () => true,
+      start: () => beginCorrection(n.id),
+      open: () => setComposing(n),
+      abandon: () => abandonCorrection(n.id),
+    });
+    if (error) setNotice(error);
+  };
+
   const openStory = (newsId: string) => {
     const item = ftpNews.find((n) => n.id === newsId);
     if (item) setComposing(item);
@@ -808,7 +821,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
               hint={p1Narrowed ? "Clear the search or the filters to see more." : "Today's posts land here when someone presses Copy & Mark Posted."}
             />
           ) : (
-            <Phase1PostedList items={sortStories(postedItems, filters.sort)} onNotice={setNotice} />
+            <Phase1PostedList items={sortStories(postedItems, filters.sort)} onNotice={setNotice} onEdit={editPosted} />
           )}
         </>
       )}

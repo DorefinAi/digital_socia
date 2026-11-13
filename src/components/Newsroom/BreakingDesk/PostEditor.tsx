@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Typography, Button, TextField, Dialog, IconButton, Slider, Switch, Tooltip, LinearProgress, Alert, Snackbar, CircularProgress, useMediaQuery } from "@mui/material";
-import type { Theme } from "@mui/material/styles";
+import { alpha, type Theme } from "@mui/material/styles";
 import {
   X as CloseIcon,
   ArrowLeft,
@@ -49,6 +49,7 @@ import {
   Move,
   Scaling,
   MoreHorizontal,
+  PenLine,
   ClipboardCopy,
 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
@@ -99,6 +100,8 @@ import { EDITOR_KEYS, NUDGE, editorKeyFor, editorShortcut, editorShortcutSuffix,
 import { ariaKeyShortcuts, useKeyBindings } from "./keyBindings";
 import { ConfirmPostDialog, EditorShortcutsSheet, LeaveEditorDialog } from "./EditorShortcutsSheet";
 import RewriteNotice from "./RewriteNotice";
+import { FIX_TAKEN_BACK, correctionBanner, editedLabel, runEditFlow, takenBack } from "./live/correction";
+import { abandonCorrection, beginCorrection } from "./live/beginCorrection";
 import { type MenuEntry, useEditorMenu } from "./video/ui/EditorContextMenu";
 
 import VolumeStrip from "./VolumeStrip";
@@ -153,6 +156,8 @@ const ADJUSTMENTS: { key: Exclude<keyof MediaAdjust, "filter">; label: string; m
 const BAR = { bg: "#0E0E10", text: "rgba(255,255,255,0.7)", border: "rgba(255,255,255,0.14)" };
 const SELECT_BLUE = "#2F7BFF";
 /** Saving the card image failed in the browser itself (out of memory), not because of the media */
+/** Ctrl+S while fixing a posted story */
+const PRESS_DONE = "Press Done to save your fix.";
 const CARD_IMAGE_FAILED = "The browser ran out of memory making the card image. Close other tabs and try again.";
 const BACKDROPS = ["blur", "#000000", "#FFFFFF", BREAKING_RED] as const;
 
@@ -346,6 +351,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const phase1 = !!live && !!desk?.phase1;
   const apiPosting = !phase1 || !!features?.xApiPosting;
   const copyMode = phase1 && features?.copyPosted !== false;
+  // Fixing a story that is already posted (Edit on a Posted row): it stays posted and in Posted today. Nothing
+  // here posts or marks it posted again, and nothing is written until Done (no autosave, no save on leaving).
+  // Done saves through the usual save paths with posting off, so new tag-line handles are not added to the
+  // directory (that happens only when a story is posted).
+  const correcting = !!live?.correcting;
   // The post box holds the whole post, body then tag line (postBox.ts). The live desk lays it out as the
   // server assembles it (copy-posted answers with that text); the demo desk keeps its mentions-then-hashtags layout.
   const postFormat: PostFormat = live ? assemblePost : (body, tags, handles) => composePostText(body, handles, tags);
@@ -788,7 +798,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   let blockedReason = "";
   if (takenBy) blockedReason = "Already posted";
-  else if (live?.lease.kind === "held") blockedReason = `${live.lease.name} is working on this story`;
+  else if (live?.lease.kind === "held") blockedReason = live.lease.fixing ? `${live.lease.name} is fixing this post` : `${live.lease.name} is working on this story`;
   else if (live?.lease.kind === "lost") blockedReason = "Claim the story again to post it";
   else if (live && stale !== null) blockedReason = "Someone else saved this story. Choose whose version to keep first";
   else if (!canEdit) blockedReason = "Your role can view posts but not publish them";
@@ -1228,6 +1238,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   const save = () => {
     if (inFlight.current) return;
+    // A fix is written only with Done
+    if (correcting) {
+      setNotice(PRESS_DONE);
+      return;
+    }
     if (live) {
       void runLive("save", async () => {
         await flush();
@@ -1467,11 +1482,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   // Typing saves on its own after a pause (new handles wait for a deliberate save: they may be half-typed)
   useEffect(() => {
-    if (!live || !canEdit || stale !== null || !textDirty || unsavable) return;
+    // Not while fixing a posted story: a fix is written only with Done
+    if (!live || correcting || !canEdit || stale !== null || !textDirty || unsavable) return;
     const timer = setTimeout(() => void serial(() => saveText(false)).catch(liveFail), 1500);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patchKey, canEdit, stale, textDirty, unsavable]);
+  }, [patchKey, correcting, canEdit, stale, textDirty, unsavable]);
 
   // The card drawn on the X background is not uploaded on its own: opening or reading a story changes
   // nothing on the server. It goes up with Post, Save draft or Save as posted, or on leaving after an edit.
@@ -1528,7 +1544,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
    * are the text and card sent and the story marked posted. A refused clipboard marks nothing.
    */
   const copyAndPost = async () => {
-    if (!live || !copyMode || !canCopyPost || inFlight.current) return;
+    if (!live || !copyMode || !canCopyPost || correcting || inFlight.current) return;
     inFlight.current = "copy";
     setBusy("copy");
     setNotPosted(null);
@@ -1626,6 +1642,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const switchToAutoCard = () =>
     runLive("card", async () => {
       if (!live) return;
+      // Going back to the automatic card writes at once, and a fix is written only with Done
+      if (correcting) {
+        setNotice("The automatic card can't be picked while fixing a posted story. Change the card here instead.");
+        return;
+      }
       // Decided inside the queue, on the draft as it is after any upload still in flight
       const d = await serial(async () => {
         const current = draftRef.current ?? live.draft;
@@ -1667,15 +1688,134 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     runLive("save", async () => {
       if (stale !== null) versionRef.current = stale;
       setStale(null);
-      await flush();
+      // A fix is written with Done
+      if (!correcting) await flush();
     });
 
   const claimAgain = () => runLive("claim", async () => live?.claimAgain());
 
+  // ── Correction mode: leaving without Done drops the fix, after a confirm ──
+  const fixChanged = textDirty || cardUnsent;
+  // A fix is written only with Done, so a refresh, tab close or browser navigation with a changed fix asks first
+  const fixUnsaved = correcting && fixChanged;
+  useEffect(() => {
+    if (!fixUnsaved) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [fixUnsaved]);
+  const [fixLeave, setFixLeave] = useState(false);
+  const fixLeaveAnswer = useRef<((leave: boolean) => void) | null>(null);
+  /** Resolves true to leave the fix (nothing changed, or the desk chose to discard it), false to stay */
+  const confirmLeaveFix = () =>
+    !fixChanged
+      ? Promise.resolve(true)
+      : new Promise<boolean>((resolve) => {
+          fixLeaveAnswer.current = resolve;
+          setFixLeave(true);
+        });
+  const answerLeaveFix = (leave: boolean) => {
+    setFixLeave(false);
+    const answer = fixLeaveAnswer.current;
+    fixLeaveAnswer.current = null;
+    answer?.(leave);
+  };
+
+  /**
+   * Correction mode's Done: writes the fix (text, then card), ends the hold and goes back to the desk, saying
+   * what really happened: a post undone meanwhile is reported as such, never as "stays posted".
+   */
+  const finishFix = () =>
+    runLive("save", async () => {
+      if (!live) return;
+      const id = live.draft.id;
+      const statusNow = () => socia.fetchDraft(id).then((d) => d.status as string, () => null);
+      const wasTakenBack = async (err: unknown) => {
+        const code = errorCode(err);
+        return takenBack(code, code === "lease_lost" ? await statusNow() : null);
+      };
+      const leaveTakenBack = () => {
+        live.onFinished();
+        void desk?.refreshAll();
+        onSaved?.(FIX_TAKEN_BACK);
+        onClose();
+      };
+      if (live.lease.kind !== "mine") {
+        // The hold is gone: the post may have been undone, or the hold only ran out
+        const status = await statusNow();
+        if (status !== null && status !== "published") return leaveTakenBack();
+        if (fixChanged) {
+          setNotice("You no longer hold this post, so your fix wasn't saved. Claim it again, then press Done.");
+          return;
+        }
+        live.onFinished();
+        onClose();
+        return;
+      }
+      try {
+        await flush();
+        await serial(() => socia.finishCorrection(id));
+      } catch (err) {
+        if (await wasTakenBack(err)) return leaveTakenBack();
+        throw err;
+      }
+      live.onFinished();
+      void desk?.refreshAll();
+      onSaved?.(
+        fixChanged
+          ? `Fix saved. "${item.headline}" stays posted: copy the fixed text and edit or replace the tweet on X by hand.`
+          : `No changes. "${item.headline}" stays posted.`,
+      );
+      onClose();
+    });
+
+  /**
+   * Posted today's Edit in the left list, in order: leave the open story (saved, or a fix dropped after a
+   * confirm), take the correction hold, open the posted story. A failed open ends the hold at once.
+   */
+  const [startingFix, setStartingFix] = useState<string | null>(null);
+  const editPosted = async (next: FtpNewsItem) => {
+    if (!live || busy || inFlight.current || exporting !== null || startingFix) return;
+    setStartingFix(next.id);
+    try {
+      if (next.id === item.id) {
+        // The open story itself: hold it in place, and carry on from the draft as the server has it now
+        const res = await live.correctThis();
+        if ("error" in res) setNotice(res.error);
+        else adopt(res.draft);
+        return;
+      }
+      const error = await runEditFlow({
+        leave: async () => {
+          if (correcting) return confirmLeaveFix();
+          if (!canEdit) return true;
+          try {
+            const problem = await flushForLeave();
+            if (problem) setTimeout(() => setNotice(problem), 0);
+            return true;
+          } catch (err) {
+            liveFail(err);
+            return false;
+          }
+        },
+        start: () => beginCorrection(next.id),
+        open: () => {
+          if (!onSwitch) throw new Error("The editor can't switch stories here.");
+          onSwitch(next);
+        },
+        abandon: () => abandonCorrection(next.id),
+      });
+      if (error) setNotice(error);
+    } finally {
+      setStartingFix(null);
+    }
+  };
+
   /** Leaving the editor sends what is not saved yet, so nothing typed is lost. */
   const close = async () => {
-    // New tag-line handles are not a reason to save here: leaving never adds them to the directory
-    if (live && canEdit && (textDirty || cardUnsent)) {
+    // New tag-line handles are not a reason to save here: leaving never adds them to the directory. A fix is
+    // never saved by leaving (requestClose has confirmed dropping it).
+    if (live && !correcting && canEdit && (textDirty || cardUnsent)) {
       setBusy("save");
       let cardProblem: string | null = null;
       try {
@@ -1695,7 +1835,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const mockUnsaved = !live && edited && !(mockSaved && mockSaved.text === text && mockSaved.layout === layout && mockSaved.hashtags === hashtags && mockSaved.mentions === mentions);
   const unsaved = canEdit && (live ? textDirty || cardUnsent : mockUnsaved);
   const requestClose = () => {
-    if (busy) return;
+    if (busy || fixLeave) return;
+    if (correcting) {
+      void confirmLeaveFix().then((leave) => leave && onClose());
+      return;
+    }
     if (unsaved) setLeaving(true);
     else void close();
   };
@@ -1742,7 +1886,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   };
   /** The Post button and Ctrl+Enter: a too-close rewording asks first; demo Ctrl+Enter (no undo window) always asks. */
   const requestPost = (via: "button" | "key") => {
-    if (inFlight.current || approveResting()) return;
+    if (inFlight.current || approveResting() || correcting) return;
     if (tooClose) setConfirmPost("tooClose");
     else if (!live && via === "key") setConfirmPost("demo");
     else postNow();
@@ -1751,6 +1895,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // ── Ctrl+Enter: the Post button, with the same checks ──
   const approveByKey = () => {
     if (busy || exporting !== null || approveResting()) return;
+    if (correcting) {
+      setNotice("This story is already posted. Save fix, then Copy fixed text and edit the tweet on X.");
+      return;
+    }
     if (copyMode ? !mayMarkPosted : !mayPublish || (!live && !mayMarkPosted)) {
       setNotice(copyMode ? "Your role can't mark posts as posted." : "Your role can't post to the platforms.");
       return;
@@ -1896,7 +2044,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const cmd = editorKeyFor(e);
       if (!cmd) return;
       // Another dialog, the preview or a menu on top owns the keyboard (MUI closes those with Esc itself)
-      const covered = dialog !== null || linkOpen || sheetOpen || leaving || confirmPost !== null || previewOpen || cardMenu.isOpen;
+      const covered = dialog !== null || linkOpen || sheetOpen || leaving || fixLeave || confirmPost !== null || previewOpen || cardMenu.isOpen;
       if (cmd.id === "post.save") {
         // Even while typing, and never the browser's "Save page"; a held key saves once
         e.preventDefault();
@@ -2020,7 +2168,32 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // On the live desk Post to X is the main action, so Save as posted takes the quieter style of Copy
   const savePostedSx = { minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: "#111", color: "#fff", "&:hover": { backgroundColor: "#333" }, "&.Mui-disabled": { backgroundColor: "rgba(17,17,17,0.35)", color: "rgba(255,255,255,0.7)" } };
 
-  const actionButtons = (onDark: boolean) => (
+  // Correction mode: copy the fixed post (nothing is marked posted) and Done, in place of the posting buttons
+  const correctionButtons = (
+    <>
+      <Tooltip title={copied ? "Copied" : "Copies the fixed post. Nothing is posted or marked posted again."}>
+        <Button onClick={copyText} aria-label={copied ? "Copied" : "Copy fixed text"} startIcon={copied ? <Check size={15} /> : <Copy size={15} />} sx={{ ...chromeButton, border: `1px solid ${BAR.border}`, whiteSpace: "nowrap", ...iconOnlyOnPhone }}>
+          {phoneLabel(copied ? "Copied" : "Copy fixed text")}
+        </Button>
+      </Tooltip>
+      <Tooltip title="Saves the fix, lets the story go and goes back to the desk. It stays posted.">
+        <span>
+          <Button
+            variant="contained"
+            onClick={() => void finishFix()}
+            disabled={!!busy || exporting !== null}
+            aria-label="Done fixing, back to the desk"
+            startIcon={<Check size={16} />}
+            sx={{ minHeight: 38, px: { xs: 1.25, md: 2 }, flexShrink: 0, fontSize: "0.875rem", fontWeight: 800, whiteSpace: "nowrap", backgroundColor: "#fff", color: "#111", "&:hover": { backgroundColor: "rgba(255,255,255,0.86)" }, "&.Mui-disabled": { backgroundColor: "rgba(255,255,255,0.35)", color: "rgba(17,17,17,0.6)" } }}
+          >
+            Done
+          </Button>
+        </span>
+      </Tooltip>
+    </>
+  );
+
+  const actionButtons = (onDark: boolean) => (correcting ? correctionButtons : (
     <>
       <Tooltip title={copied ? "Copied" : `Copy the ${meta.postNoun} with hashtags and mentions`}>
         <Button onClick={copyText} aria-label={copied ? "Copied" : "Copy"} startIcon={copied ? <Check size={15} /> : <Copy size={15} />} sx={onDark ? { ...chromeButton, border: `1px solid ${BAR.border}`, ...iconOnlyOnPhone } : { minHeight: 34 }} variant={onDark ? "text" : "outlined"}>
@@ -2051,15 +2224,20 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       )}
       {postButton(onDark)}
     </>
-  );
+  ));
 
   // The queue's order without the stories someone else is working on (the open one always stays in it)
   const navigationOrder = workableOrder(queueOrder ?? desk?.queue ?? [], item.id, heldByOther);
   const previousStory = adjacentStory(navigationOrder, item.id, -1);
   const nextStory = adjacentStory(navigationOrder, item.id, 1);
   const switchStory = (next: FtpNewsItem) => {
-    if (!onSwitch || next.id === item.id || busy || exporting !== null) return;
+    if (!onSwitch || next.id === item.id || busy || exporting !== null || fixLeave) return;
     if (live) {
+      // Fixing a posted story: nothing is saved by leaving; a changed fix is dropped only after a confirm
+      if (correcting) {
+        void confirmLeaveFix().then((leave) => leave && onSwitch(next));
+        return;
+      }
       if (!canEdit) return onSwitch(next);
       void runLive("save", async () => {
         const problem = await flushForLeave();
@@ -2155,6 +2333,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           {actionButtons(true)}
         </Box>
 
+        {correcting && live && <CorrectionBanner draft={live.draft} />}
+
         <VolumeStrip name={meta.short} used={postedToday} cap={cap} />
 
         {/* Workspace */}
@@ -2212,6 +2392,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 platform={platform}
                 currentId={item.id}
                 onPick={switchStory}
+                onEdit={live ? (n) => void editPosted(n) : undefined}
+                editingId={startingFix}
               />
             )}
 
@@ -2973,11 +3155,17 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             )}
             {live && (live.lease.kind !== "mine" || stale !== null || (exportsVideo && isX)) && (
               <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                {live.lease.kind === "held" && (
-                  <Alert severity="info" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }} action={desk?.canAct ? <Button color="inherit" size="small" onClick={() => void claimAgain()} disabled={!!busy}>Try again</Button> : undefined}>
-                    {live.lease.name} is working on this story. You can look, but not change it.
-                  </Alert>
-                )}
+                {live.lease.kind === "held" &&
+                  (live.lease.fixing ? (
+                    // A colleague's fix of a posted story: nothing to try again until they press Done
+                    <Alert severity="info" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }}>
+                      {live.lease.name} is fixing this post.
+                    </Alert>
+                  ) : (
+                    <Alert severity="info" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }} action={desk?.canAct ? <Button color="inherit" size="small" onClick={() => void claimAgain()} disabled={!!busy}>Try again</Button> : undefined}>
+                      {live.lease.name} is working on this story. You can look, but not change it.
+                    </Alert>
+                  ))}
                 {live.lease.kind === "lost" && (
                   <Alert severity="warning" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }} action={<Button color="inherit" size="small" onClick={() => void claimAgain()} disabled={!!busy}>Claim again</Button>}>
                     You no longer hold this story, so changes aren&apos;t being saved. Claim it again to carry on.
@@ -2985,7 +3173,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 )}
                 {live.lease.kind === "read" && (
                   <Alert severity="info" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }}>
-                    {desk?.canAct ? "This story can't be edited right now." : "Your role can view posts but not publish them."}
+                    {!desk?.canAct ? "Your role can view posts but not publish them." : live.draft.status === "published" ? "This story is already posted. To fix it, press Edit on its row in Posted today." : "This story can't be edited right now."}
                   </Alert>
                 )}
                 {stale !== null && (
@@ -3079,20 +3267,30 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                     </Box>
                   </Tooltip>
                 )}
-                <Button color="error" onClick={() => setDialog("reject")} disabled={!canEdit || !mayReject || !!busy} startIcon={<Ban size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1 }}>
-                  Reject
-                </Button>
+                {/* A posted story being fixed can't be rejected or scheduled */}
+                {!correcting && (
+                  <Button color="error" onClick={() => setDialog("reject")} disabled={!canEdit || !mayReject || !!busy} startIcon={<Ban size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1 }}>
+                    Reject
+                  </Button>
+                )}
                 <Box sx={{ flex: 1 }} />
-                <Button variant="outlined" onClick={save} disabled={!canEdit || !!busy} aria-keyshortcuts={ariaKeyShortcuts(keysById(EDITOR_KEYS, "post.save"))} startIcon={busy === "save" ? <CircularProgress size={13} color="inherit" /> : <Save size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25, whiteSpace: "nowrap" }}>
-                  Save draft
-                </Button>
-                <Tooltip title={live ? "Scheduling isn't available on the live desk yet" : blockedReason}>
-                  <span>
-                    <Button variant="outlined" onClick={() => setDialog("schedule")} disabled={!canPost || !mayPublish || !!live} startIcon={<CalendarClock size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25 }}>
-                      Schedule
-                    </Button>
-                  </span>
-                </Tooltip>
+                {correcting ? (
+                  // A fix is written only with Done (top bar): no Save here
+                  <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", textAlign: "right" }}>Your fix is saved when you press Done.</Typography>
+                ) : (
+                  <Button variant="outlined" onClick={save} disabled={!canEdit || !!busy} aria-keyshortcuts={ariaKeyShortcuts(keysById(EDITOR_KEYS, "post.save"))} startIcon={busy === "save" ? <CircularProgress size={13} color="inherit" /> : <Save size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25, whiteSpace: "nowrap" }}>
+                    Save draft
+                  </Button>
+                )}
+                {!correcting && (
+                  <Tooltip title={live ? "Scheduling isn't available on the live desk yet" : blockedReason}>
+                    <span>
+                      <Button variant="outlined" onClick={() => setDialog("schedule")} disabled={!canPost || !mayPublish || !!live} startIcon={<CalendarClock size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25 }}>
+                        Schedule
+                      </Button>
+                    </span>
+                  </Tooltip>
+                )}
               </Box>
               {savedAt && (
                 <Typography sx={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 0.4, mt: 0.5, fontSize: "0.6875rem", color: "text.secondary" }}>
@@ -3185,6 +3383,15 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         onCancel={() => setConfirmPost(null)}
       />
       <LeaveEditorDialog open={leaving} busy={busy === "save"} onSave={() => void saveAndLeave()} onDiscard={discardAndLeave} onStay={() => setLeaving(false)} />
+      <LeaveFixDialog
+        open={fixLeave}
+        onStay={() => answerLeaveFix(false)}
+        onDiscard={() => answerLeaveFix(true)}
+        onDone={() => {
+          answerLeaveFix(false);
+          void finishFix();
+        }}
+      />
 
       {linkOpen && <PostedLinkDialog open headline={item.headline} platformName={meta.short} busy={busy === "posted"} onClose={() => setLinkOpen(false)} onConfirm={markPostedLive} />}
 
@@ -3194,6 +3401,71 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         </Alert>
       </Snackbar>
     </Dialog>
+  );
+}
+
+/** Correction mode: a fix is written only with Done, so leaving with changes asks first. "Keep fixing" has the focus. */
+function LeaveFixDialog({ open, onStay, onDiscard, onDone }: { open: boolean; onStay: () => void; onDiscard: () => void; onDone: () => void }) {
+  return (
+    <Dialog open={open} onClose={onStay} maxWidth="xs" fullWidth aria-labelledby="x-editor-fix-leave-title" aria-describedby="x-editor-fix-leave-text" slotProps={{ paper: { role: "alertdialog", sx: { borderRadius: "14px", backgroundImage: "none" } } }}>
+      <Box sx={{ p: 2.5 }}>
+        <Typography id="x-editor-fix-leave-title" component="h2" sx={{ fontWeight: 700, fontSize: "1rem" }}>
+          Leave without saving your fix?
+        </Typography>
+        <Typography id="x-editor-fix-leave-text" sx={{ fontSize: "0.8125rem", color: "text.secondary", mt: 0.75, lineHeight: 1.55 }}>
+          Changes to this posted story are saved only when you press Done. Leave now and they are dropped; the post stays as it was.
+        </Typography>
+        <Box sx={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 1, mt: 2.5 }}>
+          <Button onClick={onStay} autoFocus sx={{ color: "text.secondary" }}>
+            Keep fixing
+          </Button>
+          <Button color="error" onClick={onDiscard}>
+            Discard fix
+          </Button>
+          <Button variant="contained" onClick={onDone}>
+            Done
+          </Button>
+        </Box>
+      </Box>
+    </Dialog>
+  );
+}
+
+/**
+ * Correction mode, under the top bar: the story is already posted, and fixing it here posts nothing. Saying so
+ * every time keeps the desk from expecting the tweet on X to change by itself.
+ */
+function CorrectionBanner({ draft }: { draft: DraftView }) {
+  const c = draft.correction;
+  const lastFix = c?.correctedAt ? editedLabel({ at: c.correctedAt, by: c.correctedBy }) : null;
+  return (
+    <Box
+      role="status"
+      aria-live="polite"
+      sx={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 1.25,
+        px: { xs: 1.5, sm: 2 },
+        py: 1,
+        flexShrink: 0,
+        backgroundColor: (t) => alpha(t.palette.warning.main, t.palette.mode === "dark" ? 0.18 : 0.12),
+        borderBottom: "1px solid",
+        borderColor: (t) => alpha(t.palette.warning.main, 0.5),
+        color: "text.primary",
+      }}
+    >
+      <Box aria-hidden sx={{ display: "grid", placeItems: "center", flexShrink: 0, width: 26, height: 26, mt: "1px", borderRadius: "6px", backgroundColor: "warning.main", color: "#111" }}>
+        <PenLine size={14} />
+      </Box>
+      <Box sx={{ minWidth: 0 }}>
+        <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, lineHeight: 1.5 }}>
+          <Box component="span" sx={{ fontWeight: 800 }}>Fixing a posted story. </Box>
+          {correctionBanner(draft)}
+        </Typography>
+        {lastFix && <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.25 }}>Last fix: {lastFix.replace(/^Edited/, "edited")}.</Typography>}
+      </Box>
+    </Box>
   );
 }
 

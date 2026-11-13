@@ -1,6 +1,6 @@
 // Every Socia endpoint the desk uses, one function each. Shapes: ./types.ts.
 
-import { ApiError, api, setCsrfToken } from "./client";
+import { ApiError, api, sendKeepalive, setCsrfToken } from "./client";
 import { QUEUE_PAGE_MAX, type QueueDay, readQueueView } from "./queueDay";
 import type {
   CardTemplateLayout, CopyPostedResult, Counts, DeskHandle, DraftPatch, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, OrgCardTemplate, OrgCardTemplateLayout, OrgCardTemplatePatch, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, StorySearchResponse, UserCardTemplate,
@@ -93,6 +93,16 @@ export const undoCopyPosted = (id: string) => api<DraftView>("POST", `/drafts/${
 /** "Add card": the server draws the card (202, `card.state: "rendering"`); safe to call again */
 export const renderCard = (id: string) => api<DraftView>("POST", `/drafts/${enc(id)}/card/render`);
 export const retryDraft = (id: string) => api<{ jobId: string }>("POST", `/drafts/${enc(id)}/retry`);
+/**
+ * Fix a posted story: holds it for editing while it stays posted (status "published", claim mine). The
+ * heartbeat keeps the hold; saveDraft and uploadCard work under it. 409 held_by_other, 403 forbidden (only
+ * the person who posted it or an admin), 409 too_late (today's posts only), 409 invalid_state.
+ */
+export const startCorrection = (id: string) => api<DraftView>("POST", `/drafts/${enc(id)}/correction`);
+/** Ends the correction hold; the story stays posted. */
+export const finishCorrection = (id: string) => api<DraftView>("POST", `/drafts/${enc(id)}/correction/done`);
+/** finishCorrection for a closing tab (pagehide): a keepalive request nobody waits for. A second end is a no-op on the server. */
+export const finishCorrectionOnExit = (id: string) => sendKeepalive("POST", `/drafts/${enc(id)}/correction/done`);
 
 // ─── Published ───────────────────────────────────────────────────────────────
 export const fetchPosts = (limit = 50) => api<{ items: PublishedPost[] }>("GET", `/posts?limit=${limit}`);

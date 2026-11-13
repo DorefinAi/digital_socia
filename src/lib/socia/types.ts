@@ -232,6 +232,30 @@ export interface QueueItem {
   linkSlug?: string;
   /** Readable download name without extension ("Jaipur-SMS-aspatal-...-09Nov-2241"). Absent on older servers. */
   fileStem?: string;
+  /**
+   * view=posted: whether the signed-in user may fix this posted story (the person who posted it or an admin,
+   * today's posts only). Absent on a server without corrections: the desk then offers no Edit.
+   */
+  canCorrect?: boolean;
+  /** view=posted: the last fix made after posting; null when never fixed. Absent on older servers. */
+  corrected?: PostCorrected | null;
+}
+
+/** A fix made to a story after it was posted (who and when) */
+export interface PostCorrected {
+  at: string;
+  by: { id: string; name: string } | null;
+}
+
+/**
+ * DraftView.correction: set on a posted draft. While someone holds a correction the status stays "published"
+ * and their claim is `mine`; saves and card uploads work under it and change nothing about the post count.
+ */
+export interface DraftCorrection {
+  postedAt: string;
+  postedBy: { id: string; name: string } | null;
+  correctedAt: string | null;
+  correctedBy: { id: string; name: string } | null;
 }
 
 /** How urgent Samvadia marked a story */
@@ -422,6 +446,10 @@ export interface DraftView {
    * null for drafts not made from the Web Scraper, and absent on older servers.
    */
   rewrite?: DraftRewrite | null;
+  /** A posted draft's correction record (POST /drafts/:id/correction). Absent on older servers. */
+  correction?: DraftCorrection | null;
+  /** Whether the signed-in user may fix this posted draft; absent (older server) counts as false */
+  canCorrect?: boolean;
 }
 
 /** How a Web Scraper draft was reworded and how close it still is to its sources */
