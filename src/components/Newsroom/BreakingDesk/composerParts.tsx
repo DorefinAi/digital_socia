@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useId, useState } from "react";
 import { Box, Typography, IconButton, Checkbox } from "@mui/material";
 import { Send, Plus, Heart, MessageCircle, Repeat2, Bookmark, BarChart2 } from "lucide-react";
 import { SocialPlatform } from "@/types/newsroom";
@@ -8,6 +8,7 @@ import { CHANNEL } from "@/constants";
 import { BREAKING_RED } from "./TemplateCanvas";
 import { TagSuggestion, normaliseTag } from "./socialText";
 import { RichPostText } from "./shared";
+import { REPORTER_GROUP_LABEL, groupSuggestions, sourceLabel } from "./suggestionGroups";
 
 export interface TagOption extends TagSuggestion {
   checked: boolean;
@@ -41,6 +42,18 @@ export function TagPicker({
 }) {
   const [draft, setDraft] = useState("");
   const selected = options.filter((o) => o.checked).length;
+  // The reporter's usual tags sit in their own group under the normal rows; ticking one is the same one click
+  const { normal, reporter } = groupSuggestions(options);
+  const reporterHeadId = useId();
+  const tick = (option: TagOption) => (
+    <Checkbox
+      size="small"
+      checked={option.checked}
+      disabled={disabled}
+      onChange={(e) => onChange(options.map((o) => (o === option ? { ...o, checked: e.target.checked } : o)))}
+      sx={{ p: 0.75 }}
+    />
+  );
 
   const add = () => {
     const value = normaliseTag(draft, prefix);
@@ -65,7 +78,7 @@ export function TagPicker({
             No automatic match for this story. Add one below.
           </Typography>
         )}
-        {options.map((option, i) => (
+        {normal.map((option, i) => (
           <Box
             key={option.value}
             component="label"
@@ -80,13 +93,7 @@ export function TagPicker({
               "&:hover": { backgroundColor: "action.hover" },
             }}
           >
-            <Checkbox
-              size="small"
-              checked={option.checked}
-              disabled={disabled}
-              onChange={(e) => onChange(options.map((o) => (o === option ? { ...o, checked: e.target.checked } : o)))}
-              sx={{ p: 0.75 }}
-            />
+            {tick(option)}
             <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
               {option.value}
             </Typography>
@@ -98,6 +105,37 @@ export function TagPicker({
             </Typography>
           </Box>
         ))}
+        {reporter.length > 0 && (
+          <Box role="group" aria-labelledby={reporterHeadId} sx={{ borderTop: normal.length ? "1px solid" : "none", borderColor: "divider" }}>
+            <Typography id={reporterHeadId} sx={{ px: 1.25, pt: 0.75, pb: 0.25, fontSize: "0.6875rem", fontWeight: 600, color: "text.secondary" }}>
+              {REPORTER_GROUP_LABEL}
+            </Typography>
+            {reporter.map((option) => {
+              const tag = sourceLabel(option.source);
+              return (
+                <Box
+                  key={option.value}
+                  component="label"
+                  sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, pr: 1.25, pb: 0.5, cursor: disabled ? "default" : "pointer", "&:hover": { backgroundColor: "action.hover" } }}
+                >
+                  {tick(option)}
+                  <Box sx={{ flex: 1, minWidth: 0, pt: 0.6 }}>
+                    <Typography component="span" sx={{ fontSize: "0.8125rem", fontWeight: 600, overflowWrap: "anywhere" }}>
+                      {option.value}
+                    </Typography>
+                    {tag && (
+                      <Typography component="span" sx={{ ml: 0.75, px: 0.5, fontSize: "0.625rem", fontWeight: 600, color: "text.secondary", border: "1px solid", borderColor: "divider", borderRadius: "4px", whiteSpace: "nowrap" }}>
+                        {tag}
+                      </Typography>
+                    )}
+                    {/* The reason wraps in full: it is the evidence for ticking it */}
+                    <Typography sx={{ fontSize: "0.6875rem", lineHeight: 1.4, color: "text.secondary", overflowWrap: "anywhere" }}>{option.reason}</Typography>
+                  </Box>
+                </Box>
+              );
+            })}
+          </Box>
+        )}
         <Box sx={{ display: "flex", borderTop: options.length ? "1px solid" : "none", borderColor: "divider" }}>
           <Box
             component="input"

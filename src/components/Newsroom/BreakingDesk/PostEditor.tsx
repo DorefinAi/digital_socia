@@ -72,6 +72,7 @@ import { RejectDialog, ScheduleDialog } from "./actionDialogs";
 import { FoldedPanelStrip, PanelResizeHandle, PanelsConfig, useResizablePanels } from "./ResizablePanels";
 import { CategoryLabel, PLATFORM_META, PlatformIcon, priorityTag, rejectedNotice, srOnly, storyTag, TAG_TINT, tagTint } from "./shared";
 import { PostMock, TagOption, TagPicker, fieldSx, sectionLabel } from "./composerParts";
+import { offeredHashtags, offeredMentions } from "./suggestionGroups";
 import VideoTimeline, { CLIP_SPEEDS, TimelineText, clock, outputLength } from "./VideoTimeline";
 import TextControls, { ALIGN_ICONS, FontSelect } from "./TextControls";
 import TemplatePicker from "./TemplatePicker";
@@ -307,13 +308,18 @@ const designStore = {
   },
 };
 
-/** Hashtag and mention choices from the server's draft: its own tags ticked, handle matches offered. */
+/**
+ * Hashtag and mention choices from the server's draft: its own tags ticked, suggestions offered unticked
+ * (the reporter's usual tags among them; TagPicker shows those in their own group).
+ */
 function liveTags(d: DraftView) {
-  const at = (h: string) => (h.startsWith("@") ? h : `@${h}`);
-  const hashtags: TagOption[] = d.hashtags.map((value) => ({ value, reason: "From the story", checked: true }));
+  const hashtags: TagOption[] = [
+    ...d.hashtags.map((value) => ({ value, reason: "From the story", checked: true })),
+    ...offeredHashtags(d.hashtagSuggestions, d.hashtags),
+  ];
   const mentions: TagOption[] = [
     ...d.mentions.map((value) => ({ value, reason: "In the draft", checked: true })),
-    ...d.mentionSuggestions.filter((s) => !d.mentions.includes(at(s.handle))).map((s) => ({ value: at(s.handle), reason: `Handle for ${s.entity}`, checked: false })),
+    ...offeredMentions(d.mentionSuggestions, d.mentions),
   ];
   return { hashtags, mentions };
 }
