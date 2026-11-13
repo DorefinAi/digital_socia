@@ -25,8 +25,13 @@ export interface LiveEditing {
   /** Adopt a draft the server answered with (keeps the version current) */
   onDraft: (draft: DraftView) => void;
   onLeaseLost: () => void;
-  onHeldBy: (name: string) => void;
-  claimAgain: () => Promise<void>;
+  /** Someone else holds the story now; `fixing` when it is a posted story they are fixing */
+  onHeldBy: (name: string, fixing?: boolean) => void;
+  /**
+   * Take the story (again): a claim, or a correction hold for a posted story. Resolves to the draft as the
+   * server has it now, or null when someone else got it first (the lease then names them).
+   */
+  claimAgain: () => Promise<DraftView | null>;
   /** The story left the editor's hands (queued, posted by hand or rejected): stop holding it */
   onFinished: () => void;
   /**
@@ -197,23 +202,52 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
     holding.current = null;
     setOpened((o) => (o ? { ...o, lease: { kind: "lost" } } : o));
   }, []);
-  const onHeldBy = useCallback((name: string) => {
+  const onHeldBy = useCallback((name: string, fixing?: boolean) => {
     holding.current = null;
-    setOpened((o) => (o ? { ...o, lease: { kind: "held", name } } : o));
+    setOpened((o) => (o ? { ...o, lease: { kind: "held", name, ...(fixing ? { fixing } : {}) } } : o));
   }, []);
-  const claimAgain = useCallback(async () => {
+  // Read by claimAgain: whether the open story is a posted one (taken as a correction hold, never a claim)
+  const openedRef = useRef(opened);
+  useEffect(() => {
+    openedRef.current = opened;
+  });
+  const claimAgain = useCallback(async (): Promise<DraftView | null> => {
     const id = item.id;
+    const o = openedRef.current;
     try {
-      // A lost correction hold is taken again as a correction: a posted story can't be claimed
-      const fix = correcting.current.has(id);
-      const d = fix ? await socia.startCorrection(id) : await socia.claimDraft(id);
+      // A lost correction hold, or a posted story someone else was fixing (watch mode's Start editing), is
+      // taken as a correction: a posted story can't be claimed
+      const fix = correcting.current.has(id) || (o?.draft.id === id && o.draft.status === "published");
+      if (fix) {
+        await socia.startCorrection(id);
+        let d: DraftView;
+        try {
+          d = await socia.fetchDraft(id);
+        } catch (err) {
+          // The hold was taken but the story didn't load: give the hold up rather than leave it for 5 minutes
+          void abandonCorrection(id);
+          throw err;
+        }
+        if (!correctionOpen(d, true).fix) {
+          void abandonCorrection(id);
+          throw new Error(CANT_FIX);
+        }
+        correcting.current.add(id);
+        holding.current = id;
+        setOpened({ draft: d, lease: leaseOf(d, true), fix: true });
+        return d;
+      }
+      const d = await socia.claimDraft(id);
       holding.current = id;
-      setOpened({ draft: d, lease: leaseOf(d, fix), fix });
+      setOpened({ draft: d, lease: leaseOf(d, false), fix: false });
+      return d;
     } catch (err) {
       if (errorCode(err) === "held_by_other") {
         const name = String((err as { data?: { heldBy?: string } }).data?.heldBy ?? "Someone");
-        setOpened((o) => (o ? { ...o, lease: { kind: "held", name, fixing: o.fix || o.draft.status === "published" } } : o));
-      } else throw err;
+        setOpened((prev) => (prev ? { ...prev, lease: { kind: "held", name, fixing: prev.fix || prev.draft.status === "published" } } : prev));
+        return null;
+      }
+      throw err;
     }
   }, [item.id]);
   const correctThis = useCallback(async (): Promise<{ draft: DraftView } | { error: string }> => {

@@ -17,3 +17,10 @@ test("no CSRF header without a token, or on a read", () => {
   assert.deepEqual(keepaliveRequest("http://api.test", "POST", "/x", null).init.headers, {});
   assert.deepEqual(keepaliveRequest("http://api.test", "GET", "/x", "tok").init.headers, {});
 });
+
+test("a body goes as JSON (live presence's leave on a closing tab)", () => {
+  const { init } = keepaliveRequest("/socia-api", "POST", "/live/leave", "tok", { clientId: "c1", draftId: "d1" });
+  assert.deepEqual(init.headers, { "x-csrf": "tok", "content-type": "application/json" });
+  assert.equal(init.body, JSON.stringify({ clientId: "c1", draftId: "d1" }));
+  assert.equal(init.keepalive, true);
+});

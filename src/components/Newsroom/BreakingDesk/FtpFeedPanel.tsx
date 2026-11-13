@@ -15,6 +15,7 @@ import { isLiveItem, stableQueueToNews, useLiveDesk } from "./live/LiveDesk";
 import NewStoriesPill, { freshHighlightSx } from "./NewStoriesPill";
 import StoryThumb, { THUMB_ROOT_ATTR } from "./live/StoryThumb";
 import { canCorrect, editedLabel, needsCheckDescription } from "./live/correction";
+import { RowPresence, RowPresenceSpace } from "./live/Presence";
 
 const STATUS_STYLE: Record<string, { label: string; color: string }> = {
   posted: { label: "Posted", color: "success.main" },
@@ -29,6 +30,8 @@ const FEED_TABS: [FeedList, string][] = [
   ["published", "Posted today"],
   ["rejected", "Rejected"],
 ];
+/** About how wide the needs-check tag is, for the headline's room beside the corner badges */
+const CHECK_TAG_W = 28;
 const newestFirst = (a: FtpNewsItem, b: FtpNewsItem) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime();
 
 /**
@@ -229,7 +232,11 @@ export default function FtpFeedPanel({
                   ) : null}
                 </Box>
                 <Box sx={{ minWidth: 0 }}>
-                  <Typography sx={{ fontSize: "0.75rem", fontWeight: 600, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{n.headline}</Typography>
+                  <Typography sx={{ fontSize: "0.75rem", fontWeight: 600, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                    {/* Live: the first line keeps clear of the corner badges (and the needs-check tag beside them) */}
+                    {live && <RowPresenceSpace draftId={n.id} besideWidth={checks.length ? CHECK_TAG_W + 6 : 0} />}
+                    {n.headline}
+                  </Typography>
                   <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.4, minWidth: 0, overflow: "hidden", fontSize: "0.625rem", color: "text.secondary", whiteSpace: "nowrap" }}>
                     {/* The tint carries the tag on screen; screen readers hear it */}
                     {tag && (
@@ -280,40 +287,47 @@ export default function FtpFeedPanel({
                     Edit
                   </Button>
                 )}
-                {checks.length > 0 && (
-                  // Hover for the details. The details are also in the row's text (srOnly, below), so screen readers
-                  // and keyboard users get them; describeChild keeps the tooltip from naming the mark a second time.
-                  <Tooltip
-                    placement="right"
-                    arrow
-                    describeChild
-                    title={
-                      <Box sx={{ py: 0.25 }}>
-                        {checks.map((r) => (
-                          <Box key={r} sx={{ fontSize: "0.75rem", lineHeight: 1.45, "& + &": { mt: 0.75 } }}>
-                            <b>{needsCheckLabel(r)}.</b> {needsCheckHint(r)}
+                {/* The row's top-right corner: the needs-check tag, then who else is on the story (live presence).
+                    Placed over the row, so the row keeps its height */}
+                {(checks.length > 0 || live) && (
+                  <Box sx={{ position: "absolute", top: 4, right: 4, display: "flex", alignItems: "center", gap: "6px" }}>
+                    {checks.length > 0 && (
+                      // Hover for the details. The details are also in the row's text (srOnly, below), so screen readers
+                      // and keyboard users get them; describeChild keeps the tooltip from naming the mark a second time.
+                      <Tooltip
+                        placement="right"
+                        arrow
+                        describeChild
+                        title={
+                          <Box sx={{ py: 0.25 }}>
+                            {checks.map((r) => (
+                              <Box key={r} sx={{ fontSize: "0.75rem", lineHeight: 1.45, "& + &": { mt: 0.75 } }}>
+                                <b>{needsCheckLabel(r)}.</b> {needsCheckHint(r)}
+                              </Box>
+                            ))}
                           </Box>
-                        ))}
-                      </Box>
-                    }
-                  >
-                    <Box
-                      component="span"
-                      data-testid="needs-check-mark"
-                      // In the plain Posted / Rejected rows it takes focus, so keyboard users can open the details;
-                      // its text already holds them, so the tooltip doesn't describe it again
-                      tabIndex={pickable ? undefined : 0}
-                      aria-describedby={undefined}
-                      // A small red tag in the row's top-right corner
-                      sx={{ position: "absolute", top: 4, right: 4, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "1px", minWidth: 22, height: 17, px: "4px", borderRadius: "4px", backgroundColor: "error.main", color: "#fff", fontSize: "0.625rem", fontWeight: 700, lineHeight: 1, "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}
-                    >
-                      <AlertTriangle size={11} aria-hidden />
-                      <span aria-hidden>{checks.length > 1 && checks.length}</span>
-                      <Box component="span" sx={srOnly}>
-                        {needsCheckDescription(checks, needsCheckLabel, needsCheckHint)}
-                      </Box>
-                    </Box>
-                  </Tooltip>
+                        }
+                      >
+                        <Box
+                          component="span"
+                          data-testid="needs-check-mark"
+                          // In the plain Posted / Rejected rows it takes focus, so keyboard users can open the details;
+                          // its text already holds them, so the tooltip doesn't describe it again
+                          tabIndex={pickable ? undefined : 0}
+                          aria-describedby={undefined}
+                          // A small red tag, just left of the presence badges in the row's top-right corner
+                          sx={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "1px", minWidth: 22, height: 17, px: "4px", borderRadius: "4px", backgroundColor: "error.main", color: "#fff", fontSize: "0.625rem", fontWeight: 700, lineHeight: 1, "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}
+                        >
+                          <AlertTriangle size={11} aria-hidden />
+                          <span aria-hidden>{checks.length > 1 && checks.length}</span>
+                          <Box component="span" sx={srOnly}>
+                            {needsCheckDescription(checks, needsCheckLabel, needsCheckHint)}
+                          </Box>
+                        </Box>
+                      </Tooltip>
+                    )}
+                    {live && <RowPresence draftId={n.id} />}
+                  </Box>
                 )}
               </Box>
             );

@@ -1,6 +1,7 @@
 // Every Socia endpoint the desk uses, one function each. Shapes: ./types.ts.
 
 import { ApiError, api, sendKeepalive, setCsrfToken } from "./client";
+import { SOCIA_API_URL } from "./config";
 import { QUEUE_PAGE_MAX, type QueueDay, readQueueView } from "./queueDay";
 import type {
   CardTemplateLayout, CopyPostedResult, Counts, DeskHandle, DraftPatch, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, OrgCardTemplate, OrgCardTemplateLayout, OrgCardTemplatePatch, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, StorySearchResponse, UserCardTemplate,
@@ -103,6 +104,28 @@ export const startCorrection = (id: string) => api<DraftView>("POST", `/drafts/$
 export const finishCorrection = (id: string) => api<DraftView>("POST", `/drafts/${enc(id)}/correction/done`);
 /** finishCorrection for a closing tab (pagehide): a keepalive request nobody waits for. A second end is a no-op on the server. */
 export const finishCorrectionOnExit = (id: string) => sendKeepalive("POST", `/drafts/${enc(id)}/correction/done`);
+
+// ─── Live presence (live.tsx) ─────────────────────────────────────────────────
+// The stream is an EventSource on /live/stream; these POSTs carry the `clientId` its `hello` event gave. Each
+// answers { ok, error?, mode? }. A server without live presence answers 404, and live.tsx then stays off.
+
+export interface LiveAnswer {
+  ok: boolean;
+  error?: string;
+  mode?: "edit" | "watch";
+}
+
+/** The live stream's URL (through the /socia-api proxy, or the API's own origin in direct mode) */
+export const liveStreamUrl = (platform = "x") => `${SOCIA_API_URL}/live/stream?platform=${encodeURIComponent(platform)}`;
+export const liveJoin = (clientId: string, draftId: string, mode: "edit" | "watch") => api<LiveAnswer>("POST", "/live/join", { clientId, draftId, mode });
+export const liveLeave = (clientId: string, draftId: string) => api<LiveAnswer>("POST", "/live/leave", { clientId, draftId });
+/** liveLeave for a closing tab (pagehide): a keepalive request nobody waits for */
+export const liveLeaveOnExit = (clientId: string, draftId: string) => sendKeepalive("POST", "/live/leave", { clientId, draftId });
+export const liveState = (clientId: string, s: { draftId: string; text: string; selStart: number; selEnd: number; version: number }) =>
+  api<LiveAnswer>("POST", "/live/state", { clientId, ...s });
+export const liveTakeoverRequest = (clientId: string, draftId: string) => api<LiveAnswer>("POST", "/live/takeover/request", { clientId, draftId });
+export const liveTakeoverAnswer = (clientId: string, draftId: string, requesterId: string, accept: boolean) =>
+  api<LiveAnswer>("POST", "/live/takeover/answer", { clientId, draftId, requesterId, accept });
 
 // ─── Published ───────────────────────────────────────────────────────────────
 export const fetchPosts = (limit = 50) => api<{ items: PublishedPost[] }>("GET", `/posts?limit=${limit}`);

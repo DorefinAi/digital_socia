@@ -19,6 +19,7 @@ import { SOCIA_API_URL, POLL_MS } from "@/lib/socia/config";
 import { usePolled, type Polled } from "@/lib/socia/usePolled";
 import { usePermissions } from "@/lib/access/usePermissions";
 import { usePhase } from "@/lib/socia/usePhase";
+import { LiveProvider } from "@/lib/socia/live";
 import {
   errorCode,
   errorText,
@@ -404,8 +405,15 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
       ? [refreshInbox, rejected.refresh, posts.refresh, counts.refresh, postedView.refresh, inboxFacets.refresh, postedFacets.refresh]
       : [refreshInbox, sending.refresh, failed.refresh, rejected.refresh, posts.refresh, counts.refresh];
   const refreshers = useRef(pollers());
+  // The same pollers' soft refresh, for live queue events: never cancels a read already running
+  const nudgers = () =>
+    phase1
+      ? [inbox.nudge, rejected.nudge, posts.nudge, counts.nudge, postedView.nudge, inboxFacets.nudge, postedFacets.nudge]
+      : [inbox.nudge, sending.nudge, failed.nudge, rejected.nudge, posts.nudge, counts.nudge];
+  const nudges = useRef(nudgers());
   useEffect(() => {
     refreshers.current = pollers();
+    nudges.current = nudgers();
   });
   const known = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -431,6 +439,8 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
     () => void Promise.all(refreshers.current.map((r) => r())),
     [],
   );
+  /** A live queue event (live.tsx calls it at most every 2 s, visible tabs only): a soft refresh of every list */
+  const nudgeAll = useCallback(() => nudges.current.forEach((n) => n()), []);
 
   // ─── Undo window ───────────────────────────────────────────────────────────
   const [pending, setPending] = useState<LivePending[]>([]);
@@ -686,7 +696,11 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
   );
   return (
     <LiveDeskContext.Provider value={value}>
-      {children}
+      {/* Presence and watch mode (src/lib/socia/live.tsx). Off on the Templates page; while connected, a queue
+          event refreshes the desk sooner (polling carries on as the fallback) */}
+      <LiveProvider enabled={phaseKnown} onQueueEvent={nudgeAll}>
+        {children}
+      </LiveProvider>
     </LiveDeskContext.Provider>
   );
 }

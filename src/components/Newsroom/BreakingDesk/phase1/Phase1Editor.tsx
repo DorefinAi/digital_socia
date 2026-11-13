@@ -675,12 +675,12 @@ export default function Phase1Editor({ item, onClose, onSaved, live }: Phase1Edi
               {(live.lease.kind !== "mine" || stale !== null) && (
                 <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
                   {live.lease.kind === "held" && (
-                    <Alert severity="info" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }} action={desk?.canAct ? <Button color="inherit" size="small" onClick={() => void run("claim", live.claimAgain)} disabled={!!busy}>Try again</Button> : undefined}>
+                    <Alert severity="info" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }} action={desk?.canAct ? <Button color="inherit" size="small" onClick={() => void run("claim", async () => void (await live.claimAgain()))} disabled={!!busy}>Try again</Button> : undefined}>
                       {live.lease.name} is working on this story. You can read it, but not change it.
                     </Alert>
                   )}
                   {live.lease.kind === "lost" && (
-                    <Alert severity="warning" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }} action={<Button color="inherit" size="small" onClick={() => void run("claim", live.claimAgain)} disabled={!!busy}>Claim again</Button>}>
+                    <Alert severity="warning" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }} action={<Button color="inherit" size="small" onClick={() => void run("claim", async () => void (await live.claimAgain()))} disabled={!!busy}>Claim again</Button>}>
                       You no longer hold this story, so changes aren&apos;t being saved. Claim it again to carry on.
                     </Alert>
                   )}

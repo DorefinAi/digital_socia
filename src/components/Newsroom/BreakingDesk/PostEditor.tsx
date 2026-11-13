@@ -105,6 +105,11 @@ import { abandonCorrection, beginCorrection } from "./live/beginCorrection";
 import { type MenuEntry, useEditorMenu } from "./video/ui/EditorContextMenu";
 
 import VolumeStrip from "./VolumeStrip";
+import { useStoryLive, type TakeoverRequest } from "./live/useStoryLive";
+import LiveCaret from "./live/LiveCaret";
+import { HeaderPresence } from "./live/Presence";
+import { HandedOverNote, HolderLeftBanner, LiveNote, LiveUnavailableNote, TakeoverDialog, WatchBanner } from "./live/WatchMode";
+import { LIVE_PLATFORM, firstName } from "@/lib/socia/liveCore";
 import { adjacentStory, counterTone, steppedTextSize, storyAfterPosted, workableOrder } from "./deskRules";
 
 /** Someone else holds this story (their claim), so the studio steps over it */
@@ -116,6 +121,14 @@ const heldByOther = (n: FtpNewsItem) => isLiveItem(n) && !!n.live.claim && !n.li
  * Module-level: the next story may open in a fresh editor.
  */
 const ADVANCE_QUIET_MS = 1000;
+/** The asker's claim after a hand-over: started by the release, else tried after this long, then every second up to the window */
+const TAKEOVER_FALLBACK_MS = 1500;
+const TAKEOVER_RETRY_MS = 1000;
+const TAKEOVER_CLAIM_MS = 15_000;
+/** Watch mode with a post too long to stream: the saved draft is read again at most this often */
+const SAVED_TEXT_READ_MS = 5000;
+/** The clock for the take-over claim timers (called from timers and events only) */
+const nowMs = () => Date.now();
 let approveQuietUntil = 0;
 const restApproveAfterAdvance = () => {
   approveQuietUntil = Date.now() + ADVANCE_QUIET_MS;
@@ -1676,17 +1689,20 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const loadTheirs = () =>
     runLive("save", async () => {
       if (!live) return;
-      const d = await socia.fetchDraft(live.draft.id);
-      adopt(d);
-      const box = openLive(d);
-      setText(box.text);
-      setHashtags(box.hashtags);
-      setMentions(box.mentions);
-      // Their text, untouched, is the server's own: nothing to save until it is edited
-      setStart((s) => ({ ...s, pristine: box.pristine, openMentions: box.openMentions }));
-      patch({ headline: draftCardHeadline(d.cardHeadline, d) });
-      setStale(null);
+      loadBox(await socia.fetchDraft(live.draft.id));
     });
+  /** The post box and card headline as the server has them in `d` (their version, or the story after someone else edited it) */
+  const loadBox = (d: DraftView) => {
+    adopt(d);
+    const box = openLive(d);
+    setText(box.text);
+    setHashtags(box.hashtags);
+    setMentions(box.mentions);
+    // Their text, untouched, is the server's own: nothing to save until it is edited
+    setStart((s) => ({ ...s, pristine: box.pristine, openMentions: box.openMentions }));
+    patch({ headline: draftCardHeadline(d.cardHeadline, d) });
+    setStale(null);
+  };
   const keepMine = () =>
     runLive("save", async () => {
       if (stale !== null) versionRef.current = stale;
@@ -1695,7 +1711,158 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       if (!correcting) await flush();
     });
 
-  const claimAgain = () => runLive("claim", async () => live?.claimAgain());
+  const claimAgain = () =>
+    runLive("claim", async () => {
+      await live?.claimAgain();
+    });
+
+  // ── Live presence: who else is here, watch mode and take-over (live/useStoryLive.ts) ──
+  const [tweetBox, setTweetBox] = useState<HTMLTextAreaElement | null>(null);
+  /** After taking the story, the keyboard goes to the Tweet box (the banner that had focus is gone) */
+  const focusTweetBox = () => setTimeout(() => tweetBox?.focus(), 0);
+  const tookStory = (d: DraftView) => {
+    loadBox(d);
+    focusTweetBox();
+  };
+  /**
+   * Watch mode's Start editing: the claim-again path, then the post box reloads from the server (the holder
+   * changed it while this editor only watched). The first to press gets the story.
+   */
+  const startEditing = () =>
+    runLive("claim", async () => {
+      if (!live) return;
+      const d = await live.claimAgain();
+      if (d) tookStory(d);
+      else setNotice("Someone else started editing this story first. You're watching them now.");
+    });
+
+  // The asker's side of a hand-over. The holder answers yes before letting go, so the claim starts when the
+  // story is released (the queue event); a retry every second is the fallback. A claim waits its turn behind
+  // anything already running (an autosave, a card upload) instead of being dropped.
+  const takeover = useRef<{ draftId: string; until: number; timer: ReturnType<typeof setTimeout> | null } | null>(null);
+  const tryTakeoverClaim = async () => {
+    const t = takeover.current;
+    if (!t || !live || live.draft.id !== t.draftId) {
+      if (t?.timer) clearTimeout(t.timer);
+      takeover.current = null;
+      return;
+    }
+    if (t.timer) clearTimeout(t.timer);
+    t.timer = null;
+    if (inFlight.current) {
+      t.timer = setTimeout(() => void tryClaimRef.current(), 250);
+      return;
+    }
+    const got: { draft: DraftView | null } = { draft: null };
+    await runLive("claim", async () => {
+      got.draft = await live.claimAgain();
+    });
+    if (takeover.current !== t) return;
+    if (got.draft) {
+      takeover.current = null;
+      tookStory(got.draft);
+    } else if (nowMs() < t.until) t.timer = setTimeout(() => void tryClaimRef.current(), TAKEOVER_RETRY_MS);
+    else {
+      takeover.current = null;
+      setNotice("Couldn't take the story yet. Try Start editing.");
+    }
+  };
+  // Timers call the latest version (set after each render)
+  const tryClaimRef = useRef<() => Promise<void>>(async () => undefined);
+  useEffect(() => {
+    tryClaimRef.current = tryTakeoverClaim;
+  });
+  useEffect(
+    () => () => {
+      if (takeover.current?.timer) clearTimeout(takeover.current.timer);
+      takeover.current = null;
+    },
+    [],
+  );
+  const storyLive = useStoryLive({
+    // The live stream is opened for X; a story on another platform is not joined (the server would refuse it)
+    draftId: live && live.draft.platform === LIVE_PLATFORM ? live.draft.id : null,
+    lease: live?.lease ?? null,
+    text,
+    textarea: tweetBox,
+    version: () => versionRef.current,
+    onClaimedBy: (name) => live?.onHeldBy(name, live.lease.kind === "held" && !!live.lease.fixing),
+    onAccepted: () => {
+      if (!live) return;
+      if (takeover.current?.timer) clearTimeout(takeover.current.timer);
+      // The release event usually comes first; this only starts the fallback
+      takeover.current = { draftId: live.draft.id, until: nowMs() + TAKEOVER_CLAIM_MS, timer: setTimeout(() => void tryClaimRef.current(), TAKEOVER_FALLBACK_MS) };
+    },
+    onFreed: () => {
+      if (takeover.current) void tryClaimRef.current();
+    },
+  });
+  const watching = !!live && storyLive.watching;
+  const holderColor = storyLive.holder?.color ?? "#7048E8";
+  const holderFirst = firstName(storyLive.holder?.name ?? (live?.lease.kind === "held" ? live.lease.name : "Someone"));
+  // Taking over a fix needs the right to fix this posted story (the server says so in canCorrect)
+  const mayTakeOver = !!live && !!desk?.canAct && can("draft.edit") && (live.lease.kind !== "held" || !live.lease.fixing || live.draft.canCorrect === true);
+  /**
+   * Watch mode shows the holder's live text in the Tweet box (read-only); the person's own text is untouched. A
+   * post too long to stream shows the saved draft instead (reloaded below).
+   */
+  const shownText = watching && storyLive.remote && !storyLive.remoteLong ? storyLive.remote.text : text;
+  /** The counter counts what the box shows */
+  const boxUsed = shownText === text ? used : countChars(shownText, platform);
+
+  // Too long to stream: the box shows the saved draft, read again at most every few seconds while the holder types
+  const savedReadAt = useRef(0);
+  const remoteAt = storyLive.remote?.receivedAt;
+  const showSaved = watching && storyLive.remoteLong;
+  const liveId = live?.draft.id;
+  const loadBoxRef = useRef(loadBox);
+  useEffect(() => {
+    loadBoxRef.current = loadBox;
+  });
+  // Runs again on each new state from the holder (remoteAt), at most every SAVED_TEXT_READ_MS
+  useEffect(() => {
+    if (!showSaved || !liveId || Date.now() - savedReadAt.current < SAVED_TEXT_READ_MS) return;
+    savedReadAt.current = Date.now();
+    void socia
+      .fetchDraft(liveId)
+      .then((d) => loadBoxRef.current(d))
+      .catch(() => undefined);
+  }, [showSaved, remoteAt, liveId]);
+
+  // The holder's side of a take-over: save (posting off), say yes while still holding the story (the server takes
+  // an answer only from the holder), then let it go: a release, or the end of a fix hold. In fix mode the holder
+  // chose first: save the fix (it overwrites the posted record) or drop it.
+  const [handingTo, setHandingTo] = useState<TakeoverRequest | null>(null);
+  const handOver = (fixChoice?: "save" | "drop") => {
+    const req = storyLive.incoming;
+    if (!live || !req || live.lease.kind !== "mine" || busy || inFlight.current) return;
+    const id = live.draft.id;
+    const fix = correcting;
+    const changed = textDirty || cardUnsent;
+    const saving = !fix || fixChoice === "save";
+    setHandingTo(req);
+    void runLive("save", async () => {
+      try {
+        if (saving) await flush();
+        const refused = await storyLive.accept();
+        if (refused) {
+          const still = refused === "no_request" ? `${firstName(req.name)}'s ask ran out, so the story stays with you.` : "The story wasn't handed over, so it stays with you.";
+          setNotice(saving ? `${still} Your changes are saved.` : still);
+          return;
+        }
+        await serial<unknown>(() => (fix ? socia.finishCorrection(id) : socia.releaseDraft(id)));
+        live.onFinished();
+        storyLive.markHandedOver(req.name);
+        live.onHeldBy(req.name, fix);
+        void desk?.refreshAll();
+        if (fix && changed && saving) onSaved?.(`Fix saved. "${item.headline}" stays posted: copy the fixed text and edit or replace the tweet on X by hand.`);
+        // A dropped fix: the screen goes back to the post as it stands
+        if (fix && !saving) loadBox(await socia.fetchDraft(id));
+      } finally {
+        setHandingTo(null);
+      }
+    });
+  };
 
   // ── Correction mode: leaving without Done drops the fix, after a confirm ──
   const fixChanged = textDirty || cardUnsent;
@@ -2328,6 +2495,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               See on X
             </Box>
           </Button>
+          {live && <HeaderPresence draftId={live.draft.id} barColor={BAR.bg} />}
           <Tooltip title={phase1 ? `${meta.short} posts marked posted today` : `${meta.short} posts saved today against the daily cap`}>
             <Typography sx={{ display: { xs: "none", md: "block" }, px: 0.75, fontSize: "0.75rem", fontVariantNumeric: "tabular-nums", color: capReached ? "#FF8A80" : BAR.text, whiteSpace: "nowrap" }}>
               {phase1 ? `${postedToday} posted today` : `${postedToday} / ${cap} today`}
@@ -3158,7 +3326,19 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             )}
             {live && (live.lease.kind !== "mine" || stale !== null || (exportsVideo && isX)) && (
               <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                {/* Watch mode. Just after handing over: "Handed over to X" until they take it (and if they never do, the
+                    story is simply free); otherwise the holder's banner, or "X left" once the story is free */}
+                {live.lease.kind === "held" && watching && storyLive.handedTo && !storyLive.gone && <HandedOverNote name={storyLive.handedTo} />}
+                {live.lease.kind === "held" && watching && storyLive.gone && (
+                  <HolderLeftBanner name={storyLive.handedTo ? null : storyLive.gone} onStart={() => void startEditing()} busy={busy === "claim"} canStart={mayTakeOver} />
+                )}
+                {live.lease.kind === "held" && watching && !storyLive.gone && !storyLive.handedTo && (
+                  <WatchBanner name={holderFirst} color={holderColor} fixing={!!live.lease.fixing} ask={storyLive.ask} onAsk={storyLive.askTakeover} canAsk={mayTakeOver} />
+                )}
+                {/* Only after live view had worked and dropped; with live presence off, nothing new shows */}
+                {live.lease.kind === "held" && !watching && storyLive.dropped && <LiveUnavailableNote />}
                 {live.lease.kind === "held" &&
+                  !watching &&
                   (live.lease.fixing ? (
                     // A colleague's fix of a posted story: nothing to try again until they press Done
                     <Alert severity="info" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }}>
@@ -3198,21 +3378,49 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             <Box>
               <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 0.75 }}>
                 <Typography sx={{ fontSize: "0.9375rem", fontWeight: 700 }}>{isX ? "Tweet" : platform === "Facebook" ? "Post text" : "Caption"}</Typography>
-                <Box sx={{ display: "flex", gap: 0.25 }}>
-                  <Button size="small" onClick={makeCrisp} startIcon={<Scissors size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem" }}>
-                    Fit to 280
-                  </Button>
-                  <Button size="small" onClick={() => setText(withBody(text, item.shortText, splitOpts))} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.secondary" }}>
-                    Revert to original
-                  </Button>
-                </Box>
+                {watching ? (
+                  <LiveNote at={storyLive.remote?.receivedAt ?? null} final={!!storyLive.gone} saved={storyLive.remoteLong} />
+                ) : (
+                  <Box sx={{ display: "flex", gap: 0.25 }}>
+                    <Button size="small" onClick={makeCrisp} startIcon={<Scissors size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem" }}>
+                      Fit to 280
+                    </Button>
+                    <Button size="small" onClick={() => setText(withBody(text, item.shortText, splitOpts))} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.secondary" }}>
+                      Revert to original
+                    </Button>
+                  </Box>
+                )}
               </Box>
               {live?.draft.rewrite && <RewriteNotice rewrite={live.draft.rewrite} />}
-              <TextField multiline minRows={isX ? 4 : 5} maxRows={10} fullWidth size="small" value={text} onChange={(e) => setText(e.target.value)} onBlur={settleBox} slotProps={{ htmlInput: { "aria-label": `${isX ? "Tweet" : platform === "Facebook" ? "Post" : "Caption"} text`, readOnly: !!live && !canEdit } }} sx={fieldSx} />
+              {/* Watch mode: the holder's live text, read-only, in a dashed border of their colour, with their cursor drawn over it */}
+              <Box sx={{ position: "relative" }}>
+                <TextField
+                  multiline
+                  minRows={isX ? 4 : 5}
+                  maxRows={10}
+                  fullWidth
+                  size="small"
+                  value={shownText}
+                  onChange={(e) => setText(e.target.value)}
+                  onBlur={settleBox}
+                  inputRef={setTweetBox}
+                  slotProps={{ htmlInput: { "aria-label": `${isX ? "Tweet" : platform === "Facebook" ? "Post" : "Caption"} text${watching ? `, ${holderFirst} editing live` : ""}`, readOnly: !!live && !canEdit } }}
+                  sx={watching && !storyLive.gone ? { ...fieldSx, "& .MuiOutlinedInput-notchedOutline, & .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline, & .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline": { borderStyle: "dashed", borderWidth: "2px", borderColor: holderColor } } : fieldSx}
+                />
+                {watching && !storyLive.gone && storyLive.remote && !storyLive.remoteLong && (
+                  <LiveCaret target={tweetBox} text={storyLive.remote.text} selStart={storyLive.remote.selStart} selEnd={storyLive.remote.selEnd} color={storyLive.remote.color || holderColor} name={firstName(storyLive.remote.name)} changedAt={storyLive.remote.receivedAt} />
+                )}
+              </Box>
               <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, mt: 0.75 }}>
-                <LinearProgress variant="determinate" value={Math.min(100, (used / limits.text) * 100)} color={counterTone(used, limits.text, isX)} sx={{ flex: 1, height: 4, borderRadius: 2 }} />
-                <Typography sx={{ fontSize: "0.75rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: `${counterTone(used, limits.text, isX)}.main` }}>
-                  {used} / {limits.text}
+                <LinearProgress variant="determinate" value={Math.min(100, (boxUsed / limits.text) * 100)} color={counterTone(boxUsed, limits.text, isX)} sx={{ flex: 1, height: 4, borderRadius: 2 }} />
+                <Typography sx={{ fontSize: "0.75rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: `${counterTone(boxUsed, limits.text, isX)}.main` }}>
+                  {boxUsed} / {limits.text}
+                  {watching && !storyLive.gone && (
+                    <Box component="span" sx={{ fontWeight: 400, color: "text.secondary" }}>
+                      {" "}
+                      · read-only while {holderFirst} edits
+                    </Box>
+                  )}
                 </Typography>
               </Box>
               <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.25 }}>
@@ -3396,6 +3604,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         }}
       />
 
+      <TakeoverDialog request={storyLive.incoming ?? handingTo} busy={!!handingTo || !!busy || exporting !== null} fixChanged={correcting && (textDirty || cardUnsent)} onKeep={storyLive.decline} onHandOver={handOver} />
       {linkOpen && <PostedLinkDialog open headline={item.headline} platformName={meta.short} busy={busy === "posted"} onClose={() => setLinkOpen(false)} onConfirm={markPostedLive} />}
 
       <Snackbar open={!!notice} autoHideDuration={5000} onClose={() => setNotice("")} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>

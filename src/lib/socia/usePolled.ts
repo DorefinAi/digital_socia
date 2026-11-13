@@ -8,12 +8,17 @@ export interface Polled<T> {
   /** True until the first answer (or error) arrives */
   loading: boolean;
   refresh: () => Promise<void>;
+  /**
+   * A refresh that never cancels one already running: with a request in flight it asks for one more read after
+   * it, else it reads now. For live queue events, which must not keep aborting a slow read.
+   */
+  nudge: () => void;
 }
 
 /**
  * Loads `fetcher` now and again every `intervalMs` while the tab is visible, and on focus.
- * Stands in for the backend's Socket.IO events, which this app does not subscribe to
- * because socket.io-client is not a dependency. Pass `enabled: false` to pause.
+ * The desk's source of truth: live presence (src/lib/socia/live.tsx) only makes it refresh sooner when a
+ * queue event arrives, and a desk without the live stream relies on it alone. Pass `enabled: false` to pause.
  *
  * Only the latest request counts: starting one cancels the one in flight (its `signal` aborts), and a key
  * change or unmount cancels too, so a slow answer for an old key (an earlier day's pages) never lands.
@@ -25,6 +30,8 @@ export function usePolled<T>(fetcher: (signal: AbortSignal) => Promise<T>, inter
     fetcherRef.current = fetcher;
   });
   const inFlight = useRef<AbortController | null>(null);
+  // A nudge came while a read was in flight: read once more when it ends
+  const again = useRef(false);
 
   const refresh = useCallback(async () => {
     inFlight.current?.abort();
@@ -38,9 +45,23 @@ export function usePolled<T>(fetcher: (signal: AbortSignal) => Promise<T>, inter
       if (request.signal.aborted) return;
       setState((s) => ({ key, data: s.key === key ? s.data : null, error: err as Error, loaded: true }));
     } finally {
-      if (inFlight.current === request) inFlight.current = null;
+      if (inFlight.current === request) {
+        inFlight.current = null;
+        if (again.current) {
+          again.current = false;
+          void refreshRef.current();
+        }
+      }
     }
   }, [key]);
+  const refreshRef = useRef(refresh);
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
+  const nudge = useCallback(() => {
+    if (inFlight.current) again.current = true;
+    else void refresh();
+  }, [refresh]);
 
   // A new key (or leaving the page) cancels what the old key still has in flight
   useEffect(
@@ -71,5 +92,5 @@ export function usePolled<T>(fetcher: (signal: AbortSignal) => Promise<T>, inter
 
   // A key change (e.g. switching tabs) shows nothing stale from the previous key
   const current = state.key === key;
-  return { data: current ? state.data : null, error: current ? state.error : null, loading: !current || !state.loaded, refresh };
+  return { data: current ? state.data : null, error: current ? state.error : null, loading: !current || !state.loaded, refresh, nudge };
 }
