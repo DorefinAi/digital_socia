@@ -600,3 +600,32 @@ export interface SourceHealth {
   /** Others get a generic message */
   lastError: { at: string; message: string; code?: string } | null;
 }
+
+// ─── Story search (GET /search/stories) ──────────────────────────────────────
+/** How a story matched: the words as typed, by sound (Roman "hadsa" → हादसा), or through a Hindi/English translation */
+export type StorySearchMatch = "text" | "phonetic" | "translated";
+
+export interface StorySearchItem {
+  id: string;
+  /** Hindi */
+  headline: string | null;
+  /** About 140 characters of the body around the match */
+  snippet: string | null;
+  /** English, e.g. "Jaipur" */
+  district: string | null;
+  /** Hindi */
+  town: string | null;
+  /** The X draft's status (same values as the server's DRAFT_STATUSES) */
+  status: DraftStatus;
+  /** ISO */
+  receivedAt: string;
+  /** Set only when the story has an X draft the desk can still open (30 days); opens it at /ai-content/x?story=<linkSlug> */
+  linkSlug: string | null;
+  match: StorySearchMatch;
+}
+
+export interface StorySearchResponse {
+  items: StorySearchItem[];
+  /** The Hindi/English forms the query was expanded to, e.g. ["दुर्घटना", "हादसा"] for "accident" */
+  expanded: string[];
+}

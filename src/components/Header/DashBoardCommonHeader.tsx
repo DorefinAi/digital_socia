@@ -66,7 +66,7 @@ function HeaderAction({
   label: string;
   onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
   children: React.ReactNode;
-  "aria-haspopup"?: "menu";
+  "aria-haspopup"?: "menu" | "dialog";
   "aria-expanded"?: "true" | "false";
   "aria-keyshortcuts"?: string;
 }) {
@@ -147,9 +147,11 @@ const DashBoardCommonHeader: React.FC = () => {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+      // Held keys repeat; one press is one toggle. toLowerCase: Caps Lock or Shift gives "K"
+      if (!e.repeat && e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        setSearchOpen(true);
+        // Ctrl+K toggles: it opens the search and, pressed again inside it, closes it
+        setSearchOpen((o) => !o);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -425,8 +427,14 @@ const DashBoardCommonHeader: React.FC = () => {
               {mode === "light" ? <Moon size={18} color={iconColor} /> : <Sun size={18} color={iconColor} />}
             </HeaderAction>
 
-            {/* Quick Access; Cmd/Ctrl+K opens it from anywhere */}
-            <HeaderAction label="Quick access (⌘K / Ctrl+K)" aria-keyshortcuts="Control+K Meta+K" onClick={() => setSearchOpen(true)}>
+            {/* Search; Cmd/Ctrl+K opens and closes it from anywhere */}
+            <HeaderAction
+              label="Search stories and pages (Ctrl+K)"
+              aria-keyshortcuts="Control+K Meta+K"
+              aria-haspopup="dialog"
+              aria-expanded={searchOpen ? "true" : "false"}
+              onClick={() => setSearchOpen(true)}
+            >
               <Zap size={18} color={mode === "light" ? "#2563eb" : "#60a5fa"} />
             </HeaderAction>
 

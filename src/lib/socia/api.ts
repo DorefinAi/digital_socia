@@ -3,7 +3,7 @@
 import { ApiError, api, setCsrfToken } from "./client";
 import { QUEUE_PAGE_MAX, type QueueDay, readQueueView } from "./queueDay";
 import type {
-  CardTemplateLayout, CopyPostedResult, Counts, DeskHandle, DraftPatch, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, OrgCardTemplate, OrgCardTemplateLayout, OrgCardTemplatePatch, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, UserCardTemplate,
+  CardTemplateLayout, CopyPostedResult, Counts, DeskHandle, DraftPatch, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, OrgCardTemplate, OrgCardTemplateLayout, OrgCardTemplatePatch, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, StorySearchResponse, UserCardTemplate,
 } from "./types";
 
 const enc = encodeURIComponent;
@@ -131,6 +131,13 @@ export const updateOrgCardTemplate = (slug: string, patch: OrgCardTemplatePatch)
   api<{ template: OrgCardTemplate }>("PATCH", `/card-templates/${enc(slug)}`, patch);
 /** Admin only. Cards already posted keep their own image. */
 export const deleteOrgCardTemplate = (slug: string) => api<unknown>("DELETE", `/card-templates/${enc(slug)}`);
+
+// ─── Story search ────────────────────────────────────────────────────────────
+/** Stories matching `q` in Hindi or English (1–100 characters; `limit` 1–50). 429 rate_limited when typed too fast. */
+export function searchStories(q: string, limit = 20, signal?: AbortSignal) {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  return api<StorySearchResponse>("GET", `/search/stories?${params}`, undefined, { signal });
+}
 
 // ─── Source health ───────────────────────────────────────────────────────────
 export const fetchIngestStatus = () => api<IngestStatus>("GET", "/ingest/status");

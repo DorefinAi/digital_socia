@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --import ./src/components/Newsroom/BreakingDesk/video/timeline/__checks__/resolve-ts.mjs --test src/components/Newsroom/BreakingDesk/deskRules.test.ts src/components/Newsroom/BreakingDesk/video/srt.test.ts src/components/Newsroom/BreakingDesk/live/cardFit.test.ts src/components/Newsroom/BreakingDesk/live/cardDate.test.ts src/components/Newsroom/BreakingDesk/live/rgbPng.test.ts src/components/Newsroom/BreakingDesk/live/cardKey.test.ts src/lib/socia/queueDay.test.ts src/components/Newsroom/BreakingDesk/suggestionGroups.test.ts src/components/Newsroom/BreakingDesk/fontMatch.test.ts"
+    "test": "node --import ./src/components/Newsroom/BreakingDesk/video/timeline/__checks__/resolve-ts.mjs --test src/components/Newsroom/BreakingDesk/deskRules.test.ts src/components/Newsroom/BreakingDesk/video/srt.test.ts src/components/Newsroom/BreakingDesk/live/cardFit.test.ts src/components/Newsroom/BreakingDesk/live/cardDate.test.ts src/components/Newsroom/BreakingDesk/live/rgbPng.test.ts src/components/Newsroom/BreakingDesk/live/cardKey.test.ts src/lib/socia/queueDay.test.ts src/components/Newsroom/BreakingDesk/suggestionGroups.test.ts src/components/Newsroom/BreakingDesk/fontMatch.test.ts src/components/Header/pageSearch.test.ts"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
