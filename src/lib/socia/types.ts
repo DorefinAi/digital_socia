@@ -272,6 +272,27 @@ export interface MentionSuggestion {
   entity: string;
   handle: string;
   exact: boolean;
+  /**
+   * Where the suggestion came from. "reporter_prior" (measured from the reporter's own posts) and
+   * "reporter_beat" (a beat the desk declared for the reporter) show in their own "Reporter usually tags"
+   * group; anything else, or none (older servers), is a normal suggestion.
+   */
+  source?: string;
+  /** Why it was suggested, in the desk's words ("CM mentioned without a name") */
+  reason?: string;
+  /** reporter_prior: share of the reporter's posts that carried it (0..1) */
+  score?: number;
+  /** reporter_prior: how many posts the share was measured on */
+  n?: number;
+}
+
+/** A hashtag suggestion with its origin; older servers send a bare "#Tag" string instead */
+export interface HashtagSuggestion {
+  tag: string;
+  source?: string;
+  reason?: string;
+  score?: number;
+  n?: number;
 }
 
 /** Why a breaking draft got the handles it got (post_drafts.handle_pick) */
@@ -318,7 +339,7 @@ export interface DraftView {
    * until somebody accepts one: applying them automatically was wrong more often than right. Empty on
    * drafts composed before this shipped and on non-breaking drafts.
    */
-  hashtagSuggestions?: string[];
+  hashtagSuggestions?: (string | HashtagSuggestion)[];
   mentions: string[];
   mentionSuggestions: MentionSuggestion[];
   postText: string;

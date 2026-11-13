@@ -71,6 +71,8 @@ export interface TagSuggestion {
   reason: string;
   /** Proposed by the model rather than the directory; never pre-accepted */
   ai?: boolean;
+  /** Live desk: where the server's suggestion came from (suggestionGroups.ts picks its group) */
+  source?: string;
 }
 
 export function suggestHashtags(item: FtpNewsItem, rules: HashtagRule[]): TagSuggestion[] {
