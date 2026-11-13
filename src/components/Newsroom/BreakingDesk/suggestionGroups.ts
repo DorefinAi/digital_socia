@@ -12,21 +12,24 @@ export const REPORTER_SOURCES = ["reporter_prior", "reporter_beat"] as const;
 
 export const REPORTER_GROUP_LABEL = "Reporter usually tags";
 
-export const isReporterSource = (source: string | null | undefined): boolean =>
-  !!source && (REPORTER_SOURCES as readonly string[]).includes(source);
+export const isReporterSource = (source: unknown): boolean =>
+  typeof source === "string" && (REPORTER_SOURCES as readonly string[]).includes(source);
 
-/** Splits suggestions into the normal group and the reporter group, each keeping its order */
+/** Splits suggestions into the normal group and the reporter group, each keeping its order; a missing item is skipped */
 export function groupSuggestions<T extends { source?: string | null }>(items: readonly T[]): { normal: T[]; reporter: T[] } {
   const normal: T[] = [];
   const reporter: T[] = [];
-  for (const item of items) (isReporterSource(item.source) ? reporter : normal).push(item);
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    (isReporterSource(item.source) ? reporter : normal).push(item);
+  }
   return { normal, reporter };
 }
 
 /** A short tag beside the suggestion, for sources the reason alone doesn't name */
 export const sourceLabel = (source: string | null | undefined): string | null => (source === "reporter_beat" ? "declared beat" : null);
 
-/** A suggestion as the editor offers it: unticked, with its reason and source */
+/** A suggestion as the editor offers it: unticked, with its reason ("" when the server's was malformed) and source */
 export interface OfferedTag {
   value: string;
   reason: string;
@@ -37,6 +40,21 @@ export interface OfferedTag {
 const at = (h: string) => (h.startsWith("@") ? h : `@${h}`);
 const hash = (t: string) => (t.startsWith("#") ? t : `#${t}`);
 const text = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+/** One Unicode form for every offered value, the form tagKey compares in: a tag sent twice (NFC and NFD) shows once, as NFC */
+const nfc = (v: string) => v.normalize("NFC");
+/** The draft's own tags as keys; anything that isn't a string is skipped rather than breaking every suggestion */
+const draftKeys = (onDraft: readonly unknown[] | undefined, prefix: (v: string) => string) =>
+  new Set((Array.isArray(onDraft) ? onDraft : []).map(text).filter(Boolean).map((v) => tagKey(prefix(v))));
+/**
+ * A suggestion's reason: its own when it is text, the fallback when it has none (missing, null or blank), and ""
+ * when it sent something that isn't text, so only that suggestion's reason line is hidden.
+ */
+const reasonOf = (raw: unknown, fallback: string): string => {
+  if (raw === undefined || raw === null) return fallback;
+  if (typeof raw !== "string") return "";
+  return raw.trim() || fallback;
+};
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 /**
  * Adds a suggestion unless the draft already carries it. When two suggestions are the same tag (any case),
@@ -55,16 +73,22 @@ function addOffer(out: OfferedTag[], index: Map<string, number>, onDraft: Readon
   }
 }
 
-/** The draft's handle suggestions not already on it; the server's reason wins over "Handle for <entity>" */
-export function offeredMentions(suggestions: readonly MentionSuggestion[], onDraft: readonly string[]): OfferedTag[] {
-  const have = new Set(onDraft.map((m) => tagKey(at(m.trim()))));
+/**
+ * The draft's handle suggestions not already on it; the server's reason wins over "Handle for <entity>". A
+ * malformed suggestion (not an object, no text handle) is skipped on its own; the others are still offered.
+ */
+export function offeredMentions(suggestions: readonly MentionSuggestion[] | undefined, onDraft: readonly string[] | undefined): OfferedTag[] {
+  const have = draftKeys(onDraft, at);
   const out: OfferedTag[] = [];
   const index = new Map<string, number>();
-  for (const s of suggestions) {
-    const handle = text(s.handle);
+  for (const s of Array.isArray(suggestions) ? suggestions : []) {
+    if (!isObject(s)) continue;
+    const handle = nfc(text(s.handle));
     if (!handle.replace(/^@+/, "")) continue;
-    const reason = text(s.reason) || `Handle for ${s.entity}`;
-    addOffer(out, index, have, { value: at(handle), reason, ...(s.source ? { source: s.source } : {}), checked: false });
+    const entity = text(s.entity);
+    const reason = reasonOf(s.reason, entity ? `Handle for ${entity}` : "");
+    const source = text(s.source);
+    addOffer(out, index, have, { value: at(handle), reason, ...(source ? { source } : {}), checked: false });
   }
   return out;
 }
@@ -73,9 +97,10 @@ export function offeredMentions(suggestions: readonly MentionSuggestion[], onDra
  * A server hashtag as the editor would write it (the same normaliseTag typed tags go through), or "" when it
  * isn't a clean tag: anything normalising would have to change beyond the leading # ("Jaipur Police",
  * "Raj.Gov", "#") is dropped rather than offered under the reporter's evidence as a tag they never used.
+ * The result is NFC, so a Hindi tag sent in its decomposed form is offered (and shown) as the composed one.
  */
 export function offerableHashtag(raw: unknown): string {
-  const tag = text(raw);
+  const tag = nfc(text(raw));
   const value = normaliseTag(tag, "#");
   return value && isHashtag(value) && value.slice(1) === tag.replace(/^#+/, "") ? value : "";
 }
@@ -87,14 +112,16 @@ export const PLAIN_HASHTAG_REASON = "Suggested";
  * Every hashtag suggestion the editor offers, unticked. Bare strings and objects with any other source
  * ("reporter_policy", "district.inferred", none) go in the normal list with their reason when they have one;
  * reporter_prior/reporter_beat ones go in the "Reporter usually tags" group. Tags already on the draft, and
- * anything offerableHashtag would have to rewrite, are skipped.
+ * anything offerableHashtag would have to rewrite, are skipped. A reason that isn't text hides that one
+ * suggestion's reason line; the suggestion itself is still offered.
  */
-export function offeredHashtags(suggestions: readonly (string | HashtagSuggestion)[] | undefined, onDraft: readonly string[]): OfferedTag[] {
-  const have = new Set(onDraft.map((t) => tagKey(hash(t.trim()))));
+export function offeredHashtags(suggestions: readonly (string | HashtagSuggestion)[] | undefined, onDraft: readonly string[] | undefined): OfferedTag[] {
+  const have = draftKeys(onDraft, hash);
   const out: OfferedTag[] = [];
   const index = new Map<string, number>();
-  for (const s of suggestions ?? []) {
-    if (!s) continue;
+  for (const s of Array.isArray(suggestions) ? suggestions : []) {
+    // Anything but a string or an object with a text tag is skipped on its own; the rest are still offered
+    if (typeof s !== "string" && !isObject(s)) continue;
     const raw = typeof s === "string" ? s : s.tag;
     const value = offerableHashtag(raw);
     if (!value) continue;
@@ -104,7 +131,7 @@ export function offeredHashtags(suggestions: readonly (string | HashtagSuggestio
     }
     const source = text(s.source);
     const fallback = isReporterSource(source) ? "Reporter usually tags this" : PLAIN_HASHTAG_REASON;
-    addOffer(out, index, have, { value, reason: text(s.reason) || fallback, ...(source ? { source } : {}), checked: false });
+    addOffer(out, index, have, { value, reason: reasonOf(s.reason, fallback), ...(source ? { source } : {}), checked: false });
   }
   return out;
 }

@@ -45,13 +45,13 @@ export function TagPicker({
   // The reporter's usual tags sit in their own group under the normal rows; ticking one is the same one click
   const { normal, reporter } = groupSuggestions(options);
   const reporterHeadId = useId();
-  const tick = (option: TagOption, aria?: { labelledBy: string; describedBy: string }) => (
+  const tick = (option: TagOption, aria?: { labelledBy: string; describedBy?: string }) => (
     <Checkbox
       size="small"
       checked={option.checked}
       disabled={disabled}
       onChange={(e) => onChange(options.map((o) => (o === option ? { ...o, checked: e.target.checked } : o)))}
-      slotProps={aria ? { input: { "aria-labelledby": aria.labelledBy, "aria-describedby": aria.describedBy } } : undefined}
+      slotProps={aria ? { input: { "aria-labelledby": aria.labelledBy, "aria-describedby": aria.describedBy || undefined } } : undefined}
       sx={{ p: 0.75 }}
     />
   );
@@ -98,12 +98,15 @@ export function TagPicker({
             <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
               {option.value}
             </Typography>
-            <Typography
-              title={option.ai && !option.checked ? `${option.reason}. Not in the directory: tick to accept.` : option.reason}
-              sx={{ maxWidth: "58%", fontSize: "0.6875rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: option.ai && !option.checked ? "warning.main" : "text.secondary", fontWeight: option.ai && !option.checked ? 600 : 400 }}
-            >
-              {option.ai && !option.checked ? `Confirm · ${option.reason}` : option.reason}
-            </Typography>
+            {/* An empty reason (the server sent a malformed one) hides only this row's reason line */}
+            {(option.reason || (option.ai && !option.checked)) && (
+              <Typography
+                title={option.ai && !option.checked ? `${option.reason ? `${option.reason}. ` : ""}Not in the directory: tick to accept.` : option.reason}
+                sx={{ maxWidth: "58%", fontSize: "0.6875rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: option.ai && !option.checked ? "warning.main" : "text.secondary", fontWeight: option.ai && !option.checked ? 600 : 400 }}
+              >
+                {option.ai && !option.checked ? (option.reason ? `Confirm · ${option.reason}` : "Confirm") : option.reason}
+              </Typography>
+            )}
           </Box>
         ))}
         {reporter.length > 0 && (
@@ -124,7 +127,7 @@ export function TagPicker({
                   component="label"
                   sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, pr: 1.25, pb: 0.5, cursor: disabled ? "default" : "pointer", "&:hover": { backgroundColor: "action.hover" } }}
                 >
-                  {tick(option, { labelledBy: tag ? `${valueId} ${tagId}` : valueId, describedBy: reasonId })}
+                  {tick(option, { labelledBy: tag ? `${valueId} ${tagId}` : valueId, describedBy: option.reason ? reasonId : "" })}
                   <Box sx={{ flex: 1, minWidth: 0, pt: 0.6 }}>
                     <Typography id={valueId} component="span" sx={{ fontSize: "0.8125rem", fontWeight: 600, overflowWrap: "anywhere" }}>
                       {option.value}
@@ -134,10 +137,12 @@ export function TagPicker({
                         {tag}
                       </Typography>
                     )}
-                    {/* The reason wraps in full: it is the evidence for ticking it */}
-                    <Typography id={reasonId} sx={{ fontSize: "0.6875rem", lineHeight: 1.4, color: "text.secondary", overflowWrap: "anywhere" }}>
-                      {option.reason}
-                    </Typography>
+                    {/* The reason wraps in full: it is the evidence for ticking it. A malformed one ("") hides only this line */}
+                    {option.reason && (
+                      <Typography id={reasonId} sx={{ fontSize: "0.6875rem", lineHeight: 1.4, color: "text.secondary", overflowWrap: "anywhere" }}>
+                        {option.reason}
+                      </Typography>
+                    )}
                   </Box>
                 </Box>
               );
