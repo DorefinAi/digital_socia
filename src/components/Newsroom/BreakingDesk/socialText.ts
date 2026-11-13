@@ -16,11 +16,26 @@ export const X_LIMIT = 280;
 const isSingleWeight = (cp: number) =>
   cp <= 4351 || (cp >= 8192 && cp <= 8205) || (cp >= 8208 && cp <= 8223) || (cp >= 8242 && cp <= 8247);
 
+/** An emoji sequence (a family, a flag, a skin tone) weighs 2 on X however many code points it has */
+const EMOJI = /\p{Extended_Pictographic}/u;
+let graphemeSplitter: Intl.Segmenter | null = null;
+
+/** X's weighted length, as the backend's core xLen counts it: per letter-group, an emoji sequence 2 */
 export function countChars(text: string, platform: SocialPlatform): number {
   if (platform !== "X (Twitter)") return text.length;
+  const clean = text.normalize("NFC");
+  // Older browsers without Intl.Segmenter count per code point
+  const groups =
+    typeof Intl !== "undefined" && typeof (Intl as { Segmenter?: unknown }).Segmenter === "function"
+      ? [...(graphemeSplitter ??= new Intl.Segmenter("hi", { granularity: "grapheme" })).segment(clean)].map((g) => g.segment)
+      : Array.from(clean);
   let total = 0;
-  for (const ch of text.normalize("NFC")) {
-    total += isSingleWeight(ch.codePointAt(0) ?? 0) ? 1 : 2;
+  for (const group of groups) {
+    if (EMOJI.test(group)) {
+      total += 2;
+      continue;
+    }
+    for (const ch of group) total += isSingleWeight(ch.codePointAt(0) ?? 0) ? 1 : 2;
   }
   return total;
 }

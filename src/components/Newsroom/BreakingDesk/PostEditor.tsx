@@ -68,6 +68,7 @@ import TemplateCanvas, {
   defaultLayout,
 } from "./TemplateCanvas";
 import { PLATFORM_LIMITS, TagSuggestion, composePostText, countChars, findUrl, shortenToFit, suggestHashtags, suggestMentions } from "./socialText";
+import { BREAKING_POST_MAX, fitPostBody } from "./crispLine";
 import { RejectDialog, ScheduleDialog } from "./actionDialogs";
 import { FoldedPanelStrip, PanelResizeHandle, PanelsConfig, useResizablePanels } from "./ResizablePanels";
 import { CategoryLabel, PLATFORM_META, PlatformIcon, priorityTag, rejectedNotice, srOnly, storyTag, TAG_TINT, tagTint } from "./shared";
@@ -761,7 +762,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const mentionRows = syncOptions(mentions, shown.mentions);
   const finalText = postBox.finalText;
   const used = countChars(finalText, platform);
-  const overLimit = used > limits.text;
+  // Phase 1 posts to X by hand, and the account posts long: a live X post may run past 280 up to the sanity limit
+  // (b8 decisions §1). Posting through X's API (phase 2) keeps X's own limit.
+  const postLimit = phase1 && live && isX ? BREAKING_POST_MAX : limits.text;
+  const overLimit = used > postLimit;
   // The live desk also keeps to what the server takes as tags
   const hashtagMax = live ? Math.min(limits.hashtags, SERVER_HASHTAGS_MAX) : limits.hashtags;
   const mentionMax = live ? Math.min(limits.mentions, SERVER_MENTIONS_MAX) : limits.mentions;
@@ -790,7 +794,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   else if (!canEdit) blockedReason = "Your role can view posts but not publish them";
   else if (!body.trim()) blockedReason = `Write the ${meta.postNoun} first`;
   else if (!layout.headline.trim()) blockedReason = "The template needs a headline";
-  else if (overLimit) blockedReason = `${used - limits.text} characters over the ${meta.short} limit`;
+  else if (overLimit) blockedReason = postLimit === limits.text ? `${used - limits.text} characters over the ${meta.short} limit` : `${used - postLimit} characters over the ${postLimit}-character limit`;
   else if (tooManyTags) blockedReason = "Too many hashtags or mentions selected";
   else if (unsavable) blockedReason = "The post is too long to save";
   else if (url) blockedReason = `Remove the link "${url}" first`;
@@ -1129,8 +1133,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const makeCrisp = () => {
     const tagBudget = shown.tail ? countChars(shown.tail, platform) + 2 : 0;
     const budget = limits.text - tagBudget;
-    const source = countChars(shown.body.trim(), platform) > budget ? shown.body : item.shortText;
-    setText(withBody(text, shortenToFit(source, Math.min(budget, isX ? 200 : 400), platform), splitOpts));
+    // A live breaking draft: headline whole, line 2 by the b8 rule (crispLine.fitPostBody); anything else as before
+    const body = fitPostBody({ liveBreaking: !!live, platform, body: shown.body, original: item.shortText, storyPoints: (item.body ?? "").split("\n"), budget });
+    setText(withBody(text, body, splitOpts));
   };
 
 
