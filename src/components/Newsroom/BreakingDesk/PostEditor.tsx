@@ -77,7 +77,7 @@ import VideoTimeline, { CLIP_SPEEDS, TimelineText, clock, outputLength } from ".
 import TextControls, { ALIGN_ICONS, FontSelect } from "./TextControls";
 import TemplatePicker from "./TemplatePicker";
 import { ENTER_SECONDS, MEDIA_LOOKS, TEXT_ANIMATIONS, accentFor, inkOn, mediaFilter, mediaWarmth, resolveHeadlineStyle, resolveLayerStyle, templateById, templatePatch, textSpan, warmthColor } from "./cardRender";
-import { BODY_STYLE, ORG_BODY_ID, ORG_DATE_ID, orgBodyText, orgLayout, orgPlacement, refreshOrgDate, switchOrgTemplate, useBackdrop, useOrgFontsReady, useTemplateImage } from "./live/orgCanvas";
+import { BODY_STYLE, ORG_BODY_ID, ORG_DATE_ID, isOneBox, orgBlockRect, orgBodyText, orgFontsOf, orgLayout, orgPlacement, placeOrgWords, refreshOrgDate, resetOrgBlock, setOrgBlock, switchOrgTemplate, useBackdrop, useOrgFontsReady, useTemplateImage } from "./live/orgCanvas";
 import { ORG_CARD_FONT, fontById, nearestWeight } from "./templateFonts";
 import FtpFeedPanel from "./FtpFeedPanel";
 import { DAILY_CAP, isLiveOn } from "@/data/socialDesk";
@@ -624,7 +624,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // One decoded picture per template, shared with the Template tab and the feed; the canvas repaints only
   // when it arrives or the design changes, never on the desk's polls
   const orgImage = useTemplateImage(orgMode ? orgTpl.backgroundUrl : null);
-  // Words go onto a desk template only once Mardoto and Mangal are in (or have failed), so they are measured in them
+  // Words go onto a desk template only once Mardoto and Noto Devanagari are in (or have failed), so they are measured in them
   const orgFontsIn = useOrgFontsReady();
   const orgW = orgMode ? orgTpl.width || orgImage.image?.naturalWidth || 1080 : 0;
   const orgH = orgMode ? orgTpl.height || orgImage.image?.naturalHeight || 1080 : 0;
@@ -643,12 +643,27 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     if (!layout.orgTemplate && !start.savedDesign) adoptStartLayout(orgLayout(orgStart, { headline: layout.headline, body: item.body }, layout));
     else if (layout.orgTemplate && !orgTpl) adoptStartLayout(switchOrgTemplate(layout, null, orgStart, item.body));
     else if (orgTpl && !start.dateStale) {
+      // A saved design keeps its words where they were saved; only a date from another day becomes today's
       const dated = refreshOrgDate(layout, orgTpl);
       if (dated !== layout) adoptStartLayout(dated, { dateStale: true });
     }
   } else if (orgList && orgStart && orgFontsIn && layout.orgTemplate && !orgTpl && !serverView) {
     // Its template was deleted while the card was being edited: onto the default design too, edits kept
     setLayout(switchOrgTemplate(layout, null, orgStart, item.body));
+  }
+
+  // The heading and the story are one text box on a card made with it (isOneBox: every new card on a desk
+  // template): whenever their words or faces change, both are placed afresh in it as one block (sized to fill
+  // it, centred), as the X card is drawn. A draft saved before the one box is left as it was saved.
+  const oneBox = orgMode && isOneBox(layout);
+  const orgWordsKey = oneBox && orgFontsIn ? JSON.stringify([orgTpl.slug, orgTpl.updatedAt, layout.headline, orgBodyText(layout, ""), !!layout.layers?.find((l) => l.id === ORG_BODY_ID)?.hidden, orgFontsOf(layout)]) : null;
+  const [placedWords, setPlacedWords] = useState(orgWordsKey);
+  if (orgWordsKey !== placedWords) {
+    setPlacedWords(orgWordsKey);
+    if (oneBox && orgWordsKey && layout !== start.layout) {
+      const placed = placeOrgWords(layout, orgTpl);
+      if (placed !== layout) setLayout(placed);
+    }
   }
 
   // The Video tab only exists for video stories; a desk template is a still card
@@ -945,10 +960,14 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     }
   };
 
+  // The heading and the story on a desk template take the size their one text box gives them, as the X card does
+  const sizeFixed = oneBox && (!activeLayer || activeLayer.id === ORG_BODY_ID) ? "On a desk template the heading and story size follows their text box. Resize the box to change it." : undefined;
   const textSize = activeLayer
-    ? { value: activeLayer.size, min: 16, max: 240, step: 1, format: (v: number) => `${v}`, onChange: (size: number) => patchLayer(activeLayer.id, { size }) }
-    : { value: layout.fontScale, min: 0.5, max: 1.8, step: 0.01, format: (v: number) => `${Math.round(v * 100)}%`, onChange: (fontScale: number) => patch({ fontScale }) };
-  const nudgeSize = (direction: 1 | -1) => textSize.onChange(steppedTextSize(textSize.value, direction, textSize.min, textSize.max, textSize.step));
+    ? { value: activeLayer.size, min: 16, max: 240, step: 1, format: (v: number) => `${v}`, onChange: (size: number) => patchLayer(activeLayer.id, { size }), fixed: sizeFixed }
+    : { value: layout.fontScale, min: 0.5, max: 1.8, step: 0.01, format: (v: number) => `${Math.round(v * 100)}%`, onChange: (fontScale: number) => patch({ fontScale }), fixed: sizeFixed };
+  const nudgeSize = (direction: 1 | -1) => {
+    if (!textSize.fixed) textSize.onChange(steppedTextSize(textSize.value, direction, textSize.min, textSize.max, textSize.step));
+  };
 
   // ── Video: when each text shows, how it comes in, and the playhead ──
   const keptFrom = segments[0]?.start ?? 0;
@@ -997,6 +1016,16 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   /** Moves the selected text box by a share of the card; a headline that follows its text moves only up and down */
   const nudgeSelected = (dx: number, dy: number) => {
     const clamp = (v: number) => Math.max(0, Math.min(1, v));
+    // The heading or the story on a desk template: the one text box moves, both inside it
+    if (oneBox && (!activeLayer || activeLayer.id === ORG_BODY_ID)) {
+      setLayout((l) => {
+        const r = orgBlockRect(l, orgTpl);
+        // Kept on the card, as a drag keeps it
+        const keep = (v: number, extent: number, total: number) => Math.max(0, Math.min(Math.max(0, total - extent), v));
+        return r ? setOrgBlock(l, orgTpl, { ...r, x: keep(r.x + dx * orgW, r.w, orgW), y: keep(r.y + dy * orgH, r.h, orgH) }) : l;
+      });
+      return;
+    }
     if (activeLayer) patchLayer(activeLayer.id, { x: clamp(activeLayer.x + dx), y: clamp(activeLayer.y + dy) });
     else if (layout.textHeight !== undefined) patch(dx ? { textX: clamp((layout.textX ?? 0.5) + dx) } : { textY: clamp(layout.textY + dy) });
     else if (dy) patch({ textY: Math.max(0.05, Math.min(0.95, layout.textY + dy)) });
@@ -1030,8 +1059,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     setSelection(null);
   };
   /** Where the template puts the headline, story and date for the words on the card now */
-  const orgHome = () =>
-    orgTpl ? orgPlacement(orgTpl, { headline: layout.headline, body: orgBodyText(layout, item.body) }, { head: layout.headlineStyle?.font ?? ORG_CARD_FONT, body: layout.layers?.find((l) => l.id === ORG_BODY_ID)?.style.font, date: layout.layers?.find((l) => l.id === ORG_DATE_ID)?.style.font, headWeight: layout.headlineStyle?.weight, bodyWeight: layout.layers?.find((l) => l.id === ORG_BODY_ID)?.style.weight }) : null;
+  const orgHome = () => (orgTpl ? orgPlacement(orgTpl, { headline: layout.headline, body: orgBodyText(layout, item.body) }, orgFontsOf(layout)) : null);
+  /** The canvas's one text box on a desk template: the heading and the story picked, moved and resized together */
+  const orgTextBlock = oneBox ? { layer: ORG_BODY_ID, rect: (l: TemplateLayout) => orgBlockRect(l, orgTpl), place: (l: TemplateLayout, r: { x: number; y: number; w: number; h: number }) => setOrgBlock(l, orgTpl, r) } : undefined;
+  /** The heading and the story back in the template's own box (the one text box's Reset position and size) */
+  const resetOrgText = () => orgTpl && setLayout((l) => resetOrgBlock(l, orgTpl));
 
   const handleDuration = (seconds: number) => {
     setDuration(seconds);
@@ -1749,9 +1781,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const layer = layers[index];
       if (!layer) return menuFor("stage");
       const width = LAYER_PRESETS.find((p) => p.size === layer.size)?.width ?? 0.7;
-      // The story and date boxes on a desk template go back to where the template puts them
-      const placed = orgMode && (id === ORG_BODY_ID || id === ORG_DATE_ID) ? orgHome() : null;
-      const home = placed ? (id === ORG_BODY_ID ? placed.body : placed.date) : null;
+      // The date box on a desk template goes back to where the template puts it; the story is part of the one text box
+      const home = orgMode && id === ORG_DATE_ID ? (orgHome()?.date ?? null) : null;
+      const storyBox = orgMode && id === ORG_BODY_ID;
       return [
         { label: "Edit text", icon: <Pencil size={14} />, hint: "Click", onSelect: () => editText(`layer:${id}`) },
         ...textOptions,
@@ -1759,12 +1791,18 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         { label: "Bring forward", icon: <ArrowUpToLine size={14} />, disabled: index >= layers.length - 1, onSelect: () => restack(id, 1) },
         { label: "Send backward", icon: <ArrowDownToLine size={14} />, disabled: index <= 0, onSelect: () => restack(id, -1) },
         { kind: "divider" },
-        home
+        storyBox
+          ? { label: "Reset position and size", icon: <Move size={14} />, disabled: !layout.orgBlock, onSelect: resetOrgText }
+          : home
           ? { label: "Reset position", icon: <Move size={14} />, disabled: near(layer.x, home.x) && near(layer.y, home.y), onSelect: () => patchLayer(id, { x: home.x, y: home.y }) }
           : { label: "Reset position", icon: <Move size={14} />, disabled: layer.x === 0.5 && layer.y === 0.5, onSelect: () => patchLayer(id, { x: 0.5, y: 0.5 }) },
-        home
-          ? { label: "Reset size", icon: <Scaling size={14} />, disabled: near(layer.width, home.width) && near(layer.height, home.height) && near(layer.size, home.size, 0.5), onSelect: () => patchLayer(id, { width: home.width, height: home.height, size: home.size }) }
-          : { label: "Reset size", icon: <Scaling size={14} />, disabled: layer.height === undefined && layer.width === width, onSelect: () => patchLayer(id, { width, height: undefined }) },
+        ...(storyBox
+          ? []
+          : [
+              home
+                ? { label: "Reset size", icon: <Scaling size={14} />, disabled: near(layer.width, home.width) && near(layer.height, home.height) && near(layer.size, home.size, 0.5), onSelect: () => patchLayer(id, { width: home.width, height: home.height, size: home.size }) }
+                : { label: "Reset size", icon: <Scaling size={14} />, disabled: layer.height === undefined && layer.width === width, onSelect: () => patchLayer(id, { width, height: undefined }) },
+            ]),
         {
           label: "Hide text box",
           icon: <EyeOff size={14} />,
@@ -1779,14 +1817,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       ];
     }
     if (target === "headline" && orgMode) {
-      const home = orgHome()?.head;
-      if (!home) return menuFor("stage");
       return [
         { label: "Edit text", icon: <Pencil size={14} />, hint: "Click", onSelect: () => editText("headline") },
         ...textOptions,
         { kind: "divider" },
-        { label: "Reset position", icon: <Move size={14} />, disabled: near(layout.textX, home.textX) && near(layout.textY, home.textY), onSelect: () => patch({ textX: home.textX, textY: home.textY }) },
-        { label: "Reset size", icon: <Scaling size={14} />, disabled: near(layout.textWidth, home.textWidth) && near(layout.textHeight, home.textHeight) && near(layout.fontScale, home.fontScale, 0.01), onSelect: () => patch({ textWidth: home.textWidth, textHeight: home.textHeight, fontScale: home.fontScale }) },
+        // Heading and story are one text box: it goes back to the template's box as a whole
+        { label: "Reset position and size", icon: <Move size={14} />, disabled: !layout.orgBlock, onSelect: resetOrgText },
         ...generalEntries(),
       ];
     }
@@ -2675,6 +2711,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   onLayoutChange={setLayout}
                   selection={selection}
                   onSelect={select}
+                  textBlock={orgTextBlock}
                   textLimits={{ headline: CARD_TEXT_MAX, layer: 300, byLayer: { [ORG_BODY_ID]: STORY_TEXT_MAX } }}
                   onContextTarget={(target) => {
                     menuTarget.current = target;
@@ -2710,11 +2747,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 </span>
               </Tooltip>
                   {toolbarDivider}
-                  <IconButton sx={toolbarIcon} aria-label="Smaller text" onClick={() => nudgeSize(-1)}>
+                  <IconButton sx={toolbarIcon} aria-label="Smaller text" title={textSize.fixed} disabled={!!textSize.fixed} onClick={() => nudgeSize(-1)}>
                     <Minus size={15} />
                   </IconButton>
                   <Typography sx={{ fontSize: "0.75rem", fontWeight: 700, width: 38, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{textSize.format(textSize.value)}</Typography>
-                  <IconButton sx={toolbarIcon} aria-label="Larger text" onClick={() => nudgeSize(1)}>
+                  <IconButton sx={toolbarIcon} aria-label="Larger text" title={textSize.fixed} disabled={!!textSize.fixed} onClick={() => nudgeSize(1)}>
                     <Plus size={15} />
                   </IconButton>
                   {toolbarDivider}

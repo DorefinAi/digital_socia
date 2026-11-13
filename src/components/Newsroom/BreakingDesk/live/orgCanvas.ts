@@ -1,6 +1,7 @@
 // The desk's shared X templates (org-card-templates-contract.md) as the design canvas's background.
 // A template's picture fills the card at its own size; the headline, the story and today's date become
-// ordinary text on it (the headline, and two text boxes), placed from the template's layout. This file
+// ordinary text on it (the headline, and two text boxes), placed from the template's layout. The headline and
+// the story are one text box on the card (CardLayout.orgBlock), always placed together as one block. This file
 // holds the one decoded copy of each picture and the maths that places and re-places the words.
 
 import { useEffect, useMemo, useState } from "react";
@@ -12,7 +13,7 @@ import { ORG_CARD_FONT, ORG_DATE_FONT, fontById, nearestWeight } from "../templa
 import { apiFileUrl } from "./LiveDesk";
 import { fontsReady, istDate, loadImage } from "./backgroundCard";
 import { cardBodyText } from "../cardWords";
-import { CARD_GAP_LINES, CARD_LINE, LEGACY_CARD_LINE, type PxRect, cardTextArea, largestFit, legacyTextArea } from "./cardFit";
+import { CARD_GAP_LINES, CARD_LINE, LEGACY_CARD_LINE, type PxRect, V3_CARD_HANG_TOP, V3_CARD_LINE, cardBlockTop, cardTextArea, largestFit, legacyTextArea } from "./cardFit";
 import { fitDate } from "./cardDate";
 
 /** The text box that holds the story under the headline */
@@ -23,7 +24,7 @@ export const ORG_DATE_ID = "org-date";
 // ─── One decoded picture per template version, shared by the canvas, the picker and the feed ────────
 const images = new Map<string, Promise<HTMLImageElement>>();
 
-// ─── Mardoto and Mangal before measuring: a card placed on a fallback face would be sized wrong ──────
+// ─── Mardoto and Noto Devanagari before measuring: a card placed on a fallback face would be sized wrong ──────
 let fontsIn = typeof document === "undefined";
 let fontsWait: Promise<void> | null = null;
 /**
@@ -57,7 +58,7 @@ export function useOrgFontsReady(): boolean {
 
 /** The template's picture, fetched with the session and decoded once. A failed load is tried again next time. */
 export function templateImage(backgroundUrl: string): Promise<HTMLImageElement> {
-  // The card's faces (Mardoto, Mangal for Hindi) start downloading with the first template, so the words are measured in them
+  // The card's faces (Mardoto, Noto Sans Devanagari for Hindi) start downloading with the first template, so the words are measured in them
   void orgFontsReady();
   let p = images.get(backgroundUrl);
   if (!p) {
@@ -110,8 +111,8 @@ const GAP = CARD_GAP_LINES;
 /** Boxes are planned this many px taller than their lines, so the card's own fit never shrinks the words */
 const SLACK_PX = 1;
 
-// Headline, story and date are Mardoto Bold (Hindi letters from Mangal Bold), centred (the headline's look is
-// cardRender.ORG_HEADLINE)
+// Headline, story and date are Mardoto Bold (Hindi letters from Noto Sans Devanagari Bold), centred (the
+// headline's look is cardRender.ORG_HEADLINE)
 export const BODY_STYLE: CardTextStyle = { font: ORG_CARD_FONT, weight: 700, align: "center", lineHeight: BODY_LINE, shadow: 0 };
 // Line height 1: the date's box is one line tall (dateBox), and a taller line would make the
 // card shrink it to fit the box, smaller than backgroundCard.ts draws it
@@ -171,7 +172,6 @@ interface Fit {
   bodyH: number;
 }
 
-/** Largest story size between the template's min and max at which headline and story fill the box, both measured. */
 /** Faces and weights the words are measured in: the ones they are drawn in (unset weights draw bold) */
 export interface OrgFonts {
   head?: string;
@@ -181,9 +181,24 @@ export interface OrgFonts {
   bodyWeight?: number;
 }
 
-/** `box` is the template's box in card px: the words wrap in its column and may hang over it (cardFit.cardTextArea) */
-function fitWords(words: Words, box: PxRect, minPx: number, maxPx: number, fonts: OrgFonts): Fit {
-  const width = cardTextArea(box).w;
+/** The faces a card's heading, story and date are drawn in (an unset heading face is Mardoto on a desk template) */
+export function orgFontsOf(layout: TemplateLayout): OrgFonts {
+  const body = layout.layers?.find((l) => l.id === ORG_BODY_ID);
+  return {
+    head: layout.headlineStyle?.font ?? ORG_CARD_FONT,
+    body: body?.style.font,
+    date: layout.layers?.find((l) => l.id === ORG_DATE_ID)?.style.font,
+    headWeight: layout.headlineStyle?.weight,
+    bodyWeight: body?.style.weight,
+  };
+}
+
+/** The room the block of words is laid out in at a size, in card px (cardFit.cardTextArea, or a box set by hand) */
+type AreaAt = (size: number) => PxRect;
+
+/** Largest size between `minPx` and `maxPx` at which headline and story, both measured, fit the room. */
+function fitWords(words: Words, areaAt: AreaAt, minPx: number, maxPx: number, fonts: OrgFonts): Fit {
+  const width = areaAt(0).w;
   const ctx = measure();
   const headline = words.headline.trim();
   const body = words.body.trim();
@@ -195,12 +210,14 @@ function fitWords(words: Words, box: PxRect, minPx: number, maxPx: number, fonts
     const bodyH = body ? lineCount(ctx, body, width) * size * BODY_LINE : 0;
     return { size, headH, bodyH };
   };
-  const total = (f: Fit) => f.headH + f.bodyH + (f.headH && f.bodyH ? GAP * f.size * BODY_LINE : 0);
-  // The largest size whose block fits the box, in half pixels (cardFit.largestFit, as backgroundCard.ts)
-  const size = largestFit(minPx, maxPx, (px) => cardTextArea(box, px).h, (px) => total(at(px)));
+  // The largest size whose block fits the room, in half pixels (cardFit.largestFit, as backgroundCard.ts)
+  const size = largestFit(minPx, maxPx, (px) => areaAt(px).h, (px) => blockHeight(at(px)));
   // Too long even at the smallest size: the story takes what is left and shrinks further on the card
   return at(size ?? Math.max(6, Math.min(minPx, maxPx)));
 }
+
+/** Heading, the blank line and story, as one block */
+const blockHeight = (f: Fit) => f.headH + f.bodyH + (f.headH && f.bodyH ? GAP * f.size * BODY_LINE : 0);
 
 /** Where the headline, the story and the date go on a template, in the layout's own terms. */
 export interface Placement {
@@ -238,23 +255,33 @@ function dateBox(d: { x: number; y: number; w: number; h: number }, f: Frame, te
   };
 }
 
+/**
+ * Heading and story as one block in the room, as the desk's posts and backgroundCard.ts set them: one size,
+ * one blank line between, every line centred across the room and the block centred up and down in it.
+ */
+function placeBlock(f: Frame, words: Words, fonts: OrgFonts, areaAt: AreaAt, minPx: number, maxPx: number): Pick<Placement, "head" | "body"> {
+  const fit = fitWords(words, areaAt, minPx, maxPx, fonts);
+  const area = areaAt(fit.size);
+  const top = cardBlockTop(area, blockHeight(fit));
+  // A pixel of room, so the card's own measuring never finds the words too tall and shrinks them
+  const headH = fit.headH ? Math.min(area.h, fit.headH + SLACK_PX) : fit.size * HEAD_RATIO * HEAD_LINE;
+  const bodyTop = fit.headH ? top + fit.headH + GAP * fit.size * BODY_LINE : top;
+  const bodyH = Math.max(fit.size * BODY_LINE, Math.min(area.y + area.h - bodyTop, fit.bodyH ? fit.bodyH + SLACK_PX : fit.size * BODY_LINE));
+  const cx = (area.x + area.w / 2) / f.W;
+  return {
+    head: { textX: cx, textY: (top + headH / 2) / f.H, textWidth: area.w / f.W, textHeight: headH / f.H, fontScale: (fit.size * HEAD_RATIO) / (ORG_BASE_SIZE * f.u) },
+    body: { x: cx, y: (bodyTop + bodyH / 2) / f.H, width: area.w / f.W, height: bodyH / f.H, size: fit.size / f.u },
+  };
+}
+
+/** The template's own room at a size: its box, padded across, its leading hanging over top and bottom */
+const templateArea = (t: DrawableCardTemplate, f: Frame): AreaAt => (size) => cardTextArea(rawBox(t, f), size);
+
 export function orgPlacement(t: DrawableCardTemplate, words: Words, fonts: OrgFonts = {}): Placement {
   const f = frameOf(t);
-  const fit = fitWords(words, rawBox(t, f), t.layout.fontMinPx, t.layout.fontMaxPx, fonts);
-  // The area at the fitted size: the block's leading may hang over the box's top and bottom
-  const box = cardTextArea(rawBox(t, f), fit.size);
-  // A pixel of room, so the card's own measuring never finds the words too tall and shrinks them
-  const headH = fit.headH ? Math.min(box.h, fit.headH + SLACK_PX) : fit.size * HEAD_RATIO * HEAD_LINE;
-  const gap = GAP * fit.size * BODY_LINE;
-  // Heading, gap and story as one block from the top of the text area (as backgroundCard.ts): the heading at
-  // the top of the red panel, as on the desk's posts
-  const top = box.y;
-  const bodyTop = top + headH + gap;
-  const bodyH = Math.max(fit.size * BODY_LINE, Math.min(box.y + box.h - bodyTop, fit.bodyH ? fit.bodyH + SLACK_PX : fit.size * BODY_LINE));
   const d = t.layout.date;
   return {
-    head: { textX: (box.x + box.w / 2) / f.W, textY: (top + headH / 2) / f.H, textWidth: box.w / f.W, textHeight: headH / f.H, fontScale: (fit.size * HEAD_RATIO) / (ORG_BASE_SIZE * f.u) },
-    body: { x: (box.x + box.w / 2) / f.W, y: (bodyTop + bodyH / 2) / f.H, width: box.w / f.W, height: bodyH / f.H, size: fit.size / f.u },
+    ...placeBlock(f, words, fonts, templateArea(t, f), t.layout.fontMinPx, t.layout.fontMaxPx),
     date: d ? dateBox(d, f, istDate(d.format), fonts.date) : null,
   };
 }
@@ -270,9 +297,9 @@ const dateLayer = (t: DrawableCardTemplate, p: NonNullable<Placement["date"]>, s
 export const orgBodyText = (layout: TemplateLayout, fallback: string) => layout.layers?.find((l) => l.id === ORG_BODY_ID)?.text ?? cardBodyText(fallback);
 
 /**
- * A fresh card on template `t`: the words placed in its box (headline at the top, the story under it,
- * sized to fill it), today's date in its date slot. `base` keeps everything a template does not set
- * (the photo choice, video settings, the operator's own text boxes).
+ * A fresh card on template `t`: the words placed in its box as one block (heading, a blank line, the story,
+ * sized to fill it and centred in it), today's date in its date slot. `base` keeps everything a template does
+ * not set (the photo choice, video settings, the operator's own text boxes).
  */
 export function orgLayout(t: OrgCardTemplate, words: Words, base: TemplateLayout): TemplateLayout {
   // The story as the desk's posts carry it: one paragraph of all its points (a fresh card, or Reset)
@@ -283,6 +310,7 @@ export function orgLayout(t: OrgCardTemplate, words: Words, base: TemplateLayout
   return {
     ...base,
     orgTemplate: t.slug,
+    orgBlock: undefined,
     headline: words.headline,
     ...p.head,
     align: "center",
@@ -294,11 +322,28 @@ export function orgLayout(t: OrgCardTemplate, words: Words, base: TemplateLayout
 
 const near = (a: number | undefined, b: number | undefined, tol = 0.004) => a !== undefined && b !== undefined && Math.abs(a - b) <= tol;
 
+/** The heading's and the story's boxes together, in card px (null when the card has no story box or sized heading) */
+function unionPx(layout: TemplateLayout, f: Frame): PxRect | null {
+  const body = layout.layers?.find((l) => l.id === ORG_BODY_ID);
+  if (!body || layout.textHeight === undefined || body.height === undefined) return null;
+  const hw = (layout.textWidth ?? 1) * f.W;
+  const hx = (layout.textX ?? 0.5) * f.W - hw / 2;
+  const hy = (layout.textY - layout.textHeight / 2) * f.H;
+  const bw = body.width * f.W;
+  const bx = body.x * f.W - bw / 2;
+  const by = (body.y - body.height / 2) * f.H;
+  const x = Math.min(hx, bx);
+  const y = Math.min(hy, by);
+  const right = Math.max(hx + hw, bx + bw);
+  const bottom = Math.max(hy + layout.textHeight * f.H, by + body.height * f.H);
+  return { x, y, w: right - x, h: bottom - y };
+}
+
 /**
- * True while the headline and the story still sit where the template put them (left edges, widths, the
- * headline's top, and the story right under it). Their heights follow the words, so they are not compared.
- * Cards placed before the desk-post fit (cardFit LEGACY_*: a narrower column, the block centred in the box)
- * count as untouched too, so switching template still fits them afresh.
+ * True while the headline and the story still sit where the template put them, in any drawing version: the
+ * block centred in the template's room (version 4 on), at the room's top with lines 1.49 sizes apart
+ * (versions 2-3), or centred in the narrower padded box (cardFit LEGACY_*, version 1). Their heights follow
+ * the words, so they are not compared. Such a card is placed afresh in the template's box.
  */
 function untouched(layout: TemplateLayout, t: DrawableCardTemplate): boolean {
   const body = layout.layers?.find((l) => l.id === ORG_BODY_ID);
@@ -306,28 +351,149 @@ function untouched(layout: TemplateLayout, t: DrawableCardTemplate): boolean {
   const f = frameOf(t);
   const tol = f.H * 0.004;
   const size = body.size * f.u;
+  const raw = rawBox(t, f);
   const headTop = (layout.textY - layout.textHeight / 2) * f.H;
   const headBottom = (layout.textY + layout.textHeight / 2) * f.H;
   const bodyTop = (body.y - body.height / 2) * f.H;
-  const bodyBottom = (body.y + body.height / 2) * f.H;
+  // An empty or hidden story takes no room in the block: the heading alone is centred
+  const bodyBottom = body.text.trim() && !body.hidden ? (body.y + body.height / 2) * f.H : headBottom;
   const inColumn = (c: PxRect) =>
     near(layout.textX, (c.x + c.w / 2) / f.W) && near(layout.textWidth, c.w / f.W) && near(body.x, (c.x + c.w / 2) / f.W) && near(body.width, c.w / f.W);
-  const storyUnder = (pitch: number) => bodyTop >= headBottom - tol && bodyTop - headBottom <= size * pitch * (GAP + 0.5);
-  // Now: from the top of the area at the story's size
-  const now = cardTextArea(rawBox(t, f), size);
-  if (inColumn(now) && Math.abs(headTop - now.y) <= tol && storyUnder(BODY_LINE)) return true;
-  // Before: the block centred in the padded box (at its top when it filled the box)
-  const old = legacyTextArea(rawBox(t, f));
+  // No heading: the story starts where the block does
+  const storyUnder = (pitch: number) => !layout.headline.trim() || (bodyTop >= headBottom - tol && bodyTop - headBottom <= size * pitch * (GAP + 0.5));
+  // Version 4 on: the block centred up and down in the template's room at the story's size
+  const now = cardTextArea(raw, size);
+  if (inColumn(now) && storyUnder(BODY_LINE) && Math.abs((headTop + bodyBottom) / 2 - (now.y + now.h / 2)) <= tol * 2) return true;
+  // Versions 2-3: from the top of the room as it hung then
+  if (inColumn(now) && Math.abs(headTop - (raw.y - V3_CARD_HANG_TOP * size)) <= tol && storyUnder(V3_CARD_LINE)) return true;
+  // Version 1: the block centred in the padded box (at its top when it filled the box)
+  const old = legacyTextArea(raw);
   const centred = Math.abs(headTop - old.y - (old.y + old.h - bodyBottom)) <= tol * 2 || Math.abs(headTop - old.y) <= tol;
   return inColumn(old) && headTop >= old.y - tol && centred && storyUnder(LEGACY_CARD_LINE);
 }
 
+/**
+ * The card's one text box as set by hand, as shares of the card: its `orgBlock`, or, on a card from before the
+ * one box whose heading and story were moved by hand, the two boxes together. Null when the words sit in the
+ * template's own box.
+ */
+function handBlock(layout: TemplateLayout, t: DrawableCardTemplate, legacy = false): TemplateLayout["orgBlock"] | null {
+  if (layout.orgBlock) return layout.orgBlock;
+  // Since the one box, every move by hand sets orgBlock: without it the words follow the template's box (also
+  // after the template's box is edited). Only a draft from before the one box (its story still at the older
+  // line pitch) moving to another template is looked at more closely.
+  const story = layout.layers?.find((l) => l.id === ORG_BODY_ID);
+  if (!legacy || story?.style.lineHeight === BODY_LINE || untouched(layout, t)) return null;
+  const f = frameOf(t);
+  const u = unionPx(layout, f);
+  return u ? { x: u.x / f.W, y: u.y / f.H, w: u.w / f.W, h: u.h / f.H } : null;
+}
+
+/**
+ * The heading and the story placed as one block in the card's one text box (its `orgBlock`, else the
+ * template's box): sized to fill it, centred in it, as backgroundCard.ts draws the X card. Returns `layout`
+ * itself when they already sit there, so it can run on every change of the words.
+ */
+export function placeOrgWords(layout: TemplateLayout, t: DrawableCardTemplate): TemplateLayout {
+  const bodyLayer = layout.layers?.find((l) => l.id === ORG_BODY_ID);
+  if (!bodyLayer) return layout;
+  const f = frameOf(t);
+  const block = handBlock(layout, t);
+  const area: AreaAt = block ? () => ({ x: block.x * f.W, y: block.y * f.H, w: block.w * f.W, h: block.h * f.H }) : templateArea(t, f);
+  // A hidden story takes no room: the heading alone is placed
+  const p = placeBlock(f, { headline: layout.headline, body: bodyLayer.hidden ? "" : bodyLayer.text }, orgFontsOf(layout), area, t.layout.fontMinPx, t.layout.fontMaxPx);
+  const tight = 0.0005;
+  // handBlock returns the layout's own orgBlock object when it has one, so identity says "box unchanged"
+  const same =
+    (block ?? undefined) === layout.orgBlock &&
+    near(layout.textX, p.head.textX, tight) &&
+    near(layout.textY, p.head.textY, tight) &&
+    near(layout.textWidth, p.head.textWidth, tight) &&
+    near(layout.textHeight, p.head.textHeight, tight) &&
+    near(layout.fontScale, p.head.fontScale, 0.001) &&
+    near(bodyLayer.x, p.body.x, tight) &&
+    near(bodyLayer.y, p.body.y, tight) &&
+    near(bodyLayer.width, p.body.width, tight) &&
+    near(bodyLayer.height, p.body.height, tight) &&
+    near(bodyLayer.size, p.body.size, 0.01) &&
+    bodyLayer.style.lineHeight === BODY_LINE;
+  if (same) return layout;
+  return {
+    ...layout,
+    ...p.head,
+    orgBlock: block ?? undefined,
+    layers: (layout.layers ?? []).map((l) => (l.id === ORG_BODY_ID ? storyAt(l, p.body) : l)),
+  };
+}
+
+/**
+ * The story box at `at`, with the line pitch the words were placed at (a story saved before drawing version 4
+ * carries the older 1.49 pitch, which would draw it taller than its box and so smaller than the heading).
+ */
+const storyAt = (l: CardTextLayer, at: Placement["body"]): CardTextLayer => ({ ...l, ...at, style: { ...l.style, lineHeight: BODY_LINE } });
+
+/**
+ * True for a card made with the one text box (a fresh card on a desk template from now on, or one moved by hand
+ * since): its story carries the current line pitch, or it has an orgBlock. A draft saved before stays as it
+ * was saved, with its headline and story as two boxes, and is never re-placed on its own.
+ */
+export function isOneBox(layout: TemplateLayout): boolean {
+  return !!layout.orgBlock || layout.layers?.find((l) => l.id === ORG_BODY_ID)?.style.lineHeight === BODY_LINE;
+}
+
+/** The card's one text box in card px: the box set by hand, else the template's room at the story's size. */
+export function orgBlockRect(layout: TemplateLayout, t: DrawableCardTemplate): PxRect | null {
+  const bodyLayer = layout.layers?.find((l) => l.id === ORG_BODY_ID);
+  if (!bodyLayer) return null;
+  const f = frameOf(t);
+  const block = handBlock(layout, t);
+  if (block) return { x: block.x * f.W, y: block.y * f.H, w: block.w * f.W, h: block.h * f.H };
+  return cardTextArea(rawBox(t, f), bodyLayer.size * f.u);
+}
+
+/**
+ * The one text box moved or resized by hand to `rect` (card px): heading and story placed afresh in it. A move
+ * that keeps the box's size only shifts the words (no measuring), so dragging stays smooth on a long story.
+ */
+export function setOrgBlock(layout: TemplateLayout, t: DrawableCardTemplate, rect: PxRect): TemplateLayout {
+  const f = frameOf(t);
+  rect = { ...rect, w: Math.max(rect.w, MIN_BLOCK * f.W), h: Math.max(rect.h, MIN_BLOCK * f.H) };
+  const orgBlock = { x: rect.x / f.W, y: rect.y / f.H, w: rect.w / f.W, h: rect.h / f.H };
+  const was = orgBlockRect(layout, t);
+  const bodyLayer = layout.layers?.find((l) => l.id === ORG_BODY_ID);
+  if (was && bodyLayer && Math.abs(was.w - rect.w) < 0.5 && Math.abs(was.h - rect.h) < 0.5) {
+    const dx = (rect.x - was.x) / f.W;
+    const dy = (rect.y - was.y) / f.H;
+    return {
+      ...layout,
+      orgBlock,
+      textX: (layout.textX ?? 0.5) + dx,
+      textY: layout.textY + dy,
+      layers: (layout.layers ?? []).map((l) => (l.id === ORG_BODY_ID ? { ...l, x: l.x + dx, y: l.y + dy } : l)),
+    };
+  }
+  return placeOrgWords({ ...layout, orgBlock }, t);
+}
+
+/** The one text box back in the template's own box, the words placed afresh in it. */
+export function resetOrgBlock(layout: TemplateLayout, t: DrawableCardTemplate): TemplateLayout {
+  const fresh = orgPlacement(t, { headline: layout.headline, body: orgBodyText(layout, "") }, orgFontsOf(layout));
+  return {
+    ...layout,
+    ...fresh.head,
+    orgBlock: undefined,
+    layers: (layout.layers ?? []).map((l) => (l.id === ORG_BODY_ID ? storyAt(l, fresh.body) : l)),
+  };
+}
+
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+/** The one text box is never smaller than this share of the card each way, so the words always have room */
+const MIN_BLOCK = 0.1;
 
 /**
  * Moves a card from template `from` to `to`, keeping the words and every style choice.
- * - Headline and story where the old template put them: placed afresh in the new box (best fit for its shape).
- * - Moved or resized by hand: the same spot inside the new box (scaled with it), so the arrangement survives.
+ * - The one text box in the old template's own box: placed afresh in the new box (best fit for its shape).
+ * - Moved or resized by hand: the same spot inside the new box (scaled with it), the words placed in it.
  * Colours still at the old template's defaults take the new template's; the date follows the new date slot
  * (hidden, not deleted, when the new design has none). The operator's own text boxes and photo stay put.
  */
@@ -337,42 +503,27 @@ export function switchOrgTemplate(layout: TemplateLayout, from: OrgCardTemplate 
   // Not on a desk template yet (a photo card): start a fresh one, keeping the operator's own text boxes
   if (!layout.orgTemplate || !from || !bodyLayer) return orgLayout(to, words, { ...layout, photoBox: layout.photoBox });
 
-  // An unset headline font is Mardoto on a desk template (ORG_HEADLINE); unset text boxes draw in the old default
-  const fonts: OrgFonts = { head: layout.headlineStyle?.font ?? ORG_CARD_FONT, body: bodyLayer.style.font, date: layout.layers?.find((l) => l.id === ORG_DATE_ID)?.style.font, headWeight: layout.headlineStyle?.weight, bodyWeight: bodyLayer.style.weight };
-  const fresh = orgPlacement(to, words, fonts);
+  const fresh = orgPlacement(to, words, orgFontsOf(layout));
   const a = frameOf(from);
   const b = frameOf(to);
-  let head: Placement["head"];
-  let body: Placement["body"];
-  if (untouched(layout, from)) {
-    head = fresh.head;
-    body = fresh.body;
-  } else {
+  // A draft from before the one box that was arranged by hand keeps that spot, as one box
+  const block = handBlock(layout, from, true);
+  let orgBlock: TemplateLayout["orgBlock"];
+  if (block) {
     const ob = boxPx(from, a);
     const nb = boxPx(to, b);
     // Old card px → share of the old box → new card px → share of the new card
-    const mapX = (fx: number) => clamp01((nb.x + ((fx * a.W - ob.x) / ob.w) * nb.w) / b.W);
-    const mapY = (fy: number) => clamp01((nb.y + ((fy * a.H - ob.y) / ob.h) * nb.h) / b.H);
-    const mapW = (fw: number) => Math.min(1, (fw * a.W * (nb.w / ob.w)) / b.W);
-    const mapH = (fh: number) => Math.min(1, (fh * a.H * (nb.h / ob.h)) / b.H);
-    // Type grows or shrinks with the box, in card px
-    const k = Math.min(nb.w / ob.w, nb.h / ob.h) * (a.u / b.u);
-    head =
-      layout.textHeight !== undefined
-        ? { textX: mapX(layout.textX ?? 0.5), textY: mapY(layout.textY), textWidth: mapW(layout.textWidth ?? 1), textHeight: mapH(layout.textHeight), fontScale: layout.fontScale * k }
-        : fresh.head;
-    body = {
-      x: mapX(bodyLayer.x),
-      y: mapY(bodyLayer.y),
-      width: mapW(bodyLayer.width),
-      height: bodyLayer.height === undefined ? undefined : mapH(bodyLayer.height),
-      size: bodyLayer.size * k,
-    };
+    const x = clamp01((nb.x + ((block.x * a.W - ob.x) / ob.w) * nb.w) / b.W);
+    const y = clamp01((nb.y + ((block.y * a.H - ob.y) / ob.h) * nb.h) / b.H);
+    const w = Math.max(MIN_BLOCK, Math.min(1, (block.w * a.W * (nb.w / ob.w)) / b.W));
+    const h = Math.max(MIN_BLOCK, Math.min(1, (block.h * a.H * (nb.h / ob.h)) / b.H));
+    // Kept whole on the card, never squeezed to nothing at an edge
+    orgBlock = { x: Math.min(x, 1 - w), y: Math.min(y, 1 - h), w, h };
   }
 
   const keepOr = (current: string | undefined, oldDefault: string, newDefault: string) => (!current || current.toLowerCase() === oldDefault.toLowerCase() ? newDefault : current);
   const layers = (layout.layers ?? []).flatMap((l): CardTextLayer[] => {
-    if (l.id === ORG_BODY_ID) return [{ ...l, ...body, style: { ...l.style, color: keepOr(l.style.color, from.layout.body.color, to.layout.body.color) } }];
+    if (l.id === ORG_BODY_ID) return [{ ...l, ...fresh.body, style: { ...l.style, lineHeight: BODY_LINE, color: keepOr(l.style.color, from.layout.body.color, to.layout.body.color) } }];
     if (l.id === ORG_DATE_ID) {
       if (!fresh.date) return [{ ...l, hidden: true }];
       return [{ ...dateLayer(to, fresh.date, l.style), hidden: undefined }];
@@ -382,13 +533,16 @@ export function switchOrgTemplate(layout: TemplateLayout, from: OrgCardTemplate 
   // A design with a date slot and a card that never had one (it started on a design without)
   if (fresh.date && !layers.some((l) => l.id === ORG_DATE_ID)) layers.splice(1, 0, dateLayer(to, fresh.date));
 
-  return {
+  const moved: TemplateLayout = {
     ...layout,
-    ...head,
+    ...fresh.head,
     orgTemplate: to.slug,
+    orgBlock,
     color: keepOr(layout.color === "auto" ? undefined : layout.color, from.layout.headline.color, to.layout.headline.color),
     layers,
   };
+  // In the template's box the words already sit right; in a box set by hand they are placed in it
+  return orgBlock ? placeOrgWords(moved, to) : moved;
 }
 
 /** Reopened on another day: a date box still showing a date in the template's format shows today's. */

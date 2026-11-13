@@ -240,6 +240,12 @@ export interface CardLayout {
   orgTemplate?: string;
   /** On a desk template: where the story's photo sits, as shares of the card (left, top, width, height). None: no photo. */
   photoBox?: { x: number; y: number; w: number; h: number };
+  /**
+   * On a desk template: the one text box that holds the heading and the story together (as the desk's posts
+   * set them), as shares of the card (left, top, width, height), once moved or resized by hand. None: the
+   * template's own box. The heading and the story are always placed in it as one block (orgCanvas.placeOrgWords).
+   */
+  orgBlock?: { x: number; y: number; w: number; h: number };
 }
 
 export type TextAnimation = "none" | "fade" | "rise" | "pop" | "wipe" | "typewriter";

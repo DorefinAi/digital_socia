@@ -95,7 +95,8 @@ export function FontSelect({ value, onChange, compact }: { value: string; onChan
 interface TextControlsProps {
   style: ResolvedStyle;
   onChange: (patch: Partial<CardTextStyle>) => void;
-  size: { value: number; min: number; max: number; step: number; format: (v: number) => string; onChange: (v: number) => void };
+  /** `fixed`: why the size can't be changed here (the controls show, disabled, with this as their hint) */
+  size: { value: number; min: number; max: number; step: number; format: (v: number) => string; onChange: (v: number) => void; fixed?: string };
   /** Headline only: its colour can follow the template */
   autoColor?: { active: boolean; onPick: () => void };
   onReset: () => void;
@@ -121,11 +122,11 @@ export default function TextControls({ style: s, onChange, size, autoColor, onRe
       </Box>
       <Typography sx={labelSx}>Size</Typography>
       <Box sx={{ ...rowSx, gap: 0.5, flexWrap: "wrap" }}>
-        <Tooltip title="Smaller text (10%)"><span><IconButton aria-label="Smaller text" disabled={size.value <= size.min} onClick={() => size.onChange(steppedTextSize(size.value, -1, size.min, size.max, size.step))} sx={toggleSx(false)}><Minus size={15} /></IconButton></span></Tooltip>
+        <Tooltip title={size.fixed ?? "Smaller text (10%)"}><span><IconButton aria-label="Smaller text" disabled={!!size.fixed || size.value <= size.min} onClick={() => size.onChange(steppedTextSize(size.value, -1, size.min, size.max, size.step))} sx={toggleSx(false)}><Minus size={15} /></IconButton></span></Tooltip>
         <Typography sx={{ fontSize: "0.75rem", fontWeight: 700, width: 44, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{size.format(size.value)}</Typography>
-        <Tooltip title="Larger text (10%)"><span><IconButton aria-label="Larger text" disabled={size.value >= size.max} onClick={() => size.onChange(steppedTextSize(size.value, 1, size.min, size.max, size.step))} sx={toggleSx(false)}><Plus size={15} /></IconButton></span></Tooltip>
+        <Tooltip title={size.fixed ?? "Larger text (10%)"}><span><IconButton aria-label="Larger text" disabled={!!size.fixed || size.value >= size.max} onClick={() => size.onChange(steppedTextSize(size.value, 1, size.min, size.max, size.step))} sx={toggleSx(false)}><Plus size={15} /></IconButton></span></Tooltip>
         <Box role="group" aria-label="Text size presets" sx={{ display: "flex", gap: 0.25 }}>
-          {(["S", "M", "L"] as const).map((preset) => <Tooltip key={preset} title={{ S: "Small", M: "Medium", L: "Large" }[preset]}><Button aria-label={`${preset} text size`} aria-pressed={Math.abs(size.value - textSizePreset(preset, size.min, size.max)) < 0.001} onClick={() => size.onChange(textSizePreset(preset, size.min, size.max))} sx={{ ...toggleSx(Math.abs(size.value - textSizePreset(preset, size.min, size.max)) < 0.001), minWidth: 30, width: 30, p: 0 }}>{preset}</Button></Tooltip>)}
+          {(["S", "M", "L"] as const).map((preset) => <Tooltip key={preset} title={size.fixed ?? { S: "Small", M: "Medium", L: "Large" }[preset]}><span><Button aria-label={`${preset} text size`} disabled={!!size.fixed} aria-pressed={Math.abs(size.value - textSizePreset(preset, size.min, size.max)) < 0.001} onClick={() => size.onChange(textSizePreset(preset, size.min, size.max))} sx={{ ...toggleSx(Math.abs(size.value - textSizePreset(preset, size.min, size.max)) < 0.001), minWidth: 30, width: 30, p: 0 }}>{preset}</Button></span></Tooltip>)}
         </Box>
       </Box>
 

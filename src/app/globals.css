@@ -168,8 +168,8 @@ p {
 
 /*
  * Mardoto Bold (SIL Open Font License 1.1, public/fonts/Mardoto-OFL.txt), the default face of every text on
- * the desk's X templates. Bold and Latin only: Hindi falls back to Mangal. Canvas code waits for both
- * (backgroundCard.fontsReady).
+ * the desk's X templates. Bold and Latin only: Hindi comes from "SociaNotoDevanagari" below. Canvas code
+ * waits for both (backgroundCard.fontsReady).
  */
 @font-face {
   font-family: "SociaMardoto";
@@ -177,4 +177,19 @@ p {
   font-weight: 700;
   font-style: normal;
   font-display: swap;
+}
+
+/*
+ * Noto Sans Devanagari Bold (SIL Open Font License 1.1, public/fonts/NotoSansDevanagari-OFL.txt): the Hindi
+ * letters on the desk's X templates, the face the desk's own posted cards show. Always the bundled file (no
+ * local()), so every machine measures and draws the same letters; only Devanagari comes from it
+ * (unicode-range), Latin letters and digits stay Mardoto's.
+ */
+@font-face {
+  font-family: "SociaNotoDevanagari";
+  src: url("/fonts/NotoSansDevanagari-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0900-097F, U+1CD0-1CFF, U+200C-200D, U+25CC, U+A830-A839, U+A8E0-A8FF;
 }

@@ -21,6 +21,7 @@ import {
 } from "next/font/google";
 import { notoDevanagari as noto, roboto } from "@/constants/fonts";
 import { findFont } from "./fontMatch";
+import { CARD_FACES } from "./cardFace";
 
 // Every card font covers Devanagari and Latin, since FTP stories arrive in Hindi with English names.
 // preload is off: a font file downloads only when a card or the font menu first uses it.
@@ -67,16 +68,17 @@ const VARIABLE = [400, 500, 600, 700, 800];
 export const MANGAL_FAMILY = `"SociaMangal", Arial, "Helvetica Neue", ${noto.style.fontFamily}`;
 /**
  * Mardoto Bold (globals.css "SociaMardoto", bundled in public/fonts, SIL OFL 1.1): the desk templates' card
- * face. It has Latin letters only, so Hindi falls back to Mangal, then the rest of Mangal's list.
+ * face. It has Latin letters only, so Hindi comes from Noto Sans Devanagari Bold ("SociaNotoDevanagari",
+ * bundled), as on the desk's own posted cards (cardFace.ts); Mangal's list stays behind them as a fallback.
  */
-export const MARDOTO_FAMILY = `"SociaMardoto", ${MANGAL_FAMILY}`;
+export const MARDOTO_FAMILY = `${CARD_FACES}, ${MANGAL_FAMILY}`;
 /** The desk templates' card face: headline, story, date and added text boxes */
 export const ORG_CARD_FONT = "mardoto";
 /** The desk templates' date face (the same face; kept apart so the date can change on its own) */
 export const ORG_DATE_FONT = "mardoto";
 
 export const TEMPLATE_FONTS: TemplateFont[] = [
-  // First in the menu: the default on the desk's X templates (Mardoto ships bold only; Hindi is set in Mangal)
+  // First in the menu: the default on the desk's X templates (Mardoto ships bold only; Hindi is set in Noto Sans Devanagari Bold)
   { id: "mardoto", label: "Mardoto Bold", group: "Sans", family: MARDOTO_FAMILY, weights: [700] },
   // Mangal ships regular and bold only
   { id: "mangal", label: "Mangal", group: "Sans", family: MANGAL_FAMILY, weights: [400, 700] },

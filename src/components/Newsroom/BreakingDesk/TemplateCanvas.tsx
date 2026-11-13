@@ -83,6 +83,12 @@ interface TemplateCanvasProps {
    * Pass the same object while nothing changes, or every render repaints the card.
    */
   backdrop?: CardBackdrop | null;
+  /**
+   * A desk template's one text box: the headline and the text box `layer` (the story) are picked, moved and
+   * resized together as one box, as the desk's posts set them. `rect` gives the box in canvas px; `place`
+   * returns the layout with the box at `rect` and the words placed in it. Typing still goes to the part clicked.
+   */
+  textBlock?: { layer: string; rect: (layout: TemplateLayout) => Rect | null; place: (layout: TemplateLayout, rect: Rect) => TemplateLayout };
   ref?: React.Ref<TemplateCanvasHandle>;
   style?: React.CSSProperties;
 }
@@ -140,7 +146,7 @@ function offsetAtPoint(area: HTMLTextAreaElement, x: number, y: number): number 
 /** How close, in canvas px at 1080, a dragged box's centre snaps to the frame's centre lines */
 const SNAP = 14;
 
-export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHandle}`, tag, layout, onLayoutChange, selection, onSelect, textLimits, onContextTarget, renderScale = 1, paused, segments, onDuration, onTime, sound = false, backdrop = null, ref, style }: TemplateCanvasProps) {
+export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHandle}`, tag, layout, onLayoutChange, selection, onSelect, textLimits, onContextTarget, renderScale = 1, paused, segments, onDuration, onTime, sound = false, backdrop = null, textBlock, ref, style }: TemplateCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const startGesture = useBoxGesture();
@@ -590,8 +596,12 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     return { x: ((e.clientX - bounds.left) / bounds.width) * size.w, y: ((e.clientY - bounds.top) / bounds.height) * size.h, perPx: size.w / bounds.width };
   };
 
+  /** The headline or the story on a desk template: one box with the other (textBlock) */
+  const inBlock = (target: CanvasSelection | undefined): boolean => !!textBlock && (target === "headline" || target === `layer:${textBlock.layer}`);
+
   const rectOf = (target: CanvasSelection): Rect | null => {
     if (target === "background") return photoRect;
+    if (textBlock && inBlock(target)) return textBlock.rect(layout);
     if (target === "headline") return rectsRef.current.headline;
     if (target?.startsWith("layer:")) return rectsRef.current.layers[target.slice(6)] ?? null;
     return null;
@@ -603,6 +613,8 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   const hitTest = (p: { x: number; y: number }): CanvasSelection => {
     const ids = (layout.layers ?? []).map((l) => l.id).reverse();
     const layerId = ids.find((id) => inside(p, rectsRef.current.layers[id]));
+    // Anywhere in the one text box picks it; the part under the pointer is the one typed in
+    if (textBlock && (!layerId || layerId === textBlock.layer) && inside(p, textBlock.rect(layout))) return layerId ? `layer:${layerId}` : "headline";
     if (layerId) return `layer:${layerId}`;
     if (inside(p, rectsRef.current.headline)) return "headline";
     if (backdrop) return inside(p, photoRect) ? "background" : null;
@@ -636,6 +648,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   const applyBox = (base: TemplateLayout, target: Exclude<CanvasSelection, null>, box: FrameBox): TemplateLayout => {
     // The photo's frame on a desk template
     if (target === "background") return { ...base, photoBox: { x: box.x / size.w, y: box.y / size.h, w: box.w / size.w, h: box.h / size.h } };
+    if (textBlock && inBlock(target)) return textBlock.place(base, box);
     const centre = { x: (box.x + box.w / 2) / size.w, y: (box.y + box.h / 2) / size.h };
     if (target === "headline") {
       const areaW = rectsRef.current.headlineArea?.width || size.w;
@@ -696,7 +709,9 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
         cx = keepIn(cx, drag.box.w, size.w);
         cy = keepIn(cy, drag.box.h, size.h);
       }
-      if (drag.target === "headline") {
+      if (textBlock && drag.box && inBlock(drag.target)) {
+        onLayoutChange(textBlock.place(base, { ...drag.box, x: cx - drag.box.w / 2, y: cy - drag.box.h / 2 }));
+      } else if (drag.target === "headline") {
         if (base.textHeight !== undefined) onLayoutChange({ ...base, textX: clamp01(cx / size.w), textY: clamp01(cy / size.h) });
         else onLayoutChange({ ...base, textY: Math.max(0.05, Math.min(0.95, cy / size.h)), ...((base.textWidth ?? 1) < 1 ? { textX: clamp01(cx / size.w) } : {}) });
       } else {
@@ -819,7 +834,9 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   const typeCss = typeStyle();
 
   const photoPct = photoRect ? { x: (photoRect.x / size.w) * 100, y: (photoRect.y / size.h) * 100, w: (photoRect.w / size.w) * 100, h: (photoRect.h / size.h) * 100 } : undefined;
-  const selectedBox = selection === "background" ? photoPct : selection ? boxes[selection] : undefined;
+  const blockRect = textBlock && inBlock(selection) ? textBlock.rect(layout) : null;
+  const blockPct = blockRect ? { x: (blockRect.x / size.w) * 100, y: (blockRect.y / size.h) * 100, w: (blockRect.w / size.w) * 100, h: (blockRect.h / size.h) * 100 } : undefined;
+  const selectedBox = selection === "background" ? photoPct : blockPct ?? (selection ? boxes[selection] : undefined);
 
   return (
     <div

@@ -38,6 +38,71 @@ function placeKey(place: string): string {
   return place.toLowerCase().replace(/[\s-]+/g, "");
 }
 
+/**
+ * Rajasthan's districts' other spellings (backend packages/core rajasthan.ts: `hi` and every alias, Hindi and
+ * English), keyed by placeKey of the English name, so a heading that already opens with its district in any of
+ * them is recognised.
+ */
+const DISTRICT_NAMES = new Map<string, readonly string[]>(
+  ([
+    ["Ajmer", ["अजमेर"]],
+    ["Alwar", ["अलवर"]],
+    ["Balotra", ["बालोतरा"]],
+    ["Banswara", ["बांसवाड़ा", "बांसवाडा"]],
+    ["Baran", ["बारां"]],
+    ["Barmer", ["बाड़मेर", "बाडमेर"]],
+    ["Beawar", ["ब्यावर"]],
+    ["Bharatpur", ["भरतपुर"]],
+    ["Bhilwara", ["भीलवाड़ा", "भीलवाडा"]],
+    ["Bikaner", ["बीकानेर"]],
+    ["Bundi", ["बूंदी", "बूँदी"]],
+    ["Chittorgarh", ["चित्तौड़गढ़", "Chittaurgarh", "Chittor", "चित्तौड़"]],
+    ["Churu", ["चूरू"]],
+    ["Dausa", ["दौसा"]],
+    ["Deeg", ["डीग"]],
+    ["Dholpur", ["धौलपुर"]],
+    ["Didwana-Kuchaman", ["डीडवाना-कुचामन", "Didwana", "Kuchaman", "डीडवाना", "कुचामन"]],
+    ["Dungarpur", ["डूंगरपुर"]],
+    ["Hanumangarh", ["हनुमानगढ़"]],
+    ["Jaipur", ["जयपुर"]],
+    ["Jaisalmer", ["जैसलमेर"]],
+    ["Jalore", ["जालोर", "Jalor", "जालौर"]],
+    ["Jhalawar", ["झालावाड़", "झालावाड"]],
+    ["Jhunjhunu", ["झुंझुनूं", "Jhunjhunun", "झुंझुनू"]],
+    ["Jodhpur", ["जोधपुर"]],
+    ["Karauli", ["करौली"]],
+    ["Khairthal-Tijara", ["खैरथल-तिजारा", "Khairthal", "Tijara", "खैरथल", "तिजारा"]],
+    ["Kota", ["कोटा"]],
+    ["Kotputli-Behror", ["कोटपूतली-बहरोड़", "Kotputli", "Behror", "कोटपूतली", "बहरोड़"]],
+    ["Nagaur", ["नागौर"]],
+    ["Pali", ["पाली"]],
+    ["Phalodi", ["फलोदी"]],
+    ["Pratapgarh", ["प्रतापगढ़"]],
+    ["Rajsamand", ["राजसमंद"]],
+    ["Salumbar", ["सलूंबर", "Salumber", "सलूम्बर"]],
+    ["Sawai Madhopur", ["सवाई माधोपुर"]],
+    ["Sikar", ["सीकर"]],
+    ["Sirohi", ["सिरोही"]],
+    ["Sri Ganganagar", ["श्रीगंगानगर", "Ganganagar", "Shri Ganganagar", "गंगानगर"]],
+    ["Tonk", ["टोंक"]],
+    ["Udaipur", ["उदयपुर"]],
+  ] as const).map(([en, hi]) => [placeKey(en), hi]),
+);
+
+/**
+ * True when the heading opens with one of `names` as a word of its own ("अलवर के हल्दीना गांव में…",
+ * "जयपुर रेंज IG…"): the place is already the heading's first word, so the desk sets no "Place:" in front.
+ */
+function opensWithPlace(text: string, names: readonly string[]): boolean {
+  const t = text.normalize("NFC").toLowerCase();
+  return names.some((n) => {
+    const name = n.normalize("NFC").trim().toLowerCase();
+    if (!name || !t.startsWith(name)) return false;
+    const next = t.slice(name.length);
+    return next === "" || /^[^\p{L}\p{M}\p{N}_]/u.test(next);
+  });
+}
+
 /** "बड़ीसादड़ी": a town as its hashtag spells it (core breaking/compose.ts townHashtag), without the "#" */
 export function townTag(town: string | null | undefined): string {
   return (town ?? "").normalize("NFC").replace(/[^\p{L}\p{M}\p{N}_]+/gu, "");
@@ -76,6 +141,8 @@ export function storyTown(town: string | null | undefined, bodyText: string | nu
  *   dropped; the place goes in front instead.
  * - Any other tag run (party, topic: "#Congress #Kota: …", "#BJP: …", "#ब्रेकिंग: …") is the story's own lead,
  *   kept by the server on purpose: it stays without its "#" signs and no place goes in front.
+ * - A heading that already opens with its own place as a word (the district in English or Hindi, or the town:
+ *   "अलवर के हल्दीना गांव में…") gets nothing in front, so the place is never said twice.
  * - Idempotent: a place already in front (a known English place, the district, or the town as one word, as a
  *   saved card heading carries it) is replaced, never stacked; another lead already in front ("BJP: …", as
  *   such a heading is saved) keeps the heading as it is.
@@ -105,6 +172,9 @@ export function cardHeadlineText(headline: string, district?: string | null, tow
   else if (word && isPlace(word[1])) bare = bare.slice(word[0].length).trim() || bare;
   // A lead kept from a tag run and saved as text ("BJP: …", "ब्रेकिंग: …") still takes no place on reopening
   else if (LEADING_LEAD.test(bare)) return bare;
+  // The heading already opens with its own place ("अलवर के हल्दीना…"): as the desk's posts, no "Alwar: " in front
+  const own = [district ?? "", ...(DISTRICT_NAMES.get(placeKey(district ?? "")) ?? []), town ?? "", townTag(town)];
+  if (opensWithPlace(bare, own)) return bare;
   return `${place}: ${bare}`;
 }
 

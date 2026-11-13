@@ -1,18 +1,19 @@
 // Draws an X card on the operator's own background (contract: first-india-card-contract.md §2):
-// today's date in the date slot, then inside the box the headline (bold) and the whole story body, each
-// line centred across the box and the block starting at its top (cardFit), at one font size shrunk from
-// fontMaxPx to fontMinPx until both fit. Pure canvas, no React.
+// today's date in the date slot, then inside the box the headline (bold) and the whole story body as one
+// block, each line centred across the box and the block centred up and down in it (cardFit), at one font
+// size shrunk from fontMaxPx to fontMinPx until both fit. Pure canvas, no React.
 
 import type { DrawableCardTemplate, OrgCardTemplateLayout } from "@/lib/socia/types";
 import { MARDOTO_FAMILY } from "../templateFonts";
+import { CARD_FACE_SAMPLE } from "../cardFace";
 import { cardBodyText } from "../cardWords";
-import { CARD_GAP_LINES, CARD_LINE, type PxRect, cardTextArea, largestFit } from "./cardFit";
+import { CARD_GAP_LINES, CARD_LINE, type PxRect, cardBlockTop, cardTextArea, largestFit } from "./cardFit";
 import { fitDate } from "./cardDate";
 import { isTainted, rgbPng } from "./rgbPng";
 
 /**
  * Mardoto Bold is the cards' face (globals.css "SociaMardoto"); it has no Hindi letters, so those come from
- * Mangal ("SociaMangal": installed, else bundled), and Noto Sans Devanagari stands in if Mangal can't load.
+ * Noto Sans Devanagari Bold ("SociaNotoDevanagari", bundled), as on the desk's posted cards (cardFace.ts).
  */
 const family = () => `${MARDOTO_FAMILY}, "Nirmala UI", sans-serif`;
 // Line pitch and the gap are cardFit's, shared with the editor's card (orgCanvas.ts)
@@ -73,10 +74,13 @@ export async function loadImage(url: string): Promise<HTMLImageElement> {
 /** The date tag's face (Mardoto Bold), at `px` */
 const dateFont = (px: number) => `700 ${px}px ${MARDOTO_FAMILY}`;
 
-/** Waits for Mardoto, the Hindi faces and the date's face so the first draw is not measured on a fallback font. */
+/**
+ * Waits for Mardoto, the Hindi face (the sample has Hindi letters, so the Noto file is fetched) and the date's
+ * face, so the first draw is not measured on a fallback font.
+ */
 export async function fontsReady() {
   if (typeof document === "undefined" || !document.fonts) return;
-  const sample = "क ख A 1";
+  const sample = CARD_FACE_SAMPLE;
   await Promise.all([
     document.fonts.load(`700 40px ${family()}`, sample),
     document.fonts.load(`400 40px ${family()}`, sample),
@@ -255,7 +259,7 @@ export function paintCardText(ctx: CanvasRenderingContext2D, layout: OrgCardTemp
     ctx.textBaseline = "middle";
   }
 
-  // Box: headline then body, centred across, from the top of the text area (cardFit), one size for both
+  // Box: headline then body as one block, centred across and up and down in the text area (cardFit), one size for both
   const b = layout.box;
   const box = { x: b.x * W, y: b.y * H, w: b.w * W, h: b.h * H };
   const headline = words.headline.replace(/\*\*/g, "").trim();
@@ -265,7 +269,7 @@ export function paintCardText(ctx: CanvasRenderingContext2D, layout: OrgCardTemp
   const area = cardTextArea(box, fit.size);
   const lineH = fit.size * LINE_HEIGHT;
   const cx = area.x + area.w / 2;
-  let y = area.y + lineH / 2;
+  let y = cardBlockTop(area, fit.height) + lineH / 2;
   ctx.font = `700 ${fit.size}px ${family()}`;
   ctx.fillStyle = layout.headline.color;
   for (const line of fit.headline) {
