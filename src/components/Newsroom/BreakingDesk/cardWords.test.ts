@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { CARD_FACES, CARD_FACE_SAMPLE } from "./cardFace";
-import { cardHeadlineText } from "./cardWords";
+import { cardBodyText, cardHeadlineText } from "./cardWords";
 
 test("the card's font stack starts with Mardoto for Latin and Noto Sans Devanagari for Hindi", () => {
   assert.ok(CARD_FACES.startsWith(`"SociaMardoto", "SociaNotoDevanagari"`));
@@ -43,4 +43,20 @@ test("a heading that does not open with its place still gets it in front, and a 
   assert.equal(cardHeadlineText("Kotar village flooded", "Kota", null), "Kota: Kotar village flooded");
   // The story's own lead stays, with nothing in front
   assert.equal(cardHeadlineText("#BJP: प्रदेश कार्यकारिणी की बैठक", "Jaipur", null), "BJP: प्रदेश कार्यकारिणी की बैठक");
+});
+
+
+test("the card's story drops a reporter's joining dots at the start or middle of a point", () => {
+  // "समिति, ...और त्रिनिदाद" in the source: the dots never go on the card, the words stay
+  assert.equal(
+    cardBodyText(["भगवान महावीर विकलांग सहायता समिति", "...और त्रिनिदाद सरकार के सहयोग से सेंटर की हुई शुरुआत"]),
+    "भगवान महावीर विकलांग सहायता समिति, और त्रिनिदाद सरकार के सहयोग से सेंटर की हुई शुरुआत",
+  );
+  assert.equal(cardBodyText(["जयपुर फुट … और विकलांग सहायता"]), "जयपुर फुट और विकलांग सहायता");
+  assert.equal(cardBodyText(["कार्यक्रम....उद्घाटन हुआ"]), "कार्यक्रम उद्घाटन हुआ");
+});
+
+test("the card's story keeps decimals, and a point that trails off keeps its dots", () => {
+  assert.equal(cardBodyText(["1.39 करोड़ रुपए का बजट", "5.06 लाख"]), "1.39 करोड़ रुपए का बजट, 5.06 लाख");
+  assert.equal(cardBodyText(["अब सवाल ये कि...", "विभाग के दावे सही"]), "अब सवाल ये कि... विभाग के दावे सही");
 });

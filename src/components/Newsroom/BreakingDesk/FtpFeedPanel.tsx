@@ -2,7 +2,8 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, CircularProgress, Tab, Tabs, Tooltip, Typography } from "@mui/material";
-import { PenLine } from "lucide-react";
+import { AlertTriangle, PenLine } from "lucide-react";
+import { needsCheckHint, needsCheckLabel, shownNeedsCheck } from "./phase1/badges";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { BreakingTag, FtpNewsItem, SocialPlatform } from "@/types/newsroom";
 import { isLiveOn } from "@/data/socialDesk";
@@ -13,7 +14,7 @@ import { REJECTED_NEWS_PERMISSION } from "@/lib/rejectedNews";
 import { isLiveItem, stableQueueToNews, useLiveDesk } from "./live/LiveDesk";
 import NewStoriesPill, { freshHighlightSx } from "./NewStoriesPill";
 import StoryThumb, { THUMB_ROOT_ATTR } from "./live/StoryThumb";
-import { canCorrect, editedLabel } from "./live/correction";
+import { canCorrect, editedLabel, needsCheckDescription } from "./live/correction";
 
 const STATUS_STYLE: Record<string, { label: string; color: string }> = {
   posted: { label: "Posted", color: "success.main" },
@@ -182,6 +183,8 @@ export default function FtpFeedPanel({
             const holder = live?.claim && !current ? (live.claim.mine ? "With you" : list === "published" ? `${live.claim.name} is fixing` : `${live.claim.name} is editing`) : null;
             // Posted today and Rejected are lists to read: plain rows, not buttons that do nothing
             const pickable = !otherList;
+            // Why the post needs a second look (no district, two districts, headline cut...), as the queue outside shows
+            const checks = live ? shownNeedsCheck(live.needsCheck) : [];
             // Posted today: a small Edit to fix the post (the row itself stays plain), and a mark once it was fixed
             const editable = list === "published" && !!onEdit && !!desk?.canAct && canCorrect(live);
             const edited = list === "published" ? editedLabel(live?.corrected) : null;
@@ -276,6 +279,41 @@ export default function FtpFeedPanel({
                   >
                     Edit
                   </Button>
+                )}
+                {checks.length > 0 && (
+                  // Hover for the details. The details are also in the row's text (srOnly, below), so screen readers
+                  // and keyboard users get them; describeChild keeps the tooltip from naming the mark a second time.
+                  <Tooltip
+                    placement="right"
+                    arrow
+                    describeChild
+                    title={
+                      <Box sx={{ py: 0.25 }}>
+                        {checks.map((r) => (
+                          <Box key={r} sx={{ fontSize: "0.75rem", lineHeight: 1.45, "& + &": { mt: 0.75 } }}>
+                            <b>{needsCheckLabel(r)}.</b> {needsCheckHint(r)}
+                          </Box>
+                        ))}
+                      </Box>
+                    }
+                  >
+                    <Box
+                      component="span"
+                      data-testid="needs-check-mark"
+                      // In the plain Posted / Rejected rows it takes focus, so keyboard users can open the details;
+                      // its text already holds them, so the tooltip doesn't describe it again
+                      tabIndex={pickable ? undefined : 0}
+                      aria-describedby={undefined}
+                      // A small red tag in the row's top-right corner
+                      sx={{ position: "absolute", top: 4, right: 4, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "1px", minWidth: 22, height: 17, px: "4px", borderRadius: "4px", backgroundColor: "error.main", color: "#fff", fontSize: "0.625rem", fontWeight: 700, lineHeight: 1, "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}
+                    >
+                      <AlertTriangle size={11} aria-hidden />
+                      <span aria-hidden>{checks.length > 1 && checks.length}</span>
+                      <Box component="span" sx={srOnly}>
+                        {needsCheckDescription(checks, needsCheckLabel, needsCheckHint)}
+                      </Box>
+                    </Box>
+                  </Tooltip>
                 )}
               </Box>
             );

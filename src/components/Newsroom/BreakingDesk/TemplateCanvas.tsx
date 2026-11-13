@@ -107,6 +107,8 @@ const CLICK_SLOP = 4;
 const BORDER_PX = 10;
 /** Screen px inside the frame line that still count as its edge: narrow, so a click on the words types in them */
 const BORDER_IN_PX = 4;
+/** Shift, Alt, Ctrl or Meta: a press with one held never types, so the cursor shows "move" */
+const anyModifier = (e: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }) => e.shiftKey || e.altKey || e.ctrlKey || e.metaKey;
 /** The frame turns this red when the selected text runs off the card (a size set by hand grew it past an edge) */
 const OFF_CARD_RED = "#E53935";
 const offCard = (b: { x: number; y: number; w: number; h: number }) => b.x < -0.5 || b.y < -0.5 || b.x + b.w > 100.5 || b.y + b.h > 100.5;
@@ -175,7 +177,23 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   const [guides, setGuides] = useState({ v: false, h: false });
   /** What the pointer is over, for the cursor: a text box's edge (move) or its words (type) */
   const [hover, setHover] = useState<"edge" | "text" | null>(null);
+  /** Shift, Alt, Ctrl or Meta held: a press would not type, so the cursor is never "text" meanwhile */
+  const [modifierHeld, setModifierHeld] = useState(false);
   const editable = !!onLayoutChange;
+  // The keys are followed on the whole window, as the card need not have the focus while the pointer is over it
+  useEffect(() => {
+    if (!editable) return;
+    const sync = (e: KeyboardEvent) => setModifierHeld(anyModifier(e));
+    const release = () => setModifierHeld(false);
+    window.addEventListener("keydown", sync);
+    window.addEventListener("keyup", sync);
+    window.addEventListener("blur", release);
+    return () => {
+      window.removeEventListener("keydown", sync);
+      window.removeEventListener("keyup", sync);
+      window.removeEventListener("blur", release);
+    };
+  }, [editable]);
   // Typing right on the card: which text, and where its words were laid out (the canvas leaves them out meanwhile)
   const [typing, setTyping] = useState<TextTarget | null>(null);
   const [typeArea, setTypeArea] = useState<TextGeometry | null>(null);
@@ -721,6 +739,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     if (!drag && editable && e.pointerType === "mouse") {
       const { target, edge } = pickAt(toCanvas(e));
       setHover(edge ? "edge" : isTextTarget(target) ? "text" : null);
+      setModifierHeld(anyModifier(e));
     }
     if (!drag || !onLayoutChange) return;
     // A press that wobbles a few px is still a click; the drag starts once it really moves
@@ -915,7 +934,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
         maxWidth: "100%",
         maxHeight: "100%",
         aspectRatio: `${size.w} / ${size.h}`,
-        cursor: editable ? (hover === "text" ? "text" : "move") : "default",
+        cursor: editable ? (hover === "text" && !modifierHeld ? "text" : "move") : "default",
         touchAction: editable ? "none" : "auto",
         userSelect: "none",
         // Lets the typing box size its words to the card as drawn on screen

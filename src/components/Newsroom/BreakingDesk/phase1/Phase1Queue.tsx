@@ -17,9 +17,9 @@ import { freshHighlightSx } from "../NewStoriesPill";
 import { srOnly, timeAgo } from "../shared";
 import { X_LIMIT } from "../socialText";
 import { XRichText, X_COLORS } from "./XPostPreview";
-import { Badge, NeedsCheckBadges, Phase1Badges, shownNeedsCheck } from "./badges";
+import { Badge, NeedsCheckBadges, Phase1Badges, needsCheckHint, needsCheckLabel, shownNeedsCheck } from "./badges";
 import { ageTone } from "../deskRules";
-import { canCorrect, editedLabel } from "../live/correction";
+import { canCorrect, editedLabel, needsCheckDescription } from "../live/correction";
 
 const AGE_COLOR = { fresh: "success.main", recent: "warning.main", old: "text.disabled" } as const;
 
@@ -28,12 +28,37 @@ const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour:
 const rowSx = { display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", md: "52px minmax(0, 1fr) auto" }, gap: { xs: 1, md: 1.5 }, alignItems: "start", px: { xs: 1.5, md: 2 }, py: 1.5, borderTop: "1px solid", borderColor: "divider" } as const;
 const frameSx = { backgroundColor: "background.paper", border: "1px solid", borderColor: "divider", borderRadius: "12px", overflow: "hidden", "& > :first-of-type": { borderTop: 0 } } as const;
 
+/** "Needs a check: <label>. <hint>." for screen readers; "" when nothing needs a check */
+const checksText = (live: QueueItem | null) => (live ? needsCheckDescription(shownNeedsCheck(live.needsCheck), needsCheckLabel, needsCheckHint) : "");
+
+/**
+ * The needs-check tags with their hints in text, not only in the hover title: the tags are hidden from screen
+ * readers and the same words (label and hint) are read once, from a visually hidden line. `id` lets a row point
+ * aria-describedby at that line.
+ */
+function NeedsCheckTags({ live, id }: { live: QueueItem; id?: string }) {
+  const text = checksText(live);
+  if (!text) return null;
+  return (
+    <>
+      <Box component="span" aria-hidden sx={{ display: "contents" }}>
+        <NeedsCheckBadges needsCheck={live.needsCheck} />
+      </Box>
+      {/* With an id the row reads it as its description only (aria-hidden keeps it out of the row's name) */}
+      <Box component="span" id={id} aria-hidden={id ? true : undefined} sx={srOnly}>
+        {text}
+      </Box>
+    </>
+  );
+}
+
 /** Where the file came from and what it said, on one wrapping line; `reasons` false leaves the needs-check tags out */
 function RowMeta({ live, reasons = true }: { live: QueueItem; reasons?: boolean }) {
   const place = [live.district, live.town].filter(Boolean).join(" · ");
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap", fontSize: "0.75rem", color: "text.secondary" }}>
-      <Phase1Badges tags={live.tags} needsCheck={live.needsCheck} showReasons={reasons} />
+      <Phase1Badges tags={live.tags} needsCheck={live.needsCheck} showReasons={false} />
+      {reasons && <NeedsCheckTags live={live} />}
       {place && <span>{place}</span>}
       {live.card?.state === "ready" && <Badge tone="plain">Card</Badge>}
     </Box>
@@ -94,6 +119,8 @@ const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, can
       id={phase1RowId(item.id)}
       // A listbox option: the selected row is the one the preview panel shows and Tab lands on; J/K or the arrows move it
       role="option"
+      // Why it needs a second look (label and hint), read after the row's name
+      aria-describedby={live && checksText(live) ? `${phase1RowId(item.id)}-checks` : undefined}
       tabIndex={focused ? 0 : -1}
       aria-selected={focused}
       onClick={() => onFocusId(item.id)}
@@ -125,7 +152,7 @@ const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, can
       <Box sx={{ gridColumn: { xs: 1, md: "auto" }, display: "flex", alignItems: "center", gap: 0.5, justifyContent: { xs: "flex-start", md: "flex-end" } }} onClick={(e) => e.stopPropagation()}>
         {live && shownNeedsCheck(live.needsCheck).length > 0 && (
           <Box sx={issueTagsSx}>
-            <NeedsCheckBadges needsCheck={live.needsCheck} />
+            <NeedsCheckTags live={live} id={`${phase1RowId(item.id)}-checks`} />
           </Box>
         )}
         {canReject && !held && (

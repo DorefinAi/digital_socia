@@ -192,11 +192,17 @@ export function queueCardHeadline(item: Pick<QueueItem, "headline" | "bodyText" 
 const trimPoint = (p: string) => p.normalize("NFC").replace(/[\s।॥|.,;:!-]+$/u, "").replace(/\s+/g, " ").trim();
 /** A point that trails off on purpose ("...", "…") keeps its dots */
 const TRAILS_OFF = /(?:\.\.\.|…)$/u;
+/**
+ * Dots a reporter used to join or skip text, at the start or in the middle of a point ("समिति, ...और त्रिनिदाद"):
+ * two or more dots, or "…", with a word right after. They never go on the card; the words around them stay.
+ */
+const INNER_DOTS = /\s*(?:\.{2,}|…)\s*(?=[\p{L}\p{N}])/gu;
 
 /**
  * The story text on a desk-template card: one paragraph, the points joined with ", " as the desk's posts
  * join them (each point's closing punctuation dropped first), all of them, never cut. A point that ends in
- * "..." or "…" keeps its dots and the next one follows after a space. Takes the points, or the story body
+ * "..." or "…" keeps its dots and the next one follows after a space; dots at the start or in the middle of a
+ * point ("...और") are dropped. Takes the points, or the story body
  * with one point per line; a body that is already one paragraph comes back the same.
  */
 export function cardBodyText(points: string | readonly string[]): string {
@@ -204,7 +210,7 @@ export function cardBodyText(points: string | readonly string[]): string {
   let out = "";
   let trailed = false;
   for (const raw of list) {
-    const clean = (raw ?? "").normalize("NFC").replace(/\s+/g, " ").trim();
+    const clean = (raw ?? "").normalize("NFC").replace(INNER_DOTS, " ").replace(/\s+/g, " ").trim();
     const keepDots = TRAILS_OFF.test(clean);
     const point = keepDots ? clean : trimPoint(clean);
     if (!point) continue;
