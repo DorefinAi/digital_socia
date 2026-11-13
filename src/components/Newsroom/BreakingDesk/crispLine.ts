@@ -13,8 +13,6 @@ export const BREAKING_BODY_TARGET = 120;
 export const BREAKING_BODY_MAX = 130;
 /** A line 2 shorter than this is a stub ("आमजन....") and the post goes without it */
 export const BREAKING_BODY_FLOOR = 40;
-/** The longest whole breaking post (a sanity limit): the desk posts by hand and the account posts past 280 */
-export const BREAKING_POST_MAX = 1000;
 
 const nfc = (words: string[]): ReadonlySet<string> => new Set(words.map((w) => w.normalize("NFC")));
 
