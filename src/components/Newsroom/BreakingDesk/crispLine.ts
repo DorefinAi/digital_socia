@@ -13,6 +13,8 @@ export const BREAKING_BODY_TARGET = 120;
 export const BREAKING_BODY_MAX = 130;
 /** A line 2 shorter than this is a stub ("आमजन....") and the post goes without it */
 export const BREAKING_BODY_FLOOR = 40;
+/** The longest whole post the composer writes and the desk can post by hand (b8 decisions §0.2); Fit makes 280 */
+export const BREAKING_POST_MAX = 1000;
 
 const nfc = (words: string[]): ReadonlySet<string> => new Set(words.map((w) => w.normalize("NFC")));
 
@@ -59,7 +61,9 @@ function wordsOf(text: string): Word[] {
     wordSplitter ??= new Intl.Segmenter("hi", { granularity: "word" });
     return [...wordSplitter.segment(text)].filter((s) => s.isWordLike).map((s) => ({ text: s.segment, start: s.index, end: s.index + s.segment.length }));
   }
-  return [...text.matchAll(/[^\s,،;:।॥|.!?'"‘’“”()\-–—]+/gu)].map((m) => ({ text: m[0], start: m.index ?? 0, end: (m.index ?? 0) + m[0].length }));
+  // Word characters, the zero-width joiners Hindi typing puts inside a word ("दिल्‍ली"), and numbers like 1.39 / 5,732
+  // A word starts with a letter or digit, so the joiners and selectors inside an emoji are never words
+  return [...text.matchAll(/[\p{L}\p{N}_][\p{L}\p{M}\p{N}_\u200C\u200D]*(?:[.,:'’][\p{L}\p{N}_][\p{L}\p{M}\p{N}_\u200C\u200D]*)*/gu)].map((m) => ({ text: m[0], start: m.index ?? 0, end: (m.index ?? 0) + m[0].length }));
 }
 
 /** The letters of `text` (whole graphemes); one code point each without a segmenter */
@@ -68,7 +72,8 @@ function lettersOf(text: string): string[] {
     letterSplitter ??= new Intl.Segmenter("hi", { granularity: "grapheme" });
     return [...letterSplitter.segment(text)].map((s) => s.segment);
   }
-  return Array.from(text);
+  // As the segmenter groups them: an emoji sequence, or a letter with its vowel signs, conjuncts joined by a virama
+  return text.match(/\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F|\u200D\p{Extended_Pictographic}|[\u{E0020}-\u{E007F}])*|\P{M}\p{M}*[\u200C\u200D]*(?:(?<=[\u094D\u200C\u200D])\p{L}\p{M}*[\u200C\u200D]*)*/gu) ?? [];
 }
 
 const isContent = (w: Word | undefined): w is Word => !!w && !LINKING_WORDS.has(w.text) && !AUXILIARIES.has(w.text);
@@ -120,7 +125,8 @@ export function crispPoints(points: string[], dots: string, max = BREAKING_BODY_
 
 function cutPoints(parts: string[], all: string, dots: string, max: number): string {
   const dotLen = xLen(dots);
-  const lo = Math.min(BREAKING_BODY_MIN, Math.max(1, max - 30));
+  // Never under the floor: a shorter cut would win on score and then be dropped as a stub (review B2)
+  const lo = Math.max(BREAKING_BODY_FLOOR, Math.min(BREAKING_BODY_MIN, max - 30));
   const target = Math.min(BREAKING_BODY_TARGET, max);
   const words = wordsOf(all);
   // Each word's point, and how many words and content words of that point come after it
@@ -169,19 +175,21 @@ function cutPoints(parts: string[], all: string, dots: string, max: number): str
 }
 
 const squash = (s: string) => s.normalize("NFC").replace(/[\s,]+/g, " ").trim();
-/** Line 1 and line 2 of a post body: the first line is the headline, everything after it is line 2 */
-const linesOf = (body: string): [string, string] => {
-  const [first = "", ...rest] = body.trim().split("\n");
-  return [first.trim(), rest.map((l) => l.trim()).filter(Boolean).join(" ")];
-};
+/** A line of hashtags and handles only ("#Extra @x"): Fit never cuts it */
+const isTagLine = (line: string) => line.split(/\s+/).every((w) => /^[#@][\p{L}\p{M}\p{N}_]+$/u.test(w));
 
 export interface FitInput {
-  /** A live breaking draft (b8's line 2 rule); anything else (demo FTP, trends) keeps the plain shortening */
+  /** A live breaking draft (the story's layout is "breaking"); anything else keeps the plain shortening */
   liveBreaking: boolean;
   platform: SocialPlatform;
   /** The post box's text above the tag line */
   body: string;
-  /** The draft as the composer wrote it (lines 1 and 2) */
+  /**
+   * Line 2 as the composer wrote it (the draft's composerOriginalLine2): never overwritten by saves. Null for a
+   * draft from before it existed, whose line 2 is then the desk's own text.
+   */
+  composerLine2: string | null;
+  /** The draft's saved text: the old Fit's fallback for stories that are not live breaking drafts */
   original: string;
   /** The story's points, one per line */
   storyPoints: string[];
@@ -190,29 +198,57 @@ export interface FitInput {
 }
 
 /**
- * "Fit to 280". On a live breaking draft: line 1 (the headline) stays as it is, and line 2 is
- *   - rebuilt from the points when it is still the composer's own text, at 100–130 and shorter only if the post
- *     would still be over 280 (dropped under 40),
- *   - left exactly as typed when the desk changed it and the post fits, or cut from the desk's words when not,
- *   - left out when the desk deleted it.
- * The dots come from the plain headline of the composer's line 1, so Fit picks what the composer picked.
- * Anything else is shortened to fit as before.
+ * "Fit to 280" (the desk's tool for a short post: the result is never over `budget`). On a live breaking draft:
+ * line 1, the headline, stays; a line of tags and handles stays whole; line 2 is everything else, and
+ *   - is rebuilt from the story's points only while it is still the composer's own text,
+ *   - is left exactly as typed when the desk wrote it and the post fits, or cut from the desk's own words when not,
+ *   - stays out when the desk deleted it.
+ * The post is measured exactly as it will go out (Windows line breaks made plain, every line break counted), and
+ * line 2 is cut again until it fits; under 40 characters it is dropped. Dots: the composer's own, else from the
+ * plain headline as the composer picks them.
  */
-export function fitPostBody({ liveBreaking, platform, body, original, storyPoints, budget }: FitInput): string {
+export function fitPostBody({ liveBreaking, platform, body, composerLine2, original, storyPoints, budget }: FitInput): string {
   if (!liveBreaking || platform !== X) {
     const source = countChars(body.trim(), platform) > budget ? body : original;
     return shortenToFit(source, Math.min(budget, platform === X ? 200 : 400), platform);
   }
-  const [line1, typed] = linesOf(body);
-  if (xLen(line1) > budget) return shortenToFit(line1, budget, X);
-  if (!typed) return line1;
-  const [originalLine1, originalLine2] = linesOf(original);
-  const dots = breakingDots(plainHeadline(originalLine1 || line1));
-  const max = Math.min(BREAKING_BODY_MAX, budget - xLen(line1) - 2);
-  const fits = xLen(`${line1}\n\n${typed}`) <= budget;
-  const untouched = squash(typed) === squash(originalLine2);
-  if (!untouched && fits) return body.trim();
+  const clean = body.replace(/\r\n?/g, "\n").trim();
+  const [first = "", ...rest] = clean.split("\n");
+  const lines = rest.map((l) => l.trim()).filter(Boolean);
+  const tagLines = lines.filter(isTagLine);
+  const typed = lines.filter((l) => !isTagLine(l)).join(" ");
+  // Tag lines are never cut: when the headline and they do not fit together, the headline is shortened
+  const tagRoom = tagLines.length ? xLen(tagLines.join("\n\n")) + 2 : 0;
+  const line1 = xLen(first.trim()) + tagRoom > budget ? cutToFit(first.trim(), budget - tagRoom) : first.trim();
+  // The tag lines alone are over the budget: nothing else can make it fit
+  if (!line1) return cutToFit(clean, budget);
+  // Every tag line stays where it was; line 2 (the rest, cut) takes the place of the first text line
+  const firstText = lines.findIndex((l) => !isTagLine(l));
+  const assemble = (line2: string) =>
+    [line1, ...lines.flatMap((l, i) => (isTagLine(l) ? [l] : i === firstText && line2 ? [line2] : []))].join("\n\n");
+  if (!typed) return assemble("");
+  const untouched = !!composerLine2 && squash(typed) === squash(composerLine2);
+  if (!untouched && xLen(clean) <= budget) return clean;
+  const dots = composerLine2?.match(/\.{3,4}$/u)?.[0] ?? breakingDots(plainHeadline(line1));
   const points = storyPoints.map((p) => p.trim()).filter(Boolean);
-  const line2 = untouched && points.length ? crispPoints(points, dots, max) : crispPoints([typed.replace(CLOSING_DOTS, "")], dots, max);
-  return line2 ? `${line1}\n\n${line2}` : line1;
+  const source = untouched && points.length ? points : [typed.replace(CLOSING_DOTS, "")];
+  // Room for line 2 once line 1, the tag lines and the blank line before line 2 are counted
+  let max = Math.min(BREAKING_BODY_MAX, budget - xLen(assemble("")) - 2);
+  let line2 = crispPoints(source, dots, max);
+  while (line2 && xLen(assemble(line2)) > budget) {
+    max -= xLen(assemble(line2)) - budget;
+    line2 = crispPoints(source, dots, max);
+  }
+  const out = assemble(line2);
+  // Never over the budget, whatever the input
+  return xLen(out) <= budget ? out : cutToFit(out, budget);
+}
+
+/** `text` shortened to `budget`: whole sentences or words, and when not one word fits (a huge single word), letters */
+function cutToFit(text: string, budget: number): string {
+  if (budget <= 0) return "";
+  const words = shortenToFit(text, budget, X);
+  if (words) return words;
+  const letters = cutOnLetters(text, budget - xLen("…"));
+  return letters ? `${letters}…` : "";
 }
