@@ -1305,16 +1305,18 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     return next;
   };
 
-  /** Tag-line handles the directory doesn't have yet, once each (refused ones and recent failures left out) */
+  /**
+   * Tag-line handles the directory doesn't have yet, once each (refused ones and recent failures left out). Only
+   * ever asked for when the story is posted (Copy & mark posted, Post, Save as posted): posting is the editor
+   * vouching for every handle on the tag line, including one an earlier Save draft kept as plain text.
+   */
   const newHandles = () => {
-    // Not during a version clash, and only handles typed here: one already on the server's tag line (kept as
-    // plain text by an earlier save) is left alone, so opening a story and leaving adds nothing
+    // Not during a version clash
     if (!live || postBox.overflow || stale !== null) return [];
-    const onServer = new Set(splitPost(start.pristine?.text ?? start.text, splitOpts).mentions.map(tagKey));
     const fresh = new Map<string, string>();
     for (const m of postBox.split.mentions) {
       const k = tagKey(m);
-      if (!accepts(m) && !onServer.has(k) && !addedNow.current.has(k) && !refused.has(k) && !addCoolingDown(addFailed.current, k)) fresh.set(k, m);
+      if (!accepts(m) && !addedNow.current.has(k) && !refused.has(k) && !addCoolingDown(addFailed.current, k)) fresh.set(k, m);
     }
     return [...fresh.values()];
   };
@@ -1345,10 +1347,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   /**
    * `addNew`: a handle on the tag line that Socia doesn't know goes into the handle directory first, so the
-   * post keeps it as a mention. Only on a deliberate save (Post, Save draft, leaving); the typing autosave
-   * passes false so a half-typed handle never lands in the directory.
+   * post keeps it as a mention. True ONLY when the story is being posted (Copy & mark posted, Post, Save as
+   * posted). Autosave, Save draft and leaving pass false: a handle typed there stays plain text on the draft
+   * and is not added to the directory, so a mistyped or wrong handle that never went out is never learned.
    */
-  const saveText = async (addNew = true) => {
+  const saveText = async (addNew: boolean) => {
     if (!live || !canEdit || !livePatch) return;
     const fresh = addNew ? newHandles() : [];
     // Handles an earlier (or queued) save added count as known even before this render has them
@@ -1419,10 +1422,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     return png;
   };
 
-  /** Sends whatever is not on the server yet: text first, then the card (Post, Save draft, Save as posted). */
-  const flush = () =>
+  /**
+   * Sends whatever is not on the server yet: text first, then the card (Post, Save draft, Save as posted).
+   * `posting` is true for Post and Save as posted only: then new tag-line handles join the directory.
+   */
+  const flush = (posting = false) =>
     serial(async () => {
-      await saveText();
+      await saveText(posting);
       await uploadOwnCard();
     });
 
@@ -1432,7 +1438,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
    * Resolves to a sentence about the card when it didn't go up, else null; throws when the text didn't save.
    */
   const flushForLeave = async (): Promise<string | null> => {
-    await serial(saveText);
+    await serial(() => saveText(false));
     if (!cardUnsent) return null;
     try {
       await serial(() => uploadOwnCard());
@@ -1474,7 +1480,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const postLive = () =>
     runLive("post", async () => {
       if (!live || !canPost) return;
-      await flush();
+      await flush(true);
       let res: { jobId: string; sendAt: string } | null = null;
       for (let attempt = 0; !res; attempt++) {
         try {
@@ -1539,7 +1545,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     }
     try {
       const png = await serial(async () => {
-        await saveText();
+        // Posting: new tag-line handles join the directory now, and only now
+        await saveText(true);
         return uploadOwnCard(true);
       });
       const res = await serial(() => socia.copyPosted(id, versionRef.current));
@@ -1585,7 +1592,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     if (!live) return null;
     setBusy("posted");
     try {
-      await flush();
+      await flush(true);
       await socia.markPosted(live.draft.id, versionRef.current, permalink);
       live.onFinished();
       void desk?.refreshAll();
@@ -1667,8 +1674,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   /** Leaving the editor sends what is not saved yet, so nothing typed is lost. */
   const close = async () => {
-    // New tag-line handles too: the autosave kept them as plain text until this deliberate save
-    if (live && canEdit && (textDirty || cardUnsent || newHandles().length > 0)) {
+    // New tag-line handles are not a reason to save here: leaving never adds them to the directory
+    if (live && canEdit && (textDirty || cardUnsent)) {
       setBusy("save");
       let cardProblem: string | null = null;
       try {
