@@ -18,6 +18,7 @@ export const TYPED_REASON = "In the post text";
 
 // A hashtag is # and then letters (any script, with their matras), digits or _: "#दिल्ली" yes, "#Delhi," or "##" no.
 const HASHTAG = /^#[\p{L}\p{M}\p{N}_]+$/u;
+export const isHashtag = (tag: string) => HASHTAG.test(tag);
 // On the live desk a mention is an X handle as the API checks it (JSON Schema's ASCII \w, up to 15)
 const X_HANDLE = /^@[A-Za-z0-9_]{1,15}$/;
 // The demo desk also writes Instagram and Facebook handles, which may carry dots

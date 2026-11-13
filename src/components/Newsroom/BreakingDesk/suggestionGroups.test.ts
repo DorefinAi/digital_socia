@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { MentionSuggestion } from "../../../lib/socia/types";
-import { groupSuggestions, offeredHashtags, offeredMentions, sourceLabel } from "./suggestionGroups";
+import { groupSuggestions, offerableHashtag, offeredHashtags, offeredMentions, sourceLabel } from "./suggestionGroups";
 
 const handle = (h: string, extra: Partial<MentionSuggestion> = {}): MentionSuggestion => ({ handleId: h, entity: h, handle: h, exact: true, ...extra });
 const values = (rows: { value: string }[]) => rows.map((r) => r.value);
@@ -62,4 +62,60 @@ test("hashtags: only reporter-group objects are offered; bare strings keep today
   assert.ok(rows.every((r) => r.checked === false));
   assert.equal(groupSuggestions(rows).reporter.length, 2);
   assert.deepEqual(offeredHashtags(undefined, []), []);
+});
+
+test("hashtags: server tags go through the editor's normaliser; anything it would have to rewrite is dropped", () => {
+  assert.equal(offerableHashtag("RajGov"), "#RajGov");
+  assert.equal(offerableHashtag("  ##RajGov "), "#RajGov");
+  assert.equal(offerableHashtag("#जयपुर"), "#जयपुर");
+  assert.equal(offerableHashtag("Jaipur Police"), "");
+  assert.equal(offerableHashtag("#Raj.Gov"), "");
+  assert.equal(offerableHashtag("#Kota,"), "");
+  assert.equal(offerableHashtag("#"), "");
+  assert.equal(offerableHashtag(undefined), "");
+  const rows = offeredHashtags(
+    [
+      { tag: "Jaipur Police", source: "reporter_prior", reason: "x" },
+      { tag: "#Raj.Gov", source: "reporter_beat", reason: "y" },
+      { tag: " #Kota ", source: "reporter_prior", reason: "z" },
+    ],
+    [],
+  );
+  assert.deepEqual(values(rows), ["#Kota"]);
+});
+
+test("a duplicate with reporter evidence wins over a plain one, in the first one's place", () => {
+  const rows = offeredMentions(
+    [
+      handle("@KotaPolice", { source: "directory", reason: "Directory: Kota police" }),
+      handle("@JDAJaipur"),
+      handle("@kotapolice", { source: "reporter_prior", reason: "rituraj tags Kota police 40% of the time (30 posts)" }),
+      handle("@KOTAPOLICE", { source: "directory" }),
+    ],
+    [],
+  );
+  assert.deepEqual(values(rows), ["@kotapolice", "@JDAJaipur"]);
+  assert.equal(rows[0].source, "reporter_prior");
+  assert.equal(rows[0].reason, "rituraj tags Kota police 40% of the time (30 posts)");
+  assert.deepEqual(values(groupSuggestions(rows).reporter), ["@kotapolice"]);
+});
+
+test("between two reporter suggestions, or two plain ones, the first is kept", () => {
+  const rows = offeredMentions(
+    [
+      handle("@A", { source: "reporter_beat", reason: "beat" }),
+      handle("@a", { source: "reporter_prior", reason: "prior" }),
+      handle("@B", { reason: "first" }),
+      handle("@b", { reason: "second" }),
+    ],
+    [],
+  );
+  assert.deepEqual(values(rows), ["@A", "@B"]);
+  assert.equal(rows[0].reason, "beat");
+  assert.equal(rows[1].reason, "first");
+});
+
+test("mention handles are trimmed, and blank ones dropped", () => {
+  const rows = offeredMentions([handle("  @RajGovOfficial  "), handle("   "), handle(""), handle("@"), handle(" JDAJaipur")], [" @jdajaipur "]);
+  assert.deepEqual(values(rows), ["@RajGovOfficial"]);
 });

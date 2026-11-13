@@ -45,12 +45,13 @@ export function TagPicker({
   // The reporter's usual tags sit in their own group under the normal rows; ticking one is the same one click
   const { normal, reporter } = groupSuggestions(options);
   const reporterHeadId = useId();
-  const tick = (option: TagOption) => (
+  const tick = (option: TagOption, aria?: { labelledBy: string; describedBy: string }) => (
     <Checkbox
       size="small"
       checked={option.checked}
       disabled={disabled}
       onChange={(e) => onChange(options.map((o) => (o === option ? { ...o, checked: e.target.checked } : o)))}
+      slotProps={aria ? { input: { "aria-labelledby": aria.labelledBy, "aria-describedby": aria.describedBy } } : undefined}
       sx={{ p: 0.75 }}
     />
   );
@@ -106,30 +107,37 @@ export function TagPicker({
           </Box>
         ))}
         {reporter.length > 0 && (
-          <Box role="group" aria-labelledby={reporterHeadId} sx={{ borderTop: normal.length ? "1px solid" : "none", borderColor: "divider" }}>
-            <Typography id={reporterHeadId} sx={{ px: 1.25, pt: 0.75, pb: 0.25, fontSize: "0.6875rem", fontWeight: 600, color: "text.secondary" }}>
+          // Named after its picker ("Reporter usually tags (Mentions)"): both pickers carry a group with this heading
+          <Box role="group" aria-label={`${REPORTER_GROUP_LABEL} (${label})`} sx={{ borderTop: normal.length ? "1px solid" : "none", borderColor: "divider" }}>
+            <Typography aria-hidden sx={{ px: 1.25, pt: 0.75, pb: 0.25, fontSize: "0.6875rem", fontWeight: 600, color: "text.secondary" }}>
               {REPORTER_GROUP_LABEL}
             </Typography>
-            {reporter.map((option) => {
+            {reporter.map((option, i) => {
               const tag = sourceLabel(option.source);
+              // The tick is named by the tag (and its source chip); the reason is its description, not its name
+              const valueId = `${reporterHeadId}-${i}-value`;
+              const tagId = `${reporterHeadId}-${i}-source`;
+              const reasonId = `${reporterHeadId}-${i}-reason`;
               return (
                 <Box
                   key={option.value}
                   component="label"
                   sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, pr: 1.25, pb: 0.5, cursor: disabled ? "default" : "pointer", "&:hover": { backgroundColor: "action.hover" } }}
                 >
-                  {tick(option)}
+                  {tick(option, { labelledBy: tag ? `${valueId} ${tagId}` : valueId, describedBy: reasonId })}
                   <Box sx={{ flex: 1, minWidth: 0, pt: 0.6 }}>
-                    <Typography component="span" sx={{ fontSize: "0.8125rem", fontWeight: 600, overflowWrap: "anywhere" }}>
+                    <Typography id={valueId} component="span" sx={{ fontSize: "0.8125rem", fontWeight: 600, overflowWrap: "anywhere" }}>
                       {option.value}
                     </Typography>
                     {tag && (
-                      <Typography component="span" sx={{ ml: 0.75, px: 0.5, fontSize: "0.625rem", fontWeight: 600, color: "text.secondary", border: "1px solid", borderColor: "divider", borderRadius: "4px", whiteSpace: "nowrap" }}>
+                      <Typography id={tagId} component="span" sx={{ ml: 0.75, px: 0.5, fontSize: "0.625rem", fontWeight: 600, color: "text.secondary", border: "1px solid", borderColor: "divider", borderRadius: "4px", whiteSpace: "nowrap" }}>
                         {tag}
                       </Typography>
                     )}
                     {/* The reason wraps in full: it is the evidence for ticking it */}
-                    <Typography sx={{ fontSize: "0.6875rem", lineHeight: 1.4, color: "text.secondary", overflowWrap: "anywhere" }}>{option.reason}</Typography>
+                    <Typography id={reasonId} sx={{ fontSize: "0.6875rem", lineHeight: 1.4, color: "text.secondary", overflowWrap: "anywhere" }}>
+                      {option.reason}
+                    </Typography>
                   </Box>
                 </Box>
               );

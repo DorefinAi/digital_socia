@@ -1,4 +1,4 @@
-import { FtpNewsItem, HandleEntry, HashtagRule, SocialPlatform } from "@/types/newsroom";
+import type { FtpNewsItem, HandleEntry, HashtagRule, SocialPlatform } from "@/types/newsroom";
 
 export const PLATFORM_LIMITS: Record<SocialPlatform, { text: number; hashtags: number; mentions: number }> = {
   "X (Twitter)": { text: 280, hashtags: 6, mentions: 10 },
