@@ -311,6 +311,7 @@ export function orgLayout(t: OrgCardTemplate, words: Words, base: TemplateLayout
     ...base,
     orgTemplate: t.slug,
     orgBlock: undefined,
+    orgSize: undefined,
     headline: words.headline,
     ...p.head,
     align: "center",
@@ -398,11 +399,26 @@ export function placeOrgWords(layout: TemplateLayout, t: DrawableCardTemplate): 
   const bodyLayer = layout.layers?.find((l) => l.id === ORG_BODY_ID);
   if (!bodyLayer) return layout;
   const f = frameOf(t);
-  const block = handBlock(layout, t);
-  const area: AreaAt = block ? () => ({ x: block.x * f.W, y: block.y * f.H, w: block.w * f.W, h: block.h * f.H }) : templateArea(t, f);
-  // A hidden story takes no room: the heading alone is placed
-  const p = placeBlock(f, { headline: layout.headline, body: bodyLayer.hidden ? "" : bodyLayer.text }, orgFontsOf(layout), area, t.layout.fontMinPx, t.layout.fontMaxPx);
   const tight = 0.0005;
+  // A hidden story takes no room: the heading alone is placed
+  const words = { headline: layout.headline, body: bodyLayer.hidden ? "" : bodyLayer.text };
+  const fonts = orgFontsOf(layout);
+  let block = handBlock(layout, t);
+  // Canva-style: a size set by hand is kept, and the box keeps its width and its top edge while its height
+  // follows the words (it grows and shrinks at the bottom). A first box (none set yet) is centred in the room.
+  const fixed = layout.orgSize !== undefined ? clampSize(layout.orgSize) * f.u : null;
+  if (fixed !== null) {
+    const was = block ? { x: block.x * f.W, y: block.y * f.H, w: block.w * f.W, h: block.h * f.H } : cardTextArea(rawBox(t, f), fixed);
+    const fit = fitWords(words, () => was, fixed, fixed, fonts);
+    const h = Math.max(blockHeight(fit) + SLACK_PX * 2, fixed * BODY_LINE);
+    const top = block ? block.y : (was.y + was.h / 2 - h / 2) / f.H;
+    const next = { x: was.x / f.W, y: top, w: was.w / f.W, h: h / f.H };
+    // The same box keeps its object, so "unchanged" below still holds
+    if (!(block && near(block.x, next.x, tight) && near(block.y, next.y, tight) && near(block.w, next.w, tight) && near(block.h, next.h, tight))) block = next;
+  }
+  const hand = block;
+  const area: AreaAt = hand ? () => ({ x: hand.x * f.W, y: hand.y * f.H, w: hand.w * f.W, h: hand.h * f.H }) : templateArea(t, f);
+  const p = placeBlock(f, words, fonts, area, fixed ?? t.layout.fontMinPx, fixed ?? t.layout.fontMaxPx);
   // handBlock returns the layout's own orgBlock object when it has one, so identity says "box unchanged"
   const same =
     (block ?? undefined) === layout.orgBlock &&
@@ -457,31 +473,71 @@ export function orgBlockRect(layout: TemplateLayout, t: DrawableCardTemplate): P
  */
 export function setOrgBlock(layout: TemplateLayout, t: DrawableCardTemplate, rect: PxRect): TemplateLayout {
   const f = frameOf(t);
-  rect = { ...rect, w: Math.max(rect.w, MIN_BLOCK * f.W), h: Math.max(rect.h, MIN_BLOCK * f.H) };
-  const orgBlock = { x: rect.x / f.W, y: rect.y / f.H, w: rect.w / f.W, h: rect.h / f.H };
   const was = orgBlockRect(layout, t);
   const bodyLayer = layout.layers?.find((l) => l.id === ORG_BODY_ID);
-  if (was && bodyLayer && Math.abs(was.w - rect.w) < 0.5 && Math.abs(was.h - rect.h) < 0.5) {
-    const dx = (rect.x - was.x) / f.W;
-    const dy = (rect.y - was.y) / f.H;
-    return {
-      ...layout,
-      orgBlock,
-      textX: (layout.textX ?? 0.5) + dx,
-      textY: layout.textY + dy,
-      layers: (layout.layers ?? []).map((l) => (l.id === ORG_BODY_ID ? { ...l, x: l.x + dx, y: l.y + dy } : l)),
-    };
+  if (layout.orgSize !== undefined && was) {
+    // Which handle was dragged, from the edges of the box that moved (a move shifts all four, size unchanged)
+    const moved = (a: number, b: number) => Math.abs(a - b) >= 0.5;
+    const wide = moved(was.w, rect.w);
+    const tall = moved(was.h, rect.h);
+    // The top or bottom handle: the height follows the words, so nothing changes
+    if (tall && !wide) return layout;
+    if (wide) {
+      // Canva-style: a corner (width and height) scales the words with the box; a side changes the width and the
+      // words re-wrap at their size; the height always follows the words. The edges opposite the handle stay put.
+      const west = moved(rect.x, was.x);
+      const north = tall && moved(rect.y, was.y);
+      const w = Math.max(rect.w, MIN_BLOCK * f.W);
+      const x = west ? was.x + was.w - w : was.x;
+      const orgSize = tall ? clampSize(layout.orgSize * (w / was.w)) : layout.orgSize;
+      // Placed from the old top (placeOrgWords keeps it); a top corner then lifts the box onto the old bottom
+      const placed = placeOrgWords({ ...layout, orgSize, orgBlock: { x: x / f.W, y: was.y / f.H, w: w / f.W, h: was.h / f.H } }, t);
+      const block = placed.orgBlock;
+      if (!north || !block) return placed;
+      const dy = (was.y + was.h) / f.H - (block.y + block.h);
+      return shiftWords(placed, { ...block, y: block.y + dy }, 0, dy);
+    }
   }
+  rect = { ...rect, w: Math.max(rect.w, MIN_BLOCK * f.W), h: Math.max(rect.h, MIN_BLOCK * f.H) };
+  const orgBlock = { x: rect.x / f.W, y: rect.y / f.H, w: rect.w / f.W, h: rect.h / f.H };
+  if (was && bodyLayer && Math.abs(was.w - rect.w) < 0.5 && Math.abs(was.h - rect.h) < 0.5) return shiftWords(layout, orgBlock, (rect.x - was.x) / f.W, (rect.y - was.y) / f.H);
   return placeOrgWords({ ...layout, orgBlock }, t);
 }
 
-/** The one text box back in the template's own box, the words placed afresh in it. */
+/** The heading and the story shifted by `dx`, `dy` (shares of the card) with the box at `orgBlock`: no measuring. */
+function shiftWords(layout: TemplateLayout, orgBlock: NonNullable<TemplateLayout["orgBlock"]>, dx: number, dy: number): TemplateLayout {
+  return {
+    ...layout,
+    orgBlock,
+    textX: (layout.textX ?? 0.5) + dx,
+    textY: layout.textY + dy,
+    layers: (layout.layers ?? []).map((l) => (l.id === ORG_BODY_ID ? { ...l, x: l.x + dx, y: l.y + dy } : l)),
+  };
+}
+
+/**
+ * Canva-style size for the heading and story together (story px on a 1080 card): the box keeps its width and
+ * its top edge, and its height follows the words. The card keeps this size until Reset.
+ */
+export function setOrgSize(layout: TemplateLayout, t: DrawableCardTemplate, size: number): TemplateLayout {
+  // The box as drawn now is pinned first, so its top edge stays where it is (also on a card still in the template's box)
+  let orgBlock = layout.orgBlock;
+  if (!orgBlock) {
+    const f = frameOf(t);
+    const r = orgBlockRect(layout, t);
+    if (r) orgBlock = { x: r.x / f.W, y: r.y / f.H, w: r.w / f.W, h: r.h / f.H };
+  }
+  return placeOrgWords({ ...layout, orgSize: clampSize(size), orgBlock }, t);
+}
+
+/** The one text box back in the template's own box, the words placed afresh in it (and sized to fill it again). */
 export function resetOrgBlock(layout: TemplateLayout, t: DrawableCardTemplate): TemplateLayout {
   const fresh = orgPlacement(t, { headline: layout.headline, body: orgBodyText(layout, "") }, orgFontsOf(layout));
   return {
     ...layout,
     ...fresh.head,
     orgBlock: undefined,
+    orgSize: undefined,
     layers: (layout.layers ?? []).map((l) => (l.id === ORG_BODY_ID ? storyAt(l, fresh.body) : l)),
   };
 }
@@ -489,6 +545,12 @@ export function resetOrgBlock(layout: TemplateLayout, t: DrawableCardTemplate): 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 /** The one text box is never smaller than this share of the card each way, so the words always have room */
 const MIN_BLOCK = 0.1;
+/** A size set by hand (story px on a 1080 card) stays within the size control's range */
+export const ORG_SIZE_MIN = 16;
+export const ORG_SIZE_MAX = 240;
+function clampSize(v: number) {
+  return Math.max(ORG_SIZE_MIN, Math.min(ORG_SIZE_MAX, v));
+}
 
 /**
  * Moves a card from template `from` to `to`, keeping the words and every style choice.
@@ -541,8 +603,9 @@ export function switchOrgTemplate(layout: TemplateLayout, from: OrgCardTemplate 
     color: keepOr(layout.color === "auto" ? undefined : layout.color, from.layout.headline.color, to.layout.headline.color),
     layers,
   };
-  // In the template's box the words already sit right; in a box set by hand they are placed in it
-  return orgBlock ? placeOrgWords(moved, to) : moved;
+  // In the template's box the words already sit right; in a box set by hand, or at a size set by hand, they are
+  // placed in it
+  return orgBlock || moved.orgSize !== undefined ? placeOrgWords(moved, to) : moved;
 }
 
 /** Reopened on another day: a date box still showing a date in the template's format shows today's. */

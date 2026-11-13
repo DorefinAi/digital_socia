@@ -103,6 +103,9 @@ type Caret = { x: number; y: number } | "all" | "end";
 
 /** How far, in screen px, a press on text may wander and still count as a click that starts typing */
 const CLICK_SLOP = 4;
+/** The frame turns this red when the selected text runs off the card (a size set by hand grew it past an edge) */
+const OFF_CARD_RED = "#E53935";
+const offCard = (b: { x: number; y: number; w: number; h: number }) => b.x < -0.5 || b.y < -0.5 || b.x + b.w > 100.5 || b.y + b.h > 100.5;
 
 /** The caret position in `area` nearest a screen point, measured on a copy of the box laid out the same way. */
 function offsetAtPoint(area: HTMLTextAreaElement, x: number, y: number): number {
@@ -906,7 +909,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
           style={typeCss}
         />
       )}
-      {editable && selectedBox && <ResizeFrame box={selectedBox} color={SELECT_BLUE} onHandleDown={onHandleDown} />}
+      {editable && selectedBox && <ResizeFrame box={selectedBox} color={offCard(selectedBox) ? OFF_CARD_RED : SELECT_BLUE} onHandleDown={onHandleDown} />}
       {guides.v && <div style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "#FF3EA5", pointerEvents: "none" }} />}
       {guides.h && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "#FF3EA5", pointerEvents: "none" }} />}
     </div>

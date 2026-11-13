@@ -246,6 +246,12 @@ export interface CardLayout {
    * template's own box. The heading and the story are always placed in it as one block (orgCanvas.placeOrgWords).
    */
   orgBlock?: { x: number; y: number; w: number; h: number };
+  /**
+   * Canva-style size for the heading and story on a desk template (story px on a 1080 card), set from the size
+   * control or a corner handle. When set, the words keep this size and the one text box keeps its width while its
+   * height follows them; unset, they are sized to fill the box (orgCanvas.placeOrgWords). Reset clears it.
+   */
+  orgSize?: number;
 }
 
 export type TextAnimation = "none" | "fade" | "rise" | "pop" | "wipe" | "typewriter";

@@ -79,7 +79,7 @@ import VideoTimeline, { CLIP_SPEEDS, TimelineText, clock, outputLength } from ".
 import TextControls, { ALIGN_ICONS, FontSelect } from "./TextControls";
 import TemplatePicker from "./TemplatePicker";
 import { ENTER_SECONDS, MEDIA_LOOKS, TEXT_ANIMATIONS, accentFor, inkOn, mediaFilter, mediaWarmth, resolveHeadlineStyle, resolveLayerStyle, templateById, templatePatch, textSpan, warmthColor } from "./cardRender";
-import { BODY_STYLE, ORG_BODY_ID, ORG_DATE_ID, isOneBox, orgBlockRect, orgBodyText, orgFontsOf, orgLayout, orgPlacement, placeOrgWords, refreshOrgDate, resetOrgBlock, setOrgBlock, switchOrgTemplate, useBackdrop, useOrgFontsReady, useTemplateImage } from "./live/orgCanvas";
+import { BODY_STYLE, ORG_BODY_ID, ORG_DATE_ID, ORG_SIZE_MAX, ORG_SIZE_MIN, isOneBox, orgBlockRect, orgBodyText, orgFontsOf, orgLayout, orgPlacement, placeOrgWords, refreshOrgDate, resetOrgBlock, setOrgBlock, setOrgSize, switchOrgTemplate, useBackdrop, useOrgFontsReady, useTemplateImage } from "./live/orgCanvas";
 import { ORG_CARD_FONT, fontById, nearestWeight } from "./templateFonts";
 import FtpFeedPanel from "./FtpFeedPanel";
 import { DAILY_CAP, isLiveOn } from "@/data/socialDesk";
@@ -974,11 +974,14 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     }
   };
 
-  // The heading and the story on a desk template take the size their one text box gives them, as the X card does
-  const sizeFixed = oneBox && (!activeLayer || activeLayer.id === ORG_BODY_ID) ? "On a desk template the heading and story size follows their text box. Resize the box to change it." : undefined;
-  const textSize = activeLayer
-    ? { value: activeLayer.size, min: 16, max: 240, step: 1, format: (v: number) => `${v}`, onChange: (size: number) => patchLayer(activeLayer.id, { size }), fixed: sizeFixed }
-    : { value: layout.fontScale, min: 0.5, max: 1.8, step: 0.01, format: (v: number) => `${Math.round(v * 100)}%`, onChange: (fontScale: number) => patch({ fontScale }), fixed: sizeFixed };
+  // The heading and the story on a desk template, Canva-style: the size control sets their size (together), and
+  // their one text box keeps its width while its height follows the words (orgCanvas.setOrgSize)
+  const orgStory = oneBox && orgTpl && (!activeLayer || activeLayer.id === ORG_BODY_ID) ? layout.layers?.find((l) => l.id === ORG_BODY_ID) : undefined;
+  const textSize = orgStory
+    ? { value: Math.round(orgStory.size * 2) / 2, min: ORG_SIZE_MIN, max: ORG_SIZE_MAX, step: 0.5, format: (v: number) => `${v}`, onChange: (size: number) => setLayout((l) => (orgTpl ? setOrgSize(l, orgTpl, size) : l)), fixed: undefined as string | undefined }
+    : activeLayer
+      ? { value: activeLayer.size, min: 16, max: 240, step: 1, format: (v: number) => `${v}`, onChange: (size: number) => patchLayer(activeLayer.id, { size }), fixed: undefined as string | undefined }
+      : { value: layout.fontScale, min: 0.5, max: 1.8, step: 0.01, format: (v: number) => `${Math.round(v * 100)}%`, onChange: (fontScale: number) => patch({ fontScale }), fixed: undefined as string | undefined };
   const nudgeSize = (direction: 1 | -1) => {
     if (!textSize.fixed) textSize.onChange(steppedTextSize(textSize.value, direction, textSize.min, textSize.max, textSize.step));
   };
