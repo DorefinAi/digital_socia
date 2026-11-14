@@ -4,7 +4,7 @@ import { ApiError, api, sendKeepalive, setCsrfToken } from "./client";
 import { SOCIA_API_URL } from "./config";
 import { QUEUE_PAGE_MAX, type QueueDay, readQueueView } from "./queueDay";
 import type {
-  CardTemplateLayout, CopyPostedResult, Counts, DeskHandle, DraftPatch, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, OrgCardTemplate, OrgCardTemplateLayout, OrgCardTemplatePatch, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, StorySearchResponse, UserCardTemplate,
+  CardTemplateLayout, CopyPostedResult, Counts, DeskHandle, DraftPatch, HandleSearchItem, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, OrgCardTemplate, OrgCardTemplateLayout, OrgCardTemplatePatch, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, StorySearchResponse, UserCardTemplate,
 } from "./types";
 
 const enc = encodeURIComponent;
@@ -74,6 +74,9 @@ export const saveDraft = (id: string, patch: DraftPatch) => api<DraftView>("PATC
  * draft.edit, 409 handle_unverified, 429 rate_limited (20 new handles per person per 10 minutes).
  */
 export const addDeskHandle = (handle: string) => api<DeskHandle>("POST", "/handles/desk", { handle });
+/** The editor's @ / # lookup: verified directory and data-file handles, or place and rule hashtags, starting with q */
+export const searchHandles = (q: string, kind: "mention" | "hashtag", signal?: AbortSignal) =>
+  api<{ items: HandleSearchItem[] }>("GET", `/handles?mode=prefix&kind=${kind}&q=${enc(q)}`, undefined, { signal });
 export const checkPost = (bodyText: string, hashtags: string[], mentions: string[]) => api<PostCheck>("POST", "/x/check", { bodyText, hashtags, mentions });
 export const approveDraft = (id: string, version: number) => api<{ jobId: string; sendAt: string }>("POST", `/drafts/${enc(id)}/approve`, { version });
 export const undoJob = (jobId: string) => api<DraftView>("POST", `/jobs/${enc(jobId)}/undo`);

@@ -276,6 +276,17 @@ export interface Counts {
 }
 
 /** POST /handles/desk: a handle the desk added to the handle directory */
+/** One result of the editor's @ / # lookup (GET /handles?mode=prefix): inserted exactly as `value` */
+export interface HandleSearchItem {
+  /** "@JaipurPolice" or "#Jaipur" */
+  value: string;
+  /** What it is: the entity, the district's police, the place */
+  name: string;
+  nameHi: string | null;
+  /** directory (Settings), file (the worker's handle files), places (the places file), rules (hashtag rules) */
+  source: "directory" | "file" | "places" | "rules";
+}
+
 export interface DeskHandle {
   id: string;
   /** "@JhalawarUpdates" */

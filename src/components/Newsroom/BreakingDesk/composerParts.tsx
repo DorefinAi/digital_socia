@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useId, useState } from "react";
+import React, { useEffect, useId, useState } from "react";
 import { Box, Typography, IconButton, Checkbox } from "@mui/material";
 import { Send, Plus, Heart, MessageCircle, Repeat2, Bookmark, BarChart2 } from "lucide-react";
 import { SocialPlatform } from "@/types/newsroom";
@@ -9,6 +9,11 @@ import { BREAKING_RED } from "./TemplateCanvas";
 import { TagSuggestion, normaliseTag } from "./socialText";
 import { RichPostText } from "./shared";
 import { REPORTER_GROUP_LABEL, groupSuggestions, sourceLabel } from "./suggestionGroups";
+import { searchHandles } from "../../../lib/socia/api";
+import { moveHighlight, searchTerm, useTagSearch, type TagSearchFn } from "./tagSearch";
+
+/** The @ / # lookup the pickers use unless told otherwise */
+const defaultTagSearch: TagSearchFn = (q, kind, signal) => searchHandles(q, kind, signal);
 
 export interface TagOption extends TagSuggestion {
   checked: boolean;
@@ -31,6 +36,7 @@ export function TagPicker({
   max,
   onChange,
   disabled = false,
+  search = defaultTagSearch,
 }: {
   label: string;
   prefix: "#" | "@";
@@ -39,8 +45,23 @@ export function TagPicker({
   onChange: (options: TagOption[]) => void;
   /** Read-only: the ticks show what the post carries but can't be changed */
   disabled?: boolean;
+  /** The @ / # lookup under the add box (GET /handles?mode=prefix by default) */
+  search?: TagSearchFn;
 }) {
   const [draft, setDraft] = useState("");
+  // The lookup's dropdown: open while typing, closed by Escape, a pick or leaving the box
+  const [open, setOpen] = useState(false);
+  const results = useTagSearch(draft, prefix, search, !disabled && open);
+  const [highlight, setHighlight] = useState(-1);
+  const listId = useId();
+  // A new list highlights a result that IS what was typed (its exact spelling then wins on Enter), else nothing:
+  // Enter adds what was typed, as before
+  useEffect(() => {
+    const typed = searchTerm(draft).toLowerCase();
+    setHighlight(results.findIndex((r) => r.value.slice(1).toLowerCase() === typed));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the results change
+  }, [results]);
+  const showList = open && results.length > 0;
   const selected = options.filter((o) => o.checked).length;
   // The reporter's usual tags sit in their own group under the normal rows; ticking one is the same one click
   const { normal, reporter } = groupSuggestions(options);
@@ -56,9 +77,11 @@ export function TagPicker({
     />
   );
 
-  const add = () => {
-    const value = normaliseTag(draft, prefix);
+  const add = (picked?: string) => {
+    const value = picked ?? normaliseTag(draft, prefix);
     setDraft("");
+    setOpen(false);
+    setHighlight(-1);
     if (!value) return;
     const existing = options.find((o) => o.value.toLowerCase() === value.toLowerCase());
     if (existing) onChange(options.map((o) => (o === existing ? { ...o, checked: true } : o)));
@@ -156,11 +179,27 @@ export function TagPicker({
             disabled={disabled}
             placeholder={prefix === "#" ? "Add hashtag" : "Add handle"}
             aria-label={prefix === "#" ? "Add hashtag" : "Add handle"}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDraft(e.target.value)}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={showList}
+            aria-controls={showList ? listId : undefined}
+            aria-activedescendant={showList && highlight >= 0 ? `${listId}-${highlight}` : undefined}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+              setDraft(e.target.value);
+              setOpen(true);
+            }}
+            onBlur={() => setOpen(false)}
             onKeyDown={(e: React.KeyboardEvent) => {
-              if (e.key === "Enter") {
+              if ((e.key === "ArrowDown" || e.key === "ArrowUp") && showList) {
                 e.preventDefault();
-                add();
+                setHighlight((h) => moveHighlight(h, results.length, e.key as "ArrowDown" | "ArrowUp"));
+              } else if (e.key === "Escape" && showList) {
+                e.preventDefault();
+                e.stopPropagation();
+                setOpen(false);
+              } else if (e.key === "Enter") {
+                e.preventDefault();
+                add(showList && highlight >= 0 ? results[highlight]?.value : undefined);
               }
             }}
             sx={{
@@ -177,10 +216,37 @@ export function TagPicker({
               "&:focus-visible": { backgroundColor: "action.hover" },
             }}
           />
-          <IconButton size="small" onClick={add} disabled={disabled || !draft.trim()} aria-label="Add" sx={{ borderRadius: 0, px: 1.25 }}>
+          <IconButton size="small" onClick={() => add()} disabled={disabled || !draft.trim()} aria-label="Add" sx={{ borderRadius: 0, px: 1.25 }}>
             <Plus size={15} />
           </IconButton>
         </Box>
+        {showList && (
+          <Box id={listId} role="listbox" aria-label={prefix === "#" ? "Matching hashtags" : "Matching handles"} sx={{ borderTop: "1px solid", borderColor: "divider", maxHeight: 240, overflowY: "auto" }}>
+            {results.map((r, i) => (
+              <Box
+                key={r.value}
+                id={`${listId}-${i}`}
+                role="option"
+                aria-selected={i === highlight}
+                // Keeps the focus in the box, so its blur does not close the list before the click lands
+                onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
+                onClick={() => add(r.value)}
+                onMouseEnter={() => setHighlight(i)}
+                sx={{
+                  display: "flex", alignItems: "baseline", gap: 1, px: 1.25, py: 0.6, cursor: "pointer",
+                  backgroundColor: i === highlight ? "action.selected" : "transparent",
+                }}
+              >
+                <Typography component="span" sx={{ fontSize: "0.8125rem", fontWeight: 600, whiteSpace: "nowrap" }}>
+                  {r.value}
+                </Typography>
+                <Typography component="span" sx={{ fontSize: "0.6875rem", color: "text.secondary", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {[r.name, r.nameHi].filter((n, j, all) => n && all.indexOf(n) === j && n.toLowerCase() !== r.value.slice(1).toLowerCase()).join(" · ")}
+                </Typography>
+              </Box>
+            ))}
+          </Box>
+        )}
       </Box>
     </Box>
   );
