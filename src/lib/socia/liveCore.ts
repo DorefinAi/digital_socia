@@ -11,6 +11,8 @@ export interface PresenceEntry {
   initials: string;
   color: string;
   mode: PresenceMode;
+  /** The holder is fixing a posted story (a correction): nobody can take it over until they finish */
+  correcting?: boolean;
 }
 
 /** presence.list: everyone on every story, by draft id */
@@ -250,18 +252,26 @@ export const STATE_RETRY_MS = 600;
 export const STATE_RETRY_LIMITED_MS = 1200;
 export const STATE_RETRIES = 3;
 
+/** What a control call does to where the tab is: a join or a leave of one story (anything else: leave it out) */
+export type ControlStep = { kind: "join" | "leave"; draftId: string };
+
 export interface Outbox {
-  /** The newest holder state; replaces one that is queued and not sent yet */
+  /**
+   * The newest holder state. It replaces a queued, unsent state of the same story only when no join or leave is
+   * queued after that one; otherwise it goes at the end, so it never jumps ahead of a leave or a join.
+   */
   state: (s: EditState) => void;
-  /** A join, leave or other call, sent after everything queued before it */
-  control: (run: () => Promise<LiveAnswerLike>) => Promise<LiveAnswerLike>;
+  /** A join, leave or other call, sent after everything queued before it. `step` marks a join or a leave. */
+  control: (run: () => Promise<LiveAnswerLike>, step?: ControlStep) => Promise<LiveAnswerLike>;
   /** Drop a queued state and any resend waiting (leaving the story without a word) */
   dropState: () => void;
 }
 
 /**
  * The live POSTs of one tab, one at a time and in order, so a leave never overtakes the last state and an old
- * state never lands after a newer one. States coalesce: only the newest queued one goes. A state the server
+ * state never lands after a newer one. States coalesce: only the newest queued one of a story goes, and never
+ * across a join or a leave (switching stories mid-send: the old story's watchers get its last word, and the new
+ * story's text goes after its join). A state the server
  * refused for being too fast, or that the network lost, goes again after a pause (up to STATE_RETRIES times)
  * unless a newer one came meanwhile. `too_long` sends the too-long mark instead. `onRejoin` hears an answer
  * that means the tab must join its story again.
@@ -269,31 +279,46 @@ export interface Outbox {
 export function createOutbox(opts: { sendState: (s: EditState) => Promise<LiveAnswerLike>; onRejoin?: () => void; clock?: Clock }): Outbox {
   const clock = opts.clock ?? realClock;
   type StateJob = { kind: "state"; s: EditState; tries: number };
-  type Job = StateJob | { kind: "control"; run: () => Promise<LiveAnswerLike>; done: (a: LiveAnswerLike) => void };
+  type Job = StateJob | { kind: "control"; run: () => Promise<LiveAnswerLike>; done: (a: LiveAnswerLike) => void; step?: ControlStep };
   const queue: Job[] = [];
   let busy = false;
   let retryTimer: unknown = null;
+  /** The story the tab is on once everything queued has gone (undefined: no join or leave asked yet) */
+  let tail: string | null | undefined = undefined;
 
   const cancelRetry = () => {
     if (retryTimer !== null) clock.clearTimeout(retryTimer);
     retryTimer = null;
   };
-  const queuedState = () => queue.find((j): j is StateJob => j.kind === "state");
+  /** A queued state of this story with no join or leave queued after it: a newer state of the story may replace it */
+  const mergeable = (draftId: string): StateJob | undefined => {
+    for (let i = queue.length - 1; i >= 0; i--) {
+      const j = queue[i];
+      if (j.kind === "control" && j.step) return undefined;
+      if (j.kind === "state" && j.s.draftId === draftId) return j;
+    }
+    return undefined;
+  };
+  /** A newer state of this story is already queued */
+  const newerQueued = (draftId: string) => queue.some((j) => j.kind === "state" && j.s.draftId === draftId);
+  /** The tab is still on this story as far as the queue goes (a resend after its leave would only be refused) */
+  const stillOn = (draftId: string) => tail === undefined || tail === draftId;
   const after = (job: StateJob, a: LiveAnswerLike) => {
     if (a.ok) return;
     if (needsRejoin(a)) opts.onRejoin?.();
     // A newer state is already on its way: it supersedes this one
-    if (queuedState()) return;
+    if (newerQueued(job.s.draftId)) return;
     if (a.error === "too_long" && job.s.text !== LONG_TEXT_MARK) {
       queue.unshift({ kind: "state", s: { ...job.s, text: LONG_TEXT_MARK, selStart: 0, selEnd: 0 }, tries: job.tries });
       return;
     }
-    if ((retryable(a) || needsRejoin(a)) && job.tries < STATE_RETRIES) {
+    if ((retryable(a) || needsRejoin(a)) && job.tries < STATE_RETRIES && stillOn(job.s.draftId)) {
       const slow = a.status === 429 || a.error === "rate_limited" || needsRejoin(a);
+      cancelRetry();
       retryTimer = clock.setTimeout(
         () => {
           retryTimer = null;
-          if (queuedState()) return;
+          if (newerQueued(job.s.draftId) || !stillOn(job.s.draftId)) return;
           queue.push({ kind: "state", s: job.s, tries: job.tries + 1 });
           pump();
         },
@@ -321,16 +346,17 @@ export function createOutbox(opts: { sendState: (s: EditState) => Promise<LiveAn
   return {
     state(s) {
       cancelRetry();
-      const queued = queuedState();
+      const queued = mergeable(s.draftId);
       if (queued) {
         queued.s = s;
         queued.tries = 0;
       } else queue.push({ kind: "state", s, tries: 0 });
       pump();
     },
-    control(run) {
+    control(run, step) {
+      if (step) tail = step.kind === "join" ? step.draftId : tail === undefined || tail === step.draftId ? null : tail;
       return new Promise((done) => {
-        queue.push({ kind: "control", run, done });
+        queue.push({ kind: "control", run, done, ...(step ? { step } : {}) });
         pump();
       });
     },
@@ -358,6 +384,35 @@ export function planPresence(prev: StorySpot | null, next: StorySpot | null): Pr
   if (!next) return prev ? [{ kind: "leave", draftId: prev.draftId }] : [];
   if (prev && prev.draftId === next.draftId) return prev.mode === next.mode ? [] : [{ kind: "join", ...next }];
   return [...(prev ? [{ kind: "leave" as const, draftId: prev.draftId }] : []), { kind: "join", ...next }];
+}
+
+/**
+ * Moves the tab from one story spot to the next (planPresence's calls, through the outbox in order). Leaving edit
+ * mode or the story drops text still waiting in the throttle, unsent; what the outbox already holds goes before
+ * the leave. Resolves to the last call's answer ({ ok: true } when nothing had to move).
+ */
+export function moveStory(
+  prev: StorySpot | null,
+  next: StorySpot | null,
+  at: {
+    sender: Pick<StateSender, "cancel"> | null;
+    outbox: Pick<Outbox, "control"> | null;
+    clientId: string | null;
+    join: (clientId: string, draftId: string, mode: PresenceMode) => Promise<LiveAnswerLike>;
+    leave: (clientId: string, draftId: string) => Promise<LiveAnswerLike>;
+  },
+): Promise<LiveAnswerLike> {
+  const steps = planPresence(prev, next);
+  if (!steps.length) return Promise.resolve({ ok: true, mode: next?.mode });
+  at.sender?.cancel();
+  const box = at.outbox;
+  const id = at.clientId;
+  if (!box || !id) return Promise.resolve({ ok: false, error: "offline" });
+  let last: Promise<LiveAnswerLike> = Promise.resolve({ ok: true });
+  for (const step of steps) {
+    last = box.control(() => (step.kind === "join" ? at.join(id, step.draftId, step.mode) : at.leave(id, step.draftId)), { kind: step.kind, draftId: step.draftId });
+  }
+  return last;
 }
 
 // ─── Refreshing the desk on queue events ─────────────────────────────────────
@@ -476,6 +531,7 @@ export type AskEvent =
 /** The sentence for an ask the server refused */
 export function askRefusal(name: string, error?: string, status?: number): string {
   if (status === 429 || error === "rate_limited" || error === "cooldown") return "You asked a moment ago. Wait a few seconds, then ask again.";
+  if (error === "correcting") return `${name} is fixing this posted story. You can take it over once they finish.`;
   if (error === "forbidden" || status === 403) return "You can't fix this posted story, so you can't take it over.";
   if (error === "holder_away") return `${name} isn't on this story right now, so they can't answer.`;
   if (error === "offline" || error === "timeout") return "Live view is unavailable, so the ask didn't go. Try again in a moment.";

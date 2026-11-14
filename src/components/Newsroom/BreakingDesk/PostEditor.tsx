@@ -106,10 +106,12 @@ import { type MenuEntry, useEditorMenu } from "./video/ui/EditorContextMenu";
 
 import VolumeStrip from "./VolumeStrip";
 import { useStoryLive, type TakeoverRequest } from "./live/useStoryLive";
+import { showAskTakeover, watchedText } from "./live/storyLiveCore";
+import { createTakeoverClaim, type TakeoverClaim } from "./live/takeoverClaim";
 import LiveCaret from "./live/LiveCaret";
 import { HeaderPresence } from "./live/Presence";
 import { HandedOverNote, HolderLeftBanner, LiveNote, LiveUnavailableNote, TakeoverDialog, WatchBanner } from "./live/WatchMode";
-import { LIVE_PLATFORM, firstName } from "@/lib/socia/liveCore";
+import { LIVE_PLATFORM, createRefreshGate, firstName } from "@/lib/socia/liveCore";
 import { adjacentStory, counterTone, steppedTextSize, storyAfterPosted, workableOrder } from "./deskRules";
 
 /** Someone else holds this story (their claim), so the studio steps over it */
@@ -121,14 +123,8 @@ const heldByOther = (n: FtpNewsItem) => isLiveItem(n) && !!n.live.claim && !n.li
  * Module-level: the next story may open in a fresh editor.
  */
 const ADVANCE_QUIET_MS = 1000;
-/** The asker's claim after a hand-over: started by the release, else tried after this long, then every second up to the window */
-const TAKEOVER_FALLBACK_MS = 1500;
-const TAKEOVER_RETRY_MS = 1000;
-const TAKEOVER_CLAIM_MS = 15_000;
-/** Watch mode with a post too long to stream: the saved draft is read again at most this often */
+/** Watch mode with a post too long to stream: the saved draft is read at most this often, and once more at the end of each window */
 const SAVED_TEXT_READ_MS = 5000;
-/** The clock for the take-over claim timers (called from timers and events only) */
-const nowMs = () => Date.now();
 let approveQuietUntil = 0;
 const restApproveAfterAdvance = () => {
   approveQuietUntil = Date.now() + ADVANCE_QUIET_MS;
@@ -1736,49 +1732,35 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       else setNotice("Someone else started editing this story first. You're watching them now.");
     });
 
-  // The asker's side of a hand-over. The holder answers yes before letting go, so the claim starts when the
-  // story is released (the queue event); a retry every second is the fallback. A claim waits its turn behind
-  // anything already running (an autosave, a card upload) instead of being dropped.
-  const takeover = useRef<{ draftId: string; until: number; timer: ReturnType<typeof setTimeout> | null } | null>(null);
-  const tryTakeoverClaim = async () => {
-    const t = takeover.current;
-    if (!t || !live || live.draft.id !== t.draftId) {
-      if (t?.timer) clearTimeout(t.timer);
-      takeover.current = null;
-      return;
-    }
-    if (t.timer) clearTimeout(t.timer);
-    t.timer = null;
-    if (inFlight.current) {
-      t.timer = setTimeout(() => void tryClaimRef.current(), 250);
-      return;
-    }
-    const got: { draft: DraftView | null } = { draft: null };
-    await runLive("claim", async () => {
-      got.draft = await live.claimAgain();
-    });
-    if (takeover.current !== t) return;
-    if (got.draft) {
-      takeover.current = null;
-      tookStory(got.draft);
-    } else if (nowMs() < t.until) t.timer = setTimeout(() => void tryClaimRef.current(), TAKEOVER_RETRY_MS);
-    else {
-      takeover.current = null;
-      setNotice("Couldn't take the story yet. Try Start editing.");
-    }
-  };
-  // Timers call the latest version (set after each render)
-  const tryClaimRef = useRef<() => Promise<void>>(async () => undefined);
+  // The asker's side of a hand-over (live/takeoverClaim.ts): the claim starts when the story is released, with a
+  // retry every second as the fallback; one claim at a time, waiting its turn behind a call already running.
+  const takeoverDeps = useRef({ live, tookStory, runLive });
   useEffect(() => {
-    tryClaimRef.current = tryTakeoverClaim;
+    takeoverDeps.current = { live, tookStory, runLive };
   });
-  useEffect(
-    () => () => {
-      if (takeover.current?.timer) clearTimeout(takeover.current.timer);
+  const takeover = useRef<TakeoverClaim | null>(null);
+  useEffect(() => {
+    const claim = createTakeoverClaim<DraftView>({
+      claim: async () => {
+        const { live: l, runLive: run } = takeoverDeps.current;
+        if (!l) return null;
+        const got: { draft: DraftView | null } = { draft: null };
+        await run("claim", async () => {
+          got.draft = await l.claimAgain();
+        });
+        return got.draft;
+      },
+      currentDraft: () => takeoverDeps.current.live?.draft.id ?? null,
+      busy: () => !!inFlight.current,
+      onTook: (d) => takeoverDeps.current.tookStory(d),
+      onGaveUp: () => setNotice("Couldn't take the story yet. Try Start editing."),
+    });
+    takeover.current = claim;
+    return () => {
+      claim.cancel();
       takeover.current = null;
-    },
-    [],
-  );
+    };
+  }, []);
   const storyLive = useStoryLive({
     // The live stream is opened for X; a story on another platform is not joined (the server would refuse it)
     draftId: live && live.draft.platform === LIVE_PLATFORM ? live.draft.id : null,
@@ -1788,46 +1770,60 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     version: () => versionRef.current,
     onClaimedBy: (name) => live?.onHeldBy(name, live.lease.kind === "held" && !!live.lease.fixing),
     onAccepted: () => {
-      if (!live) return;
-      if (takeover.current?.timer) clearTimeout(takeover.current.timer);
-      // The release event usually comes first; this only starts the fallback
-      takeover.current = { draftId: live.draft.id, until: nowMs() + TAKEOVER_CLAIM_MS, timer: setTimeout(() => void tryClaimRef.current(), TAKEOVER_FALLBACK_MS) };
+      if (live) takeover.current?.start(live.draft.id);
     },
-    onFreed: () => {
-      if (takeover.current) void tryClaimRef.current();
-    },
+    onFreed: () => takeover.current?.freed(),
   });
   const watching = !!live && storyLive.watching;
   const holderColor = storyLive.holder?.color ?? "#7048E8";
   const holderFirst = firstName(storyLive.holder?.name ?? (live?.lease.kind === "held" ? live.lease.name : "Someone"));
   // Taking over a fix needs the right to fix this posted story (the server says so in canCorrect)
   const mayTakeOver = !!live && !!desk?.canAct && can("draft.edit") && (live.lease.kind !== "held" || !live.lease.fixing || live.draft.canCorrect === true);
+  /** A story being fixed can't be asked for (the server refuses it): no Ask to take over */
+  const canAsk = showAskTakeover(mayTakeOver, storyLive.correcting);
   /**
    * Watch mode shows the holder's live text in the Tweet box (read-only); the person's own text is untouched. A
-   * post too long to stream shows the saved draft instead (reloaded below).
+   * post too long to stream shows the saved draft instead (reloaded below). A story being fixed never shows the
+   * old posted text: the box waits for the correction's text.
    */
-  const shownText = watching && storyLive.remote && !storyLive.remoteLong ? storyLive.remote.text : text;
+  const shownText = watchedText({ ...storyLive, watching }, text).text;
   /** The counter counts what the box shows */
   const boxUsed = shownText === text ? used : countChars(shownText, platform);
 
-  // Too long to stream: the box shows the saved draft, read again at most every few seconds while the holder types
-  const savedReadAt = useRef(0);
+  // Too long to stream: the box shows the saved draft, read at most every few seconds while the holder types, once
+  // more at the end of each window (their last change), and once when they leave. Never for a story being fixed:
+  // its saved text is the old posted one.
   const remoteAt = storyLive.remote?.receivedAt;
-  const showSaved = watching && storyLive.remoteLong;
+  const showSaved = watching && storyLive.remoteLong && !storyLive.correcting;
   const liveId = live?.draft.id;
   const loadBoxRef = useRef(loadBox);
   useEffect(() => {
     loadBoxRef.current = loadBox;
   });
-  // Runs again on each new state from the holder (remoteAt), at most every SAVED_TEXT_READ_MS
   useEffect(() => {
-    if (!showSaved || !liveId || Date.now() - savedReadAt.current < SAVED_TEXT_READ_MS) return;
-    savedReadAt.current = Date.now();
-    void socia
-      .fetchDraft(liveId)
-      .then((d) => loadBoxRef.current(d))
-      .catch(() => undefined);
-  }, [showSaved, remoteAt, liveId]);
+    if (!showSaved || !liveId) return;
+    const read = () =>
+      void socia
+        .fetchDraft(liveId)
+        .then((d) => loadBoxRef.current(d))
+        .catch(() => undefined);
+    const gate = createRefreshGate({ run: read, visible: () => true, gapMs: SAVED_TEXT_READ_MS });
+    savedGate.current = { gate, read };
+    return () => {
+      gate.cancel();
+      savedGate.current = null;
+    };
+  }, [showSaved, liveId]);
+  const savedGate = useRef<{ gate: { call: () => void }; read: () => void } | null>(null);
+  // Each new state from the holder: a read now, or one at the end of the window
+  useEffect(() => {
+    if (remoteAt !== undefined) savedGate.current?.gate.call();
+  }, [remoteAt, showSaved]);
+  // The holder left: one last read of what they saved
+  const holderGone = !!storyLive.gone;
+  useEffect(() => {
+    if (holderGone) savedGate.current?.read();
+  }, [holderGone]);
 
   // The holder's side of a take-over: save (posting off), say yes while still holding the story (the server takes
   // an answer only from the holder), then let it go: a release, or the end of a fix hold. In fix mode the holder
@@ -1835,7 +1831,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const [handingTo, setHandingTo] = useState<TakeoverRequest | null>(null);
   const handOver = (fixChoice?: "save" | "drop") => {
     const req = storyLive.incoming;
-    if (!live || !req || live.lease.kind !== "mine" || busy || inFlight.current) return;
+    if (!live || !req || live.lease.kind !== "mine" || busy || inFlight.current || exporting !== null) return;
     const id = live.draft.id;
     const fix = correcting;
     const changed = textDirty || cardUnsent;
@@ -1845,6 +1841,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       try {
         if (saving) await flush();
         const refused = await storyLive.accept();
+        // Handing over: text still waiting to go out live is dropped, never sent
+        if (!refused) storyLive.dropPending();
         if (refused) {
           const still = refused === "no_request" ? `${firstName(req.name)}'s ask ran out, so the story stays with you.` : "The story wasn't handed over, so it stays with you.";
           setNotice(saving ? `${still} Your changes are saved.` : still);
@@ -3333,7 +3331,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                   <HolderLeftBanner name={storyLive.handedTo ? null : storyLive.gone} onStart={() => void startEditing()} busy={busy === "claim"} canStart={mayTakeOver} />
                 )}
                 {live.lease.kind === "held" && watching && !storyLive.gone && !storyLive.handedTo && (
-                  <WatchBanner name={holderFirst} color={holderColor} fixing={!!live.lease.fixing} ask={storyLive.ask} onAsk={storyLive.askTakeover} canAsk={mayTakeOver} />
+                  <WatchBanner name={holderFirst} color={holderColor} correcting={storyLive.correcting} ask={storyLive.ask} onAsk={storyLive.askTakeover} canAsk={canAsk} />
                 )}
                 {/* Only after live view had worked and dropped; with live presence off, nothing new shows */}
                 {live.lease.kind === "held" && !watching && storyLive.dropped && <LiveUnavailableNote />}
@@ -3379,7 +3377,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 0.75 }}>
                 <Typography sx={{ fontSize: "0.9375rem", fontWeight: 700 }}>{isX ? "Tweet" : platform === "Facebook" ? "Post text" : "Caption"}</Typography>
                 {watching ? (
-                  <LiveNote at={storyLive.remote?.receivedAt ?? null} final={!!storyLive.gone} saved={storyLive.remoteLong} />
+                  <LiveNote at={storyLive.remote?.receivedAt ?? null} final={!!storyLive.gone} saved={storyLive.remoteLong && !storyLive.correcting} long={storyLive.remoteLong && storyLive.correcting} />
                 ) : (
                   <Box sx={{ display: "flex", gap: 0.25 }}>
                     <Button size="small" onClick={makeCrisp} startIcon={<Scissors size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem" }}>
@@ -3604,7 +3602,12 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         }}
       />
 
-      <TakeoverDialog request={storyLive.incoming ?? handingTo} busy={!!handingTo || !!busy || exporting !== null} fixChanged={correcting && (textDirty || cardUnsent)} onKeep={storyLive.decline} onHandOver={handOver} />
+      <TakeoverDialog
+        request={storyLive.incoming ?? handingTo}
+        handing={!!handingTo}
+        handOverBlocked={exporting !== null || !!busy}
+        blockedNote={exporting !== null ? "Finish the current export first." : undefined}
+        fixChanged={correcting && (textDirty || cardUnsent)} onKeep={storyLive.decline} onHandOver={handOver} />
       {linkOpen && <PostedLinkDialog open headline={item.headline} platformName={meta.short} busy={busy === "posted"} onClose={() => setLinkOpen(false)} onConfirm={markPostedLive} />}
 
       <Snackbar open={!!notice} autoHideDuration={5000} onClose={() => setNotice("")} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>

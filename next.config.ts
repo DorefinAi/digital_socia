@@ -37,6 +37,11 @@ const nextConfig: NextConfig = {
     return [
       { source: "/:path*", headers: SECURITY_HEADERS },
       { source: "/((?!_next/static|_next/image|socia-api).*)", headers: [{ key: "Cache-Control", value: "no-cache" }] },
+      // The live stream (text/event-stream) must reach the browser event by event. Next's gzip (`compress`, on by
+      // default) skips any response whose Cache-Control has `no-transform`; the API sends
+      // "private, no-store, no-transform" itself, which replaces this on the proxied response, so this only
+      // counts if it ever stops. X-Accel-Buffering: no keeps an nginx-style proxy in front from buffering it.
+      { source: "/socia-api/live/stream", headers: [{ key: "Cache-Control", value: "private, no-store, no-transform" }, { key: "X-Accel-Buffering", value: "no" }] },
     ];
   },
   async rewrites() {

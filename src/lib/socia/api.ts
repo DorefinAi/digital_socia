@@ -115,8 +115,11 @@ export interface LiveAnswer {
   mode?: "edit" | "watch";
 }
 
-/** The live stream's URL (through the /socia-api proxy, or the API's own origin in direct mode) */
-export const liveStreamUrl = (platform = "x") => `${SOCIA_API_URL}/live/stream?platform=${encodeURIComponent(platform)}`;
+/**
+ * The live stream's URL (through the /socia-api proxy, or the API's own origin in direct mode). `probe`: the
+ * startup check, which the server answers at once without counting it as a stream.
+ */
+export const liveStreamUrl = (platform = "x", probe = false) => `${SOCIA_API_URL}/live/stream?platform=${encodeURIComponent(platform)}${probe ? "&probe=1" : ""}`;
 export const liveJoin = (clientId: string, draftId: string, mode: "edit" | "watch") => api<LiveAnswer>("POST", "/live/join", { clientId, draftId, mode });
 export const liveLeave = (clientId: string, draftId: string) => api<LiveAnswer>("POST", "/live/leave", { clientId, draftId });
 /** liveLeave for a closing tab (pagehide): a keepalive request nobody waits for */

@@ -101,8 +101,11 @@ export default function LiveCaret({
           mode === "change" &&
           shouldFollowCaret({ line: top, lastLine: follow.lastLine, visible, wasVisible: follow.wasVisible, sinceUserScroll: Date.now() - follow.userScrollAt })
         ) {
-          follow.ownScroll = true;
+          // The flag marks the scroll event this causes as the overlay's own; no change (already there, or clamped
+          // at the end), no event, and the flag would swallow the watcher's next scroll
+          const before = ta.scrollTop;
           ta.scrollTop = top < ta.scrollTop ? Math.max(0, top - 4) : top + raw.height - ta.clientHeight + 4;
+          if (ta.scrollTop !== before) follow.ownScroll = true;
         }
         if (mode === "change") {
           follow.lastLine = top;
