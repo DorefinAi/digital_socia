@@ -8,6 +8,10 @@ import { BoxHandle, FrameBox, ResizeFrame, resizeBox, useBoxGesture } from "./Re
 import { NUDGE, eventKey, isMac } from "./editorKeys";
 import { fontById, nearestWeight } from "./templateFonts";
 import { flatCopy, isTainted, rgbPng } from "./live/rgbPng";
+import { cardJpeg, fitCard } from "./live/cardImage";
+
+/** How long the card must stand still before its image is encoded ahead of time */
+const PREPARE_IDLE_MS = 600;
 
 export { BIG_BREAKING_YELLOW, BREAKING_RED, DEFAULT_TEXT_Y, TEMPLATE_FORMATS } from "./cardRender";
 export type { TemplateFormat } from "./cardRender";
@@ -43,8 +47,16 @@ export interface TemplateCanvasHandle {
    * pixel access, "failed" when the browser could not make the image (out of memory)
    */
   download: (fileName: string) => Promise<CardExport>;
-  /** The current frame as an RGB PNG no bigger than `maxBytes`, scaled down if needed; null when the media host blocks pixel access */
-  png: (maxBytes: number) => Promise<Blob | null>;
+  /**
+   * The current frame as the card image (JPEG; cardImage.ts) no bigger than `maxBytes`, scaled down if needed;
+   * null when the media host blocks pixel access. Reuses the image `prepare` made if nothing repainted since.
+   */
+  cardImage: (maxBytes: number) => Promise<Blob | null>;
+  /**
+   * With a byte limit: keep the card image encoded ahead of time, a moment after the card stops repainting, so
+   * `cardImage` answers at once. Null stops that and drops the kept image.
+   */
+  prepare: (maxBytes: number | null) => void;
   /** Moves a video background to `time` seconds */
   seek: (time: number) => void;
   /** Renders the kept clips back to back with the template burnt in; null when the browser or media host does not allow it */
@@ -203,6 +215,29 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   if (typing && selection !== typing) setTyping(null);
   const typingIn = editable && typing && selection === typing ? typing : null;
   const typingRef = useRef<TextTarget | null>(null);
+  // Each on-screen paint counts up: an image encoded at one count shows the card as long as the count holds
+  const paintGen = useRef(0);
+  const prepared = useRef<{ gen: number; maxBytes: number; blob: Blob } | null>(null);
+  const prepareFor = useRef<number | null>(null);
+  const prepareTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const encodeRef = useRef<(maxBytes: number) => Promise<Blob | null>>(async () => null);
+  /** Encodes the card image once the card has stood still a moment (only while `prepare` asked for it) */
+  const schedulePrepare = useCallback(() => {
+    if (prepareFor.current === null) return;
+    if (prepareTimer.current) clearTimeout(prepareTimer.current);
+    prepareTimer.current = setTimeout(() => {
+      prepareTimer.current = null;
+      const max = prepareFor.current;
+      if (max === null || (prepared.current?.gen === paintGen.current && prepared.current.maxBytes === max)) return;
+      void encodeRef.current(max).catch(() => undefined);
+    }, PREPARE_IDLE_MS);
+  }, []);
+  useEffect(
+    () => () => {
+      if (prepareTimer.current) clearTimeout(prepareTimer.current);
+    },
+    [],
+  );
 
   // `exporting` paints every word, even the ones being typed (the textarea covers them on screen), and leaves the boxes alone
   const paint = useCallback((exporting = false) => {
@@ -219,6 +254,8 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     }
     const rects = drawCard(ctx, f, source, l, t, h, frame, exporting ? null : typingRef.current, bd);
     if (exporting) return;
+    paintGen.current++;
+    schedulePrepare();
     rectsRef.current = rects;
     const { w: W, h: H } = cardSize(f, bd);
     const pct = (r: Rect) => ({ x: (r.x / W) * 100, y: (r.y / H) * 100, w: (r.w / W) * 100, h: (r.h / H) * 100 });
@@ -231,7 +268,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     setBoxes((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
     const area = rects.editing ?? null;
     setTypeArea((prev) => (JSON.stringify(prev) === JSON.stringify(area) ? prev : area));
-  }, []);
+  }, [schedulePrepare]);
 
   useEffect(() => {
     stateRef.current = { format, tag, layout, handle, renderScale, backdrop };
@@ -443,6 +480,32 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     }
   };
 
+  /** The card image of the frame on screen (cardImage on the handle); the one encoded ahead when nothing repainted since */
+  const encodeCard = async (maxBytes: number): Promise<Blob | null> => {
+    const live = canvasRef.current;
+    if (!live) return null;
+    const kept = prepared.current;
+    if (kept && kept.gen === paintGen.current && kept.maxBytes === maxBytes) return kept.blob;
+    // Encoding is async and the card can repaint meanwhile, so copy the full-text frame first, opaque
+    let canvas: HTMLCanvasElement;
+    try {
+      canvas = withAllText(() => flatCopy(live));
+    } catch {
+      return null;
+    }
+    // What the copy shows: the count after any repaint the copy itself made
+    const gen = paintGen.current;
+    // Full size first; a busy photo can pass the limit, so step the frame down until it fits. A tainted canvas
+    // (media host without CORS) refuses to export.
+    const out = await fitCard((scale) => cardJpeg(canvas, scale), maxBytes, isTainted);
+    if (!("blob" in out)) return null;
+    prepared.current = { gen, maxBytes, blob: out.blob };
+    return out.blob;
+  };
+  useLayoutEffect(() => {
+    encodeRef.current = encodeCard;
+  });
+
   useImperativeHandle(ref, () => ({
     snapshot: (maxWidth) => {
       const canvas = canvasRef.current;
@@ -477,29 +540,14 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
         return isTainted(err) ? "blocked" : "failed";
       }
     },
-    png: async (maxBytes) => {
-      const live = canvasRef.current;
-      if (!live) return null;
-      // Encoding is async and the card can repaint meanwhile, so copy the full-text frame first, opaque
-      let canvas: HTMLCanvasElement;
-      try {
-        canvas = withAllText(() => flatCopy(live));
-      } catch {
-        return null;
-      }
-      // Full size first; a busy photo can pass the limit, so step the frame down until it fits
-      for (const scale of [1, 0.8, 0.65, 0.5]) {
-        let blob: Blob | null;
-        try {
-          blob = await rgbPng(canvas, scale);
-        } catch {
-          // A tainted canvas (media host without CORS) refuses to export
-          return null;
-        }
-        if (!blob) return null;
-        if (blob.size <= maxBytes) return blob;
-      }
-      return null;
+    cardImage: (maxBytes) => encodeCard(maxBytes),
+    prepare: (maxBytes) => {
+      prepareFor.current = maxBytes;
+      if (maxBytes === null) {
+        prepared.current = null;
+        if (prepareTimer.current) clearTimeout(prepareTimer.current);
+        prepareTimer.current = null;
+      } else schedulePrepare();
     },
     seek: (time) => {
       const video = sourceRef.current;

@@ -93,6 +93,8 @@ import { assemblePost } from "./phase1/Phase1Editor";
 import { type PostBox, type PostFormat, SERVER_HASHTAGS_MAX, SERVER_MENTIONS_MAX, checkedValues, pickerRows, readPostBox, splitPost, syncOptions, tagKey, withBody } from "./postBox";
 import { needsCheckHint, needsCheckLabel, shownNeedsCheck } from "./phase1/badges";
 import { keyHash, useBackgroundCard } from "./live/useBackgroundCard";
+import { cardExt } from "./live/cardImage";
+import { stepTimer } from "./live/stepTimer";
 import OrgTemplatePicker, { type CardChoice } from "./live/OrgTemplatePicker";
 import { cardChoiceChanged, defaultOrgTemplate } from "./live/storyThumbs";
 import { PostedLinkDialog } from "./actionDialogs";
@@ -1212,7 +1214,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const { card } = await bg.whenReady();
       const link = document.createElement("a");
       link.href = card.url;
-      link.download = downloadName("png");
+      link.download = downloadName(cardExt(card.blob.type));
       link.click();
       return true;
     } catch {
@@ -1410,11 +1412,32 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   };
 
   /**
-   * Sends the card when it changed here. `always` (phase 1 Copy & Mark Posted) sends the card on screen even if
-   * untouched, since phase 1 has no automatic card; it then resolves to the PNG for the operator's download
-   * (null when the card already on the server is the one shown).
+   * The editor's design as the card image (JPEG, cardImage.ts), when it is to go up: no server call, so it can
+   * run while the text saves. Null when nothing is to be sent (or, with `always`, when the server's card is shown).
+   * The X background's drawing is not taken here: it is already encoded as it redraws (useBackgroundCard).
    */
-  const uploadOwnCard = async (always = false): Promise<Blob | null> => {
+  type DesignCard = { image: Blob; sent: { layout: TemplateLayout; url: typeof media.url; mediaFile: typeof media.fileName } };
+  const exportDesignCard = async (always = false): Promise<DesignCard | null> => {
+    if (!live || !canEdit || bgMode) return null;
+    if (always && serverView) return null;
+    // A desk template goes up with Post or Save draft even untouched: the server's automatic card is another design
+    if (!always && (orgMode ? cardSynced : !designEdited || cardSynced)) return null;
+    // Never send a desk-template card drawn without its picture
+    if (orgMode && !orgPicture) throw new Error(`${orgTpl.label} is still loading, so the card wasn't sent. Try again in a moment.`);
+    // The design as exported, taken before any await so what is recorded is what was drawn
+    const sent = { layout, url: media.url, mediaFile: media.fileName };
+    const image = await canvasRef.current?.cardImage(CARD_MAX_BYTES);
+    if (!image) throw new Error(always ? "The browser couldn't export the card. Try another photo, or try again." : "The browser couldn't export your card, so the automatic card stays. Try another photo, or try again.");
+    return { image, sent };
+  };
+
+  /**
+   * Sends the card when it changed here. `always` (phase 1 Copy & Mark Posted) sends the card on screen even if
+   * untouched, since phase 1 has no automatic card; it then resolves to the image for the operator's download
+   * (null when the card already on the server is the one shown). `exported`: the design's image already being
+   * made (exportDesignCard with the same `always`), so it is not exported twice.
+   */
+  const uploadOwnCard = async (always = false, exported?: Promise<DesignCard | null>): Promise<Blob | null> => {
     if (!live || !canEdit) return null;
     if (always && serverView) return null;
     if (bgMode) {
@@ -1434,22 +1457,29 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       designStore.write(d.id, null);
       return drawn.card.blob;
     }
-    // A desk template goes up with Post or Save draft even untouched: the server's automatic card is another design
-    if (!always && (orgMode ? cardSynced : !designEdited || cardSynced)) return null;
-    // Never send a desk-template card drawn without its picture
-    if (orgMode && !orgPicture) throw new Error(`${orgTpl.label} is still loading, so the card wasn't sent. Try again in a moment.`);
-    // The design as exported, taken before any await so what is recorded is what was drawn
-    const sent = { layout, url: media.url, mediaFile: media.fileName };
-    const png = await canvasRef.current?.png(CARD_MAX_BYTES);
-    if (!png) throw new Error(always ? "The browser couldn't export the card. Try another photo, or try again." : "The browser couldn't export your card, so the automatic card stays. Try another photo, or try again.");
-    if (cardSynced) return png;
-    const d = await socia.uploadCard(live.draft.id, versionRef.current, png);
+    const own = await (exported ?? exportDesignCard(always));
+    if (!own) return null;
+    const { image, sent } = own;
+    if (cardSynced) return image;
+    // The version the text save just left (one server call at a time: see serial)
+    const d = await socia.uploadCard(live.draft.id, versionRef.current, image);
     adopt(d);
     setUploaded({ layout: sent.layout, url: sent.url });
     designStore.write(d.id, { layout: sent.layout, mediaFile: sent.mediaFile, cardUrl: d.card.url });
     bgStore.write(d.id, null);
-    return png;
+    return image;
   };
+
+  // Phase 1: keep the design's card image encoded while the editor is idle, so Copy & mark posted finds it ready
+  // (TemplateCanvas drops it on any repaint). The X background's card is encoded as it redraws already.
+  // Only while the editable canvas is the one on screen (it mounts once the desk's designs are in)
+  const preEncode = copyMode && !!live && canEdit && !bgMode && !serverView && !correcting && !orgWaiting && !orgFailed;
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!preEncode || !canvas) return;
+    canvas.prepare(CARD_MAX_BYTES);
+    return () => canvas.prepare(null);
+  }, [preEncode]);
 
   /**
    * Sends whatever is not on the server yet: text first, then the card (Post, Save draft, Save as posted).
@@ -1530,21 +1560,27 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // ── Phase 1: Copy & Mark Posted ──
   const canCopyPost = canPost && mayMarkPosted && !takenBy;
 
-  /** Saves the posted card for the operator: the PNG just sent, else the card already on the server. */
-  const downloadPostedCard = async (png: Blob | null): Promise<boolean> => {
+  /**
+   * Saves the posted card for the operator: the image just sent (already in memory, no refetch), else the card
+   * already on the server. The file's extension follows its type (.jpg, or .png for older cards).
+   */
+  const downloadPostedCard = async (image: Blob | null): Promise<boolean> => {
     try {
-      let blob = png;
+      let blob = image;
+      let type = image?.type;
       if (!blob) {
         const src = apiFileUrl((draftRef.current ?? live?.draft)?.card.url);
         if (!src) return false;
         const res = await fetch(src, { credentials: credentialsFor(src) });
         if (!res.ok) throw new Error(String(res.status));
         blob = await res.blob();
+        // The stored key's extension names the format when the response has no image type
+        type = blob.type.startsWith("image/") ? blob.type : new URL(src, window.location.href).pathname;
       }
       const href = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = href;
-      link.download = downloadName("png");
+      link.download = downloadName(cardExt(type));
       link.click();
       setTimeout(() => URL.revokeObjectURL(href), 4000);
       return true;
@@ -1564,25 +1600,37 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     setNotPosted(null);
     const id = live.draft.id;
     const copiedText = finalText;
+    // Step times in devtools (console.debug "[copy-posted]"), to see where the seconds go
+    const timer = stepTimer("[copy-posted]");
     settleBox();
     try {
       await navigator.clipboard.writeText(copiedText);
+      timer.lap("clipboard");
     } catch {
       inFlight.current = null;
       setBusy(null);
       setNotice("The browser blocked the clipboard. Select the text in the box and copy it by hand.");
+      timer.done("clipboard blocked");
       return;
     }
+    // The design's card image is made now, while the text saves (it is usually ready already: see preEncode). Only
+    // the upload waits for the save, and goes up with the version the save left, so the two never clash.
+    const exported = bgMode ? undefined : timer.time("card image", exportDesignCard(true));
+    // Settled through `uploadOwnCard` below; a text save that fails first leaves it unawaited
+    exported?.catch(() => undefined);
     try {
-      const png = await serial(async () => {
+      const image = await serial(async () => {
+        // Waits for an autosave in flight first (one server call at a time)
+        timer.lap("wait for autosave");
         // Posting: new tag-line handles join the directory now, and only now
-        await saveText(true);
-        return uploadOwnCard(true);
+        await timer.time("save text + handles", saveText(true));
+        return timer.time("card upload", uploadOwnCard(true, exported));
       });
-      const res = await serial(() => socia.copyPosted(id, versionRef.current));
+      const res = await timer.time("mark posted", serial(() => socia.copyPosted(id, versionRef.current)));
       // Both sides assemble the post the same way; say so if they ever differ rather than leave a wrong post
       if (res.text && res.text.trim() !== copiedText.trim()) onSaved?.("Marked posted, but the server's text differs from what was copied. Check the post on X.");
-      const cardSaved = await downloadPostedCard(png);
+      const cardSaved = await timer.time("card download", downloadPostedCard(image));
+      timer.done();
       if (!cardSaved) onSaved?.("Posted, but the card didn't download. Open the story in Posted and save the card by hand.");
       live.onFinished();
       desk?.addCopied({ draftId: id, postId: res.postId, headline: item.headline, undoUntil: res.undoUntil, withCard: cardSaved });
@@ -1595,6 +1643,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         onSwitch?.(after);
       } else onClose();
     } catch (err) {
+      timer.done("failed");
       // The clipboard holds a post the server didn't mark: empty it (best effort) and block with a banner. Not when
       // the server says this very draft was just posted from here: the clipboard then holds that good post.
       const justPostedHere = errorCode(err) === "already_posted" && !!desk?.pending.some((p) => p.copied && p.draftId === id);

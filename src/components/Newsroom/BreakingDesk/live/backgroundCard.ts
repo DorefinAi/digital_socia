@@ -9,7 +9,8 @@ import { CARD_FACE_SAMPLE } from "../cardFace";
 import { cardBodyText } from "../cardWords";
 import { CARD_GAP_LINES, CARD_LINE, type PxRect, cardBlockTop, cardTextArea, largestFit } from "./cardFit";
 import { fitDate } from "./cardDate";
-import { isTainted, rgbPng } from "./rgbPng";
+import { cardJpeg, fitCard } from "./cardImage";
+import { isTainted } from "./rgbPng";
 
 /**
  * Mardoto Bold is the cards' face (globals.css "SociaMardoto"); it has no Hindi letters, so those come from
@@ -192,35 +193,9 @@ function fitText(ctx: CanvasRenderingContext2D, headline: string, body: string, 
   return { ...f, body: kept, height: lines * lineH, cut: true };
 }
 
-type Encoded = { blob: Blob } | { error: "tainted" | "failed" | "too_big" };
-
-/** The card as an RGB PNG (rgbPng.ts: no alpha channel), at `scale` of its size. */
-async function toBlob(canvas: HTMLCanvasElement, scale: number): Promise<Encoded> {
-  try {
-    // null here means the browser could not encode it (too large for memory, or out of memory)
-    const blob = await rgbPng(canvas, scale);
-    return blob ? { blob } : { error: "failed" };
-  } catch (err) {
-    // A tainted canvas (background from another origin) refuses to export; anything else is the browser failing
-    return { error: isTainted(err) ? "tainted" : "failed" };
-  }
-}
-
-/** X takes card images up to 5 MB; a busy photo background is stepped down until it fits. */
-async function encode(canvas: HTMLCanvasElement, maxBytes: number): Promise<Encoded> {
-  let last: Encoded = { error: "too_big" };
-  for (const scale of [1, 0.8, 0.65, 0.5]) {
-    const out = await toBlob(canvas, scale);
-    if ("error" in out) {
-      // Tainted stays tainted; a failed encode may still work smaller
-      if (out.error === "tainted") return out;
-      last = out;
-      continue;
-    }
-    if (out.blob.size <= maxBytes) return out;
-    last = { error: "too_big" };
-  }
-  return last;
+/** X takes card images up to 5 MB; a busy photo background is stepped down until it fits. JPEG (cardImage.ts). */
+async function encode(canvas: HTMLCanvasElement, maxBytes: number) {
+  return fitCard((scale) => cardJpeg(canvas, scale), maxBytes, isTainted);
 }
 
 const ENCODE_ERRORS: Record<"tainted" | "failed" | "too_big", string> = {
@@ -288,7 +263,7 @@ export function paintCardText(ctx: CanvasRenderingContext2D, layout: OrgCardTemp
 
 /**
  * Draws the card at the template's own size (the background's, when the template gives none) and returns
- * it as an RGB PNG (no alpha channel) ready to upload.
+ * it as a JPEG (no alpha channel; cardImage.ts) ready to upload.
  */
 export async function drawBackgroundCard(template: DrawableCardTemplate, backgroundUrl: string, words: CardWords, maxBytes: number): Promise<DrawnCard> {
   const [image] = await Promise.all([loadImage(backgroundUrl), fontsReady()]);
