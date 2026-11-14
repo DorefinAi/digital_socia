@@ -8,7 +8,7 @@ import { TEMPLATE_FONTS, fontById, nearestWeight, FontGroup } from "./templateFo
 import { BIG_BREAKING_YELLOW, BREAKING_RED, ResolvedStyle } from "./cardRender";
 import { sectionLabel } from "./composerParts";
 import { steppedTextSize, textSizePreset } from "./deskRules";
-import { withEditorShortcut } from "./editorKeys";
+import { CANVAS_ARROWS, withEditorShortcut } from "./editorKeys";
 
 const SELECT_BLUE = "#2F7BFF";
 
@@ -121,7 +121,8 @@ export default function TextControls({ style: s, onChange, size, autoColor, onRe
         </>}
       </Box>
       <Typography sx={labelSx}>Size</Typography>
-      <Box sx={{ ...rowSx, gap: 0.5, flexWrap: "wrap" }}>
+      {/* After +/− or S/M/L the arrow keys still move the selected text on the card */}
+      <Box {...CANVAS_ARROWS} sx={{ ...rowSx, gap: 0.5, flexWrap: "wrap" }}>
         <Tooltip title={size.fixed ?? "Smaller text (10%)"}><span><IconButton aria-label="Smaller text" disabled={!!size.fixed || size.value <= size.min} onClick={() => size.onChange(steppedTextSize(size.value, -1, size.min, size.max, size.step))} sx={toggleSx(false)}><Minus size={15} /></IconButton></span></Tooltip>
         <Typography sx={{ fontSize: "0.75rem", fontWeight: 700, width: 44, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{size.format(size.value)}</Typography>
         <Tooltip title={size.fixed ?? "Larger text (10%)"}><span><IconButton aria-label="Larger text" disabled={!!size.fixed || size.value >= size.max} onClick={() => size.onChange(steppedTextSize(size.value, 1, size.min, size.max, size.step))} sx={toggleSx(false)}><Plus size={15} /></IconButton></span></Tooltip>

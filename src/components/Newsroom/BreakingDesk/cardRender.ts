@@ -818,11 +818,13 @@ export interface CardRects {
 }
 
 /** Paints the whole card: media, template furniture, headline, then the extra text boxes. */
-export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, source: Source | null, layout: CardLayout, tag: BreakingTag, handle: string, frame?: FrameTime, editing?: string | null, backdrop?: CardBackdrop | null): CardRects {
+export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, source: Source | null, layout: CardLayout, tag: BreakingTag, handle: string, frame?: FrameTime, editing?: string | readonly string[] | null, backdrop?: CardBackdrop | null): CardRects {
   const { w: W, h: H } = cardSize(format, backdrop);
   // The block being typed in on the card is laid out at rest with its words left to the editor over it
   let editingGeometry: TextGeometry | undefined;
-  const typedIn = (key: string) => (editing === key ? { hideWords: true, onLayout: (g: TextGeometry) => (editingGeometry = g) } : {});
+  // Several blocks can be typed in as one (a desk template's heading and story): their room together
+  const edited = (key: string) => (typeof editing === "string" ? editing === key : !!editing?.includes(key));
+  const typedIn = (key: string) => (edited(key) ? { hideWords: true, onLayout: (g: TextGeometry) => (editingGeometry = editingGeometry ? joinGeometry(editingGeometry, g) : g) } : {});
   const u = Math.min(W, H) / 1080;
   const pad = 56 * u;
   const template = templateById(layout.template);
@@ -841,7 +843,16 @@ export function drawCard(ctx: CanvasRenderingContext2D, format: TemplateFormat, 
   const area: HeadlineArea = backdrop
     ? { x: 0, width: W, minY: 0, maxY: H, baseSize: ORG_BASE_SIZE * u, inset: { l: 0, r: 0, t: 0, b: 0 } }
     : template.draw({ ctx, W, H, u, pad, format, tag, accent, ink: inkOn(accent), handle, stamp, headline });
-  return drawWords(ctx, layout, headline, area, W, H, u, pad, frame, editing, typedIn, () => editingGeometry);
+  return drawWords(ctx, layout, headline, area, W, H, u, pad, frame, edited, typedIn, () => editingGeometry);
+}
+
+/** Two blocks typed in as one: the room they take together, at the size and line pitch of the later (the story) */
+function joinGeometry(a: TextGeometry, b: TextGeometry): TextGeometry {
+  const x = Math.min(a.x, b.x);
+  const top = Math.min(a.top, b.top);
+  const width = Math.max(a.x + a.width, b.x + b.width) - x;
+  const height = Math.max(a.top + a.height, b.top + b.height) - top;
+  return { x, width, top, height, size: b.size, lineHeight: b.lineHeight, cx: x + width / 2, cy: top + height / 2 };
 }
 
 /** The photo or video in its rect: backdrop (when shown whole), crop, filters, warmth and vignette. */
@@ -905,7 +916,7 @@ function drawWords(
   u: number,
   pad: number,
   frame: FrameTime | undefined,
-  editing: string | null | undefined,
+  edited: (key: string) => boolean,
   typedIn: (key: string) => Partial<TextBlockSpec>,
   editingGeometry: () => TextGeometry | undefined,
 ): CardRects {
@@ -920,7 +931,7 @@ function drawWords(
   const x = Math.max(margin, Math.min(W - margin - width, centreX - width / 2));
   const boxH = fixed ? Math.min(H, Math.max(MIN_BOX.h * u, (layout.textHeight ?? 0) * H)) : 0;
   const boxTop = fixed ? Math.max(0, Math.min(H - boxH, layout.textY * H - boxH / 2)) : 0;
-  const headlineMotion = editing === "headline" ? undefined : motionAt(layout.headlineMotion, frame);
+  const headlineMotion = edited("headline") ? undefined : motionAt(layout.headlineMotion, frame);
   const headlineRect = headlineMotion === null ? null : drawTextBlock(ctx, {
     motion: headlineMotion,
     text: layout.headline,
@@ -943,7 +954,7 @@ function drawWords(
   for (const layer of layout.layers ?? []) {
     // A hidden box is not drawn, has no rect and so can't be picked on the canvas
     if (layer.hidden) continue;
-    const motion = editing === `layer:${layer.id}` ? undefined : motionAt(layer.motion, frame);
+    const motion = edited(`layer:${layer.id}`) ? undefined : motionAt(layer.motion, frame);
     if (motion === null) continue;
     const style = resolveLayerStyle(layer);
     const size = layer.size * u;

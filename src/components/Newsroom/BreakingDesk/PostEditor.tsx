@@ -79,7 +79,7 @@ import VideoTimeline, { CLIP_SPEEDS, TimelineText, clock, outputLength } from ".
 import TextControls, { ALIGN_ICONS, FontSelect } from "./TextControls";
 import TemplatePicker from "./TemplatePicker";
 import { ENTER_SECONDS, MEDIA_LOOKS, TEXT_ANIMATIONS, accentFor, inkOn, mediaFilter, mediaWarmth, resolveHeadlineStyle, resolveLayerStyle, templateById, templatePatch, textSpan, warmthColor } from "./cardRender";
-import { BODY_STYLE, ORG_BODY_ID, ORG_DATE_ID, ORG_SIZE_MAX, ORG_SIZE_MIN, isOneBox, orgBlockRect, orgBodyText, orgFontsOf, orgLayout, orgPlacement, placeOrgWords, refreshOrgDate, resetOrgBlock, setOrgBlock, setOrgSize, switchOrgTemplate, useBackdrop, useOrgFontsReady, useTemplateImage } from "./live/orgCanvas";
+import { BODY_STYLE, ORG_BODY_ID, ORG_DATE_ID, ORG_SIZE_MAX, ORG_SIZE_MIN, isOneBox, orgBlockRect, orgBodyText, orgFontsOf, orgLayout, orgPlacement, placeOrgWords, refreshOrgDate, resetOrgBlock, setOrgBlock, setOrgSize, switchOrgTemplate, toOneBox, useBackdrop, useOrgFontsReady, useTemplateImage } from "./live/orgCanvas";
 import { ORG_CARD_FONT, fontById, nearestWeight } from "./templateFonts";
 import FtpFeedPanel from "./FtpFeedPanel";
 import { DAILY_CAP, isLiveOn } from "@/data/socialDesk";
@@ -98,7 +98,7 @@ import { stepTimer } from "./live/stepTimer";
 import OrgTemplatePicker, { type CardChoice } from "./live/OrgTemplatePicker";
 import { cardChoiceChanged, defaultOrgTemplate } from "./live/storyThumbs";
 import { PostedLinkDialog } from "./actionDialogs";
-import { EDITOR_KEYS, NUDGE, editorKeyFor, editorShortcut, editorShortcutSuffix, isCanvasKeyTarget, isEditorTypingTarget, isTextEntryTarget, keysById, swallowNextContextMenu, withEditorShortcut } from "./editorKeys";
+import { CANVAS_ARROWS, EDITOR_KEYS, NUDGE, editorKeyFor, editorShortcut, editorShortcutSuffix, isCanvasArrowTarget, isCanvasKeyTarget, isEditorTypingTarget, isTextEntryTarget, keysById, swallowNextContextMenu, withEditorShortcut } from "./editorKeys";
 import { ariaKeyShortcuts, useKeyBindings } from "./keyBindings";
 import { ConfirmPostDialog, EditorShortcutsSheet, LeaveEditorDialog } from "./EditorShortcutsSheet";
 import RewriteNotice from "./RewriteNotice";
@@ -667,8 +667,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     if (!layout.orgTemplate && !start.savedDesign) adoptStartLayout(orgLayout(orgStart, { headline: layout.headline, body: item.body }, layout));
     else if (layout.orgTemplate && !orgTpl) adoptStartLayout(switchOrgTemplate(layout, null, orgStart, item.body));
     else if (orgTpl && !start.dateStale) {
-      // A saved design keeps its words where they were saved; only a date from another day becomes today's
-      const dated = refreshOrgDate(layout, orgTpl);
+      // A saved design keeps its words where they were saved; only a date from another day becomes today's, and a
+      // draft saved before the one text box becomes one box (so the size and the handles act on heading and story)
+      const dated = refreshOrgDate(toOneBox(layout, orgTpl), orgTpl);
       if (dated !== layout) adoptStartLayout(dated, { dateStale: true });
     }
   } else if (orgList && orgStart && orgFontsIn && layout.orgTemplate && !orgTpl && !serverView) {
@@ -988,8 +989,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   };
 
   // The heading and the story on a desk template, Canva-style: the size control sets their size (together), and
-  // their one text box keeps its width while its height follows the words (orgCanvas.setOrgSize)
-  const orgStory = oneBox && orgTpl && (!activeLayer || activeLayer.id === ORG_BODY_ID) ? layout.layers?.find((l) => l.id === ORG_BODY_ID) : undefined;
+  // their one text box keeps its width while its height follows the words (orgCanvas.setOrgSize). With the date
+  // picked too, +/− still size the heading and the story (the date keeps its slot's size; its handles resize it)
+  const orgStory = oneBox && orgTpl && (!activeLayer || activeLayer.id === ORG_BODY_ID || activeLayer.id === ORG_DATE_ID) ? layout.layers?.find((l) => l.id === ORG_BODY_ID) : undefined;
   const textSize = orgStory
     ? { value: Math.round(orgStory.size * 2) / 2, min: ORG_SIZE_MIN, max: ORG_SIZE_MAX, step: 0.5, format: (v: number) => `${v}`, onChange: (size: number) => setLayout((l) => (orgTpl ? setOrgSize(l, orgTpl, size) : l)), fixed: undefined as string | undefined }
     : activeLayer
@@ -2341,7 +2343,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           return;
         case "box.nudge":
         case "box.nudgeBig": {
-          if (!onCanvas || !(activeLayer || selection === "headline")) return;
+          // Also straight after a click on the text toolbar's buttons (+/−, Bold), which keep the focus
+          const arrowsOnCanvas = onCanvas || (!bgMode && !serverView && isCanvasArrowTarget(e.target, stageAreaRef.current));
+          if (!arrowsOnCanvas || !(activeLayer || selection === "headline")) return;
           e.preventDefault();
           const step = cmd.id === "box.nudgeBig" ? NUDGE.big : NUDGE.small;
           const key = e.key.toLowerCase();
@@ -3160,7 +3164,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             </Box>
 
             {/* Contextual toolbar */}
-            <Box sx={{ ...floatingSx, position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", maxWidth: "calc(100% - 24px)", overflowX: "auto", display: "flex", alignItems: "center", gap: 0.5, px: 0.75, height: 42, borderRadius: "10px", whiteSpace: "nowrap" }}>
+            <Box {...CANVAS_ARROWS} sx={{ ...floatingSx, position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", maxWidth: "calc(100% - 24px)", overflowX: "auto", display: "flex", alignItems: "center", gap: 0.5, px: 0.75, height: 42, borderRadius: "10px", whiteSpace: "nowrap" }}>
               {(selection === "headline" || activeLayer) && (
                 <>
                   <FontSelect compact value={textStyle.font} onChange={(id) => styleText({ font: id, weight: nearestWeight(fontById(id), textStyle.weight) })} />

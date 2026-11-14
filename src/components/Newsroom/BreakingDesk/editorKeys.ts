@@ -285,3 +285,18 @@ export function isCanvasKeyTarget(target: EventTarget | null, stage: HTMLElement
   if (el === document.body || el === document.documentElement) return true;
   return !el.closest?.(INTERACTIVE);
 }
+
+/** Marks controls (the text toolbar, the size buttons) after whose click the arrow keys still move the selected box */
+export const CANVAS_ARROWS = { "data-canvas-arrows": "" } as const;
+
+/**
+ * Where the arrows may move the selected box: wherever Delete may act on the card (isCanvasKeyTarget), and also
+ * on the plain buttons of the text toolbar and the size control, which take no arrows of their own, so +/− or
+ * Bold can be clicked and the box moved straight after.
+ */
+export function isCanvasArrowTarget(target: EventTarget | null, stage: HTMLElement | null): boolean {
+  if (isCanvasKeyTarget(target, stage)) return true;
+  const el = target as HTMLElement | null;
+  if (!el?.closest?.("[data-canvas-arrows]") || isTextEntryTarget(el)) return false;
+  return el.tagName === "BUTTON" || el.getAttribute("role") === "button";
+}

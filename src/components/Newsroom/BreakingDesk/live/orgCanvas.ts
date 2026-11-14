@@ -474,40 +474,62 @@ export function orgBlockRect(layout: TemplateLayout, t: DrawableCardTemplate): P
 }
 
 /**
- * The one text box moved or resized by hand to `rect` (card px): heading and story placed afresh in it. A move
- * that keeps the box's size only shifts the words (no measuring), so dragging stays smooth on a long story.
+ * The one text box moved or resized by hand to `rect` (card px). A move only shifts the words (no measuring), so
+ * dragging stays smooth on a long story. Every resize changes the size of the words, Canva-style, from the size
+ * set by hand or, before one is set, the size they were fitted at: a corner or a side by how much wider or
+ * narrower the box got, the top or bottom handle by how much taller or shorter. The words then re-fit at that
+ * size, the box keeps the edges opposite the handle, and its height follows the words.
  */
 export function setOrgBlock(layout: TemplateLayout, t: DrawableCardTemplate, rect: PxRect): TemplateLayout {
   const f = frameOf(t);
   const was = orgBlockRect(layout, t);
   const bodyLayer = layout.layers?.find((l) => l.id === ORG_BODY_ID);
-  if (layout.orgSize !== undefined && was) {
-    // Which handle was dragged, from the edges of the box that moved (a move shifts all four, size unchanged)
-    const moved = (a: number, b: number) => Math.abs(a - b) >= 0.5;
-    const wide = moved(was.w, rect.w);
-    const tall = moved(was.h, rect.h);
-    // The top or bottom handle: the height follows the words, so nothing changes
-    if (tall && !wide) return layout;
-    if (wide) {
-      // Canva-style: a corner (width and height) scales the words with the box; a side changes the width and the
-      // words re-wrap at their size; the height always follows the words. The edges opposite the handle stay put.
-      const west = moved(rect.x, was.x);
-      const north = tall && moved(rect.y, was.y);
-      const w = Math.max(rect.w, MIN_BLOCK * f.W);
-      const x = west ? was.x + was.w - w : was.x;
-      const orgSize = tall ? clampSize(layout.orgSize * (w / was.w)) : layout.orgSize;
-      // Placed from the old top (placeOrgWords keeps it); a top corner then lifts the box onto the old bottom
-      const placed = placeOrgWords({ ...layout, orgSize, orgBlock: { x: x / f.W, y: was.y / f.H, w: w / f.W, h: was.h / f.H } }, t);
-      const block = placed.orgBlock;
-      if (!north || !block) return placed;
-      const dy = (was.y + was.h) / f.H - (block.y + block.h);
-      return shiftWords(placed, { ...block, y: block.y + dy }, 0, dy);
-    }
+  if (!was || !bodyLayer) {
+    rect = { ...rect, w: Math.max(rect.w, MIN_BLOCK * f.W), h: Math.max(rect.h, MIN_BLOCK * f.H) };
+    return placeOrgWords({ ...layout, orgBlock: { x: rect.x / f.W, y: rect.y / f.H, w: rect.w / f.W, h: rect.h / f.H } }, t);
   }
-  rect = { ...rect, w: Math.max(rect.w, MIN_BLOCK * f.W), h: Math.max(rect.h, MIN_BLOCK * f.H) };
-  const orgBlock = { x: rect.x / f.W, y: rect.y / f.H, w: rect.w / f.W, h: rect.h / f.H };
-  if (was && bodyLayer && Math.abs(was.w - rect.w) < 0.5 && Math.abs(was.h - rect.h) < 0.5) return shiftWords(layout, orgBlock, (rect.x - was.x) / f.W, (rect.y - was.y) / f.H);
-  return placeOrgWords({ ...layout, orgBlock }, t);
+  // Which handle was dragged, from the edges of the box that moved (a move shifts all four, size unchanged)
+  const moved = (a: number, b: number) => Math.abs(a - b) >= 0.5;
+  const wide = moved(was.w, rect.w);
+  const tall = moved(was.h, rect.h);
+  if (!wide && !tall) {
+    const orgBlock = { x: rect.x / f.W, y: rect.y / f.H, w: was.w / f.W, h: was.h / f.H };
+    return shiftWords(layout, orgBlock, (rect.x - was.x) / f.W, (rect.y - was.y) / f.H);
+  }
+  const west = wide && moved(rect.x, was.x);
+  const north = tall && moved(rect.y, was.y);
+  const w = wide ? Math.max(rect.w, MIN_BLOCK * f.W) : was.w;
+  const h = Math.max(rect.h, MIN_BLOCK * f.H);
+  // A corner or a side scales by the width, the top or bottom handle by the height
+  const ratio = wide ? w / was.w : h / was.h;
+  const orgSize = clampSize((layout.orgSize ?? bodyLayer.size) * ratio);
+  const x = west ? was.x + was.w - w : was.x;
+  // Placed from the old top (placeOrgWords keeps it); a top handle then lifts the box onto the old bottom
+  const placed = placeOrgWords({ ...layout, orgSize, orgBlock: { x: x / f.W, y: was.y / f.H, w: w / f.W, h: was.h / f.H } }, t);
+  const block = placed.orgBlock;
+  if (!north || !block) return placed;
+  const dy = (was.y + was.h) / f.H - (block.y + block.h);
+  return shiftWords(placed, { ...block, y: block.y + dy }, 0, dy);
+}
+
+/**
+ * A draft saved before the one text box (its heading and story two boxes, isOneBox false) made one box: kept where
+ * it was arranged by hand (the two boxes together), else in the template's box, the words placed in it as one
+ * block so the size control and the handles change heading and story together. Returns `layout` itself when it
+ * is one box already.
+ */
+export function toOneBox(layout: TemplateLayout, t: DrawableCardTemplate): TemplateLayout {
+  const story = layout.layers?.find((l) => l.id === ORG_BODY_ID);
+  if (!story || isOneBox(layout)) return layout;
+  const block = handBlock(layout, t, true);
+  return placeOrgWords(
+    {
+      ...layout,
+      orgBlock: block ?? undefined,
+      layers: (layout.layers ?? []).map((l) => (l.id === ORG_BODY_ID ? { ...l, style: { ...l.style, lineHeight: BODY_LINE } } : l)),
+    },
+    t,
+  );
 }
 
 /** The heading and the story shifted by `dx`, `dy` (shares of the card) with the box at `orgBlock`: no measuring. */
