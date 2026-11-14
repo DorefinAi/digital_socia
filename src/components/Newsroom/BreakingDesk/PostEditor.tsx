@@ -112,7 +112,8 @@ import LiveCaret from "./live/LiveCaret";
 import { HeaderPresence } from "./live/Presence";
 import { HandedOverNote, HolderLeftBanner, LiveNote, LiveUnavailableNote, TakeoverDialog, WatchBanner } from "./live/WatchMode";
 import { LIVE_PLATFORM, createRefreshGate, firstName } from "@/lib/socia/liveCore";
-import { adjacentStory, counterTone, steppedTextSize, storyAfterPosted, workableOrder } from "./deskRules";
+import { adjacentStory, counterTone, steppedTextSize, workableOrder } from "./deskRules";
+import { beginAdvance } from "./live/autoAdvance";
 
 /** Someone else holds this story (their claim), so the studio steps over it */
 const heldByOther = (n: FtpNewsItem) => isLiveItem(n) && !!n.live.claim && !n.live.claim.mine;
@@ -1585,9 +1586,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       live.onFinished();
       desk?.addCopied({ draftId: id, postId: res.postId, headline: item.headline, undoUntil: res.undoUntil, withCard: cardSaved });
       setPreviewOpen(false);
-      // Stay in the studio: the next story in the queue's order (the posted one is now in Posted), stepping over
-      // stories someone else is working on
-      const after = onSwitch ? storyAfterPosted(workableOrder(queueOrder ?? desk?.queue ?? [], item.id, heldByOther), item.id) : undefined;
+      // Stay in the studio: the next free story in the queue's order (the posted one is now in Posted), stepping
+      // over stories someone else holds or has open and ones that can't be worked (live/autoAdvance.ts)
+      const after = onSwitch ? beginAdvance(queueOrder ?? desk?.queue ?? [], item.id) : undefined;
       if (after) {
         restApproveAfterAdvance();
         onSwitch?.(after);

@@ -511,6 +511,15 @@ export function mergePresence(prev: Readonly<PresenceStories>, next: Readonly<Pr
 export const NO_PRESENCE: readonly PresenceEntry[] = Object.freeze([]);
 export const presenceOf = (stories: Readonly<PresenceStories>, draftId: string | null | undefined): readonly PresenceEntry[] => (draftId && stories[draftId]) || NO_PRESENCE;
 
+/** The draft ids someone other than `me` has open in edit mode right now (watchers don't count) */
+export function draftsEditedByOthers(stories: Readonly<PresenceStories>, me: string | null | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const [draftId, entries] of Object.entries(stories)) {
+    if (entries?.some((e) => e && e.mode === "edit" && !!e.userId && e.userId !== me)) out.add(draftId);
+  }
+  return out;
+}
+
 // ─── Asking to take over ─────────────────────────────────────────────────────
 
 export type AskState =

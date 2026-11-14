@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  draftsEditedByOthers,
   CURSOR_SEND_MS,
   PRESENCE_COLORS,
   TEXT_SEND_MS,
@@ -423,4 +424,12 @@ test("badge fills carry white initials at 4.5:1 or more, and passing colours sta
   assert.equal(readableFill("#5F3DC4"), "#5F3DC4");
   assert.notEqual(readableFill("#E67700"), "#E67700");
   assert.equal(readableFill("not a colour"), "not a colour");
+});
+
+test("drafts someone else is editing: edit mode only, never me", () => {
+  const e = (userId: string, mode: "edit" | "watch") => ({ userId, name: userId, color: "#123456", initials: "X", mode });
+  const stories = { a: [e("me", "edit")], b: [e("ravi", "watch")], c: [e("me", "watch"), e("ravi", "edit")], d: [] };
+  assert.deepEqual([...draftsEditedByOthers(stories, "me")], ["c"]);
+  assert.deepEqual([...draftsEditedByOthers(stories, null)].sort(), ["a", "c"]);
+  assert.equal(draftsEditedByOthers({}, "me").size, 0);
 });

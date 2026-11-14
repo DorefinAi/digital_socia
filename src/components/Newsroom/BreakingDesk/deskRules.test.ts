@@ -3,7 +3,7 @@
 //   node --import ./src/components/Newsroom/BreakingDesk/video/timeline/__checks__/resolve-ts.mjs --test src/components/Newsroom/BreakingDesk/deskRules.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { adjacentStory, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
+import { adjacentStory, advanceCandidates, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, freeForAdvance, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
 
 const now = Date.parse("2026-11-11T07:13:00Z");
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -118,4 +118,43 @@ test("All / BIG Breaking / Breaking count the chosen day only, and BIG + Breakin
   for (const day of [today, yesterday]) assert.equal(count(day).big_breaking + count(day).breaking, count(day).all);
   // An untagged story counts in All only
   assert.deepEqual(dayPriorityCounts([{ at: ago(0) }], today, (s) => istDay(s.at), () => null), { all: 1, big_breaking: 0, breaking: 0 });
+});
+
+test("after posting: the stories to try run on after the posted one, then back before it, nearest first", () => {
+  const order = [{ id: "a" }, { id: "b" }, { id: "p" }, { id: "c" }, { id: "d" }];
+  const none = () => false;
+  assert.deepEqual(advanceCandidates(order, "p", none).map((s) => s.id), ["c", "d", "b", "a"]);
+  assert.deepEqual(advanceCandidates(order, "d", none).map((s) => s.id), ["c", "p", "b", "a"]);
+  // Taken stories are left out; none left means back to the desk
+  assert.deepEqual(advanceCandidates(order, "p", (s) => s.id === "c").map((s) => s.id), ["d", "b", "a"]);
+  assert.deepEqual(advanceCandidates([{ id: "p" }, { id: "x" }], "p", (s) => s.id === "x"), []);
+  assert.deepEqual(advanceCandidates(order, "gone", none), []);
+  // The first candidate is the story storyAfterPosted would pick when nothing is taken
+  assert.equal(advanceCandidates(order, "p", none)[0]?.id, storyAfterPosted(order, "p")?.id);
+});
+
+test("after posting: only a story that is waiting and nobody else has or is editing is free", () => {
+  const editing = new Set(["e"]);
+  const nobody = new Set<string>();
+  assert.equal(freeForAdvance("r", { status: "ready", claim: null }, nobody), true);
+  assert.equal(freeForAdvance("m", { status: "claimed", claim: { mine: true } }, nobody), true);
+  assert.equal(freeForAdvance("h", { status: "claimed", claim: { mine: false } }, nobody), false);
+  assert.equal(freeForAdvance("h2", { status: "ready", claim: { mine: false } }, nobody), false);
+  // Live presence: someone has it open in edit mode, even though the polled data still says ready
+  assert.equal(freeForAdvance("e", { status: "ready", claim: null }, editing), false);
+  for (const status of ["published", "rejected", "queued", "publishing", "failed", "rendering", "render_failed", "recalled"]) {
+    assert.equal(freeForAdvance("s", { status, claim: null }, nobody), false, status);
+  }
+  // No draft data (demo desk): free unless someone is editing it
+  assert.equal(freeForAdvance("demo", null, nobody), true);
+  assert.equal(freeForAdvance("e", undefined, editing), false);
+});
+
+test("after posting: the pick skips held, edited-by-others and posted stories", () => {
+  type S = { id: string; draft: { status: string; claim: { mine: boolean } | null } };
+  const s = (id: string, status = "ready", claim: { mine: boolean } | null = null): S => ({ id, draft: { status, claim } });
+  const order = [s("p"), s("held", "claimed", { mine: false }), s("open"), s("done", "published"), s("free"), s("last")];
+  const editing = new Set(["open"]);
+  const taken = (x: S) => !freeForAdvance(x.id, x.draft, editing);
+  assert.deepEqual(advanceCandidates(order, "p", taken).map((x) => x.id), ["free", "last"]);
 });

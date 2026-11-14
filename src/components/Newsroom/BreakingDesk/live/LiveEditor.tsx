@@ -14,6 +14,7 @@ import PostEditor from "../PostEditor";
 import { draftToNews, errorCode, errorText, useLiveDesk } from "./LiveDesk";
 import { correctionOpen, fixedByOther, isCorrecting } from "./correction";
 import { abandonCorrection, correctionFailure, hasEditIntent, takeEditIntent } from "./beginCorrection";
+import { advancePast, dropAdvanceIntent, hasAdvanceIntent } from "./autoAdvance";
 
 /** Whether this operator may change the open story. `fixing`: someone else holds the posted story for a fix. */
 export type Lease = { kind: "mine" } | { kind: "held"; name: string; fixing?: boolean } | { kind: "lost" } | { kind: "read" };
@@ -103,6 +104,20 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
     }, 0);
   }, []);
 
+  // An auto-advance mark for a story this editor didn't end up opening: dropped a tick later unless it is open again
+  const dropAdvanceLater = useCallback((id: string) => {
+    setTimeout(() => {
+      if (openId.current !== id) dropAdvanceIntent(id);
+    }, 0);
+  }, []);
+
+  // Where auto-advance goes when a claim fails: read when it happens, so the open effect doesn't re-run on them
+  const queue = desk?.queue;
+  const advanceTo = useRef({ queueOrder, queue, onSwitch, onClose });
+  useEffect(() => {
+    advanceTo.current = { queueOrder, queue, onSwitch, onClose };
+  });
+
   // ─── Open (and on switch): load, then claim when the story is free ─────────
   useEffect(() => {
     let cancelled = false;
@@ -110,6 +125,8 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
     openId.current = id;
     // Edit took a correction hold for this story just before opening it (left in place for a re-run effect)
     const pressed = hasEditIntent(id);
+    // Opened by itself after posting: a story someone else got first is stepped over, not watched
+    const advanced = !pressed && hasAdvanceIntent(id);
     (async () => {
       try {
         let d = await socia.fetchDraft(id);
@@ -126,7 +143,19 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
         if (cancelled) {
           if (pressed) abandonLater(id);
           else if (lease.kind === "mine") release(id);
+          if (advanced) dropAdvanceLater(id);
           return;
+        }
+        if (advanced) {
+          if (canAct && lease.kind !== "mine") {
+            // Taken in the last seconds (or no longer workable): on to the next free story, else back to the desk
+            const to = advanceTo.current;
+            const next = advancePast(id, to.queueOrder ?? to.queue ?? []);
+            if (next) to.onSwitch(next);
+            else to.onClose();
+            return;
+          }
+          dropAdvanceIntent(id);
         }
         if (pressed) takeEditIntent(id);
         // Edit's hold on a story that can't be fixed here (canCorrect not true, or undone meanwhile): end it now
@@ -139,8 +168,10 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
       } catch (err) {
         if (cancelled) {
           if (pressed) abandonLater(id);
+          if (advanced) dropAdvanceLater(id);
           return;
         }
+        if (advanced) dropAdvanceIntent(id);
         if (pressed) {
           takeEditIntent(id);
           void abandonCorrection(id);
@@ -153,7 +184,7 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
       if (openId.current === id) openId.current = null;
       release(holding.current === id ? id : null);
     };
-  }, [item.id, canAct, release, abandonLater]);
+  }, [item.id, canAct, release, abandonLater, dropAdvanceLater]);
 
   const current = opened && opened.draft.id === item.id ? opened : null;
   const mine = current?.lease.kind === "mine";
