@@ -335,6 +335,21 @@ export const mockAccess = {
     return toUser(getMockAccess(), next);
   },
 
+  /** Demo: the person is simply removed (the server keeps the row, marked deleted) */
+  async deleteUser(id: string): Promise<void> {
+    await pause();
+    const s = getMockAccess();
+    const user = s.users.find((u) => u.id === id);
+    if (!user) throw new ApiError(404, "not_found", "This user does not exist.");
+    if (id === s.selfId) throw new ApiError(400, "self", "You cannot delete yourself. Ask another admin.");
+    assertCovers(s, effectiveFor(s, user).filter((p) => p.allowed).map((p) => p.key), user.name);
+    if (user.role === "admin" && user.active && activeAdmins(s).length <= 1) {
+      throw new ApiError(409, "last_admin", "At least one active Admin must remain. Make someone else an Admin first.");
+    }
+    const entry = audit(s, "user.delete", "user", id, user.name, { name: user.name, email: user.email, role: user.role, active: user.active }, { deleted: true, active: false });
+    commit({ ...s, users: s.users.filter((u) => u.id !== id), audit: [entry, ...s.audit] });
+  },
+
   async createUser(input: NewUserInput): Promise<AccessUser> {
     await pause();
     const s = getMockAccess();

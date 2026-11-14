@@ -89,6 +89,10 @@ const liveAccess = {
     const res = await api<Raw>("PATCH", `/admin/users/${enc(id)}`, patch);
     return readUser((res.user as Raw) ?? res);
   },
+  async deleteUser(id: string): Promise<void> {
+    // 204 with no body; 400 self, 404 not_found, 409 last_admin come back as ApiError
+    await api<unknown>("DELETE", `/admin/users/${enc(id)}`);
+  },
   async createUser(input: NewUserInput): Promise<AccessUser> {
     const res = await api<Raw>("POST", "/admin/users", input);
     return readUser((res.user as Raw) ?? res);
@@ -136,6 +140,11 @@ export interface AccessService {
   deleteRole(key: string): Promise<void>;
   listUsers(): Promise<AccessUser[]>;
   updateUser(id: string, patch: UserPatch): Promise<AccessUser>;
+  /**
+   * Deletes a person (soft delete): they can't sign in and leave every list; their past posts keep their name.
+   * ApiError 400 "self" (yourself), 404 "not_found", 409 "last_admin".
+   */
+  deleteUser(id: string): Promise<void>;
   /** Adds a person who can sign in with `password` straight away */
   createUser(input: NewUserInput): Promise<AccessUser>;
   /** Sets someone else's password (and clears their two-step sign-in with `resetTotp`); signs them out everywhere */

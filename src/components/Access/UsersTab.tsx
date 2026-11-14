@@ -27,13 +27,13 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { ChevronRight, KeyRound, Pencil, Search, UserPlus } from "lucide-react";
+import { ChevronRight, KeyRound, Pencil, Search, Trash2, UserPlus } from "lucide-react";
 import { ADMIN_LOCKED, BUILT_IN_ROLE_KEYS, BUILT_IN_ROLE_LABELS, PLATFORM_OPTIONS, platformLabel } from "@/lib/access/catalogue";
 import { accessService } from "@/lib/access/service";
 import { usePermissions } from "@/lib/access/usePermissions";
 import type { AccessUser, RoleRecord, UserPatch } from "@/lib/access/types";
 import { useSociaSession } from "@/providers/SociaSessionProvider";
-import { LoadError, errorText } from "@/components/Newsroom/SociaDesk/liveShared";
+import { LoadError, errorCode, errorText } from "@/components/Newsroom/SociaDesk/liveShared";
 import { Avatar, ConfirmDialog, LosingAccess, effectiveSet, formatDateTime, labelOf, lostKeys, tileSx, useLoad, type Loaded } from "./shared";
 import UserPermissionsDrawer from "./UserPermissionsDrawer";
 import AddPersonDialog, { type ActorScope } from "./AddPersonDialog";
@@ -116,6 +116,7 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
   const [passwordFor, setPasswordFor] = useState<AccessUser | null>(null);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<AccessUser | null>(null);
 
   // The person just added: scroll to them, then let the highlight fade after a while
   useEffect(() => {
@@ -164,6 +165,32 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
     }
     setBusyId(null);
     setConfirm(null);
+  };
+
+  /** Soft delete: the server keeps the row (names on past posts), takes them off every list and signs them out */
+  const remove = async (u: AccessUser) => {
+    setBusyId(u.id);
+    try {
+      await accessService.deleteUser(u.id);
+      users.setData((l) => l?.filter((x) => x.id !== u.id) ?? l);
+      setToast({ ok: true, text: `${u.name} is deleted.` });
+      void users.reload();
+      void roles.reload();
+    } catch (err) {
+      const code = errorCode(err);
+      const text =
+        code === "last_admin"
+          ? `${u.name} is the last admin. Make someone else an admin first.`
+          : code === "self"
+            ? "You can't delete yourself. Ask another admin."
+            : code === "not_found"
+              ? `${u.name} is already gone. The list is refreshed.`
+              : errorText(err);
+      setToast({ ok: false, text });
+      if (code === "not_found") void users.reload();
+    }
+    setBusyId(null);
+    setDeleting(null);
   };
 
   /** Changes to your own row get a confirmation when they take access away. */
@@ -273,6 +300,27 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
     );
   };
 
+  /** Nothing for yourself (the server refuses it) or before we know who is signed in */
+  const deleteIcon = (u: AccessUser) => {
+    if (!self || u.id === self.id || passwordBlock(u)) return null;
+    return (
+      <Tooltip title="Delete">
+        <IconButton size="small" onClick={() => setDeleting(u)} disabled={busyId === u.id} aria-label={`Delete ${u.name}`} sx={{ width: 32, height: 32, borderRadius: "8px", border: "1px solid", borderColor: "divider", color: "error.main" }}>
+          <Trash2 size={15} aria-hidden />
+        </IconButton>
+      </Tooltip>
+    );
+  };
+
+  const deleteButton = (u: AccessUser) => {
+    if (!self || u.id === self.id || passwordBlock(u)) return null;
+    return (
+      <Button size="small" color="error" onClick={() => setDeleting(u)} disabled={busyId === u.id} startIcon={<Trash2 size={14} aria-hidden />} aria-label={`Delete ${u.name}`} sx={{ alignSelf: "flex-start", minHeight: 32, px: 1.25 }}>
+        Delete
+      </Button>
+    );
+  };
+
   const highlightSx = (u: AccessUser) =>
     u.id === highlightId ? { backgroundColor: "action.selected", boxShadow: (t: { palette: { success: { main: string } } }) => `inset 3px 0 0 ${t.palette.success.main}`, transition: "background-color 600ms ease" } : { transition: "background-color 600ms ease" };
 
@@ -337,6 +385,11 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
                 <TableCell>Exceptions</TableCell>
                 <TableCell>Last sign-in</TableCell>
                 <TableCell sx={{ px: 1 }}>Password</TableCell>
+                <TableCell sx={{ px: 1 }}>
+                  <Box component="span" sx={visuallyHidden}>
+                    Delete
+                  </Box>
+                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -365,6 +418,7 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
                   {/* Date over time, to leave room for the Password column */}
                   <TableCell sx={{ color: "text.secondary", whiteSpace: "pre-line", minWidth: 96 }}>{formatDateTime(u.lastLoginAt).replace(", ", "\n")}</TableCell>
                   <TableCell sx={{ px: 1 }}>{passwordIcon(u)}</TableCell>
+                  <TableCell sx={{ px: 1 }}>{deleteIcon(u)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -400,6 +454,7 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
                 <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>Password</Typography>
                 <Box sx={{ ml: u.id === self?.id ? -1 : 0 }}>{passwordButton(u)}</Box>
               </Box>
+              {deleteButton(u)}
             </Box>
           ))}
         </Box>
@@ -464,6 +519,20 @@ export default function UsersTab({ roles }: { roles: Loaded<RoleRecord[]> }) {
         ) : (
           <Typography sx={{ fontSize: "0.875rem" }}>{confirm?.extra}</Typography>
         )}
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={!!deleting}
+        title={deleting ? `Delete ${deleting.name}?` : "Delete?"}
+        confirmLabel="Delete"
+        danger
+        busy={!!deleting && busyId === deleting.id}
+        onConfirm={() => deleting && void remove(deleting)}
+        onClose={() => setDeleting(null)}
+      >
+        <Typography sx={{ fontSize: "0.875rem" }}>
+          They can&apos;t sign in and disappear from the lists. Their past posts keep their name.
+        </Typography>
       </ConfirmDialog>
 
       {toast && (
