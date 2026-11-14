@@ -51,7 +51,8 @@ export default function FtpStatus({ onManualFetch, compact }: { onManualFetch?: 
   const checkNow = () => {
     setChecking(true);
     if (desk) {
-      void desk.refreshAll().then((added) => {
+      // Asks the worker to read the share now, then refreshes (and again a few seconds on, see scanNow)
+      void desk.scanNow().then(desk.refreshAll).then((added) => {
         setChecking(false);
         onManualFetch?.(added);
       });

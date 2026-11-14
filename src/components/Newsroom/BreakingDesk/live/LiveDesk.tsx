@@ -246,6 +246,11 @@ interface LiveDeskValue {
   refreshAll: () => Promise<number>;
   /** Polls everything now (the queue's refresh icon); rejects when the queue itself could not be loaded */
   refreshStrict: () => Promise<void>;
+  /**
+   * Asks the worker to read the share now (POST /ingest/scan), then polls everything again 2.5 s and 6 s later so a
+   * story it takes shows up (a new file needs two looks 2 s apart). Resolves once asked; refresh the lists then.
+   */
+  scanNow: () => Promise<void>;
   pending: LivePending[];
   addPending: (p: Omit<LivePending, "id">) => void;
   undo: (id: string) => Promise<string | null>;
@@ -439,6 +444,31 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
     () => void Promise.all(refreshers.current.map((r) => r())),
     [],
   );
+  // "Scan now" (Check now, the refresh icon, F5): the worker reads the share within ~1 s; the follow-up polls catch
+  // the story it takes. A failed ask is not shown: the lists refresh anyway and the health light shows a stopped worker.
+  const scanFollowUps = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const scanNow = useCallback(async () => {
+    try {
+      await socia.scanNow();
+    } catch {
+      // see above
+    }
+    scanFollowUps.current.forEach(clearTimeout);
+    scanFollowUps.current = [2500, 6000].map((ms) => setTimeout(refreshSoon, ms));
+  }, [refreshSoon]);
+  useEffect(() => () => scanFollowUps.current.forEach(clearTimeout), []);
+  // F5 on the desk (list and editor) = scan now + refresh; Ctrl/Shift+F5 still reload the page
+  useEffect(() => {
+    if (!phaseKnown) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "F5" || e.ctrlKey || e.shiftKey || e.metaKey || e.altKey) return;
+      e.preventDefault();
+      if (e.repeat) return;
+      void scanNow().then(refreshAll);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [phaseKnown, scanNow, refreshAll]);
   /** A live queue event (live.tsx calls it at most every 2 s, visible tabs only): a soft refresh of every list */
   const nudgeAll = useCallback(() => nudges.current.forEach((n) => n()), []);
 
@@ -654,6 +684,7 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
       undoCopied,
       refreshAll,
       refreshStrict,
+      scanNow,
       pending,
       addPending,
       undo,
@@ -684,6 +715,7 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
       undoCopied,
       refreshAll,
       refreshStrict,
+      scanNow,
       pending,
       addPending,
       undo,

@@ -196,10 +196,13 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   }, [inboxAnswer]);
   // "Updated" moves only when the queue really answered; a failed refresh says so and keeps the last time
   const refreshStrict = desk?.refreshStrict;
+  const scanNow = desk?.scanNow;
   const refreshNow = useCallback(async () => {
     if (!refreshStrict || refreshing) return;
     setRefreshing(true);
     try {
+      // The worker reads the share now too (new stories show within a few seconds), then the lists refresh
+      await scanNow?.();
       await refreshStrict();
       setUpdatedAt(Date.now());
     } catch (err) {
@@ -207,7 +210,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     } finally {
       setRefreshing(false);
     }
-  }, [refreshStrict, refreshing, setNotice]);
+  }, [refreshStrict, scanNow, refreshing, setNotice]);
   const updatedLabel = updatedAt ? `Updated ${new Date(updatedAt).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}` : "Updating";
   const [keysOpen, setKeysOpen] = useState(false);
   // Links into the editor: ?story=<linkSlug> (readable, resolved to a draft below) or the older ?compose=<news id>
@@ -624,7 +627,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
             </Tooltip>
           )}
           {desk && (
-            <Tooltip title="Refresh now">
+            <Tooltip title="Check for new stories now (F5)">
               <Box
                 component="button"
                 type="button"

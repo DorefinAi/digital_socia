@@ -177,6 +177,19 @@ export function searchStories(q: string, limit = 20, signal?: AbortSignal) {
 
 // ─── Source health ───────────────────────────────────────────────────────────
 export const fetchIngestStatus = () => api<IngestStatus>("GET", "/ingest/status");
+/**
+ * "Scan now": asks the worker to read the share straight away (it notices within ~1 s). 202 { queued: true };
+ * 429 when someone in the org asked in the last 3 s (that scan is already on its way, so it is not an error here).
+ */
+export async function scanNow(): Promise<boolean> {
+  try {
+    await api<{ queued: boolean }>("POST", "/ingest/scan");
+    return true;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 429) return true;
+    throw err;
+  }
+}
 
 /**
  * Tab badges and dashboard counts. Uses GET /x/counts; while that route is missing on a server

@@ -165,7 +165,7 @@ const RESERVED: Record<string, string> = {
   "mod+v": "Paste needs this one in every text box.",
   "mod+x": "Cut needs this one in every text box.",
   "mod+a": "Select all needs this one in every text box.",
-  f5: "The browser keeps F5 to reload the page.",
+  f5: "F5 checks the share for new stories now (Ctrl+F5 reloads the page).",
   f12: "The browser keeps F12 for its developer tools.",
 };
 
