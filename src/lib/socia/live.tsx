@@ -27,6 +27,7 @@ import {
   createOutbox,
   createRefreshGate,
   createStateSender,
+  draftsEditedByOthers,
   moveStory,
   presenceOf,
   refreshesLists,
@@ -189,6 +190,18 @@ export function useStoryPresence(draftId: string | null | undefined): readonly P
   return useSyncExternalStore(hub.onPresence, read, noPresence);
 }
 
+/** The signed-in user while a provider holds the stream (null otherwise), for othersEditingNow */
+let presenceMe: string | null = null;
+let presenceActive = false;
+
+/**
+ * The draft ids someone else has open in edit mode, read at call time (no re-render): for picks made in an event
+ * handler, such as the story to open after posting. Empty without a provider or a live stream.
+ */
+export function othersEditingNow(): ReadonlySet<string> {
+  return presenceActive ? draftsEditedByOthers(hub.presence, presenceMe) : new Set<string>();
+}
+
 // ─── Provider ────────────────────────────────────────────────────────────────
 
 /** How soon a "join again" after a not_holder / unknown_client / not_joined answer may repeat */
@@ -207,6 +220,14 @@ export function LiveProvider({ children, enabled = true, onQueueEvent }: { child
   useEffect(() => {
     onQueue.current = onQueueEvent;
   });
+  // othersEditingNow reads presence only while this provider is on, and tells "you" apart by this id
+  useEffect(() => {
+    presenceMe = me;
+    presenceActive = enabled;
+    return () => {
+      presenceActive = false;
+    };
+  }, [me, enabled]);
 
   // The POST queue and the state throttle in front of it, made once
   const outbox = useRef<Outbox | null>(null);
