@@ -91,8 +91,17 @@ export function eventKey(e: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | 
   let key = e.key.toLowerCase();
   if (key === " " || key === "spacebar") key = "space";
   if (key === "del") key = "delete";
-  // On Mac, Option+X types a symbol (≈): fall back to the physical letter
-  if (e.altKey && e.code?.startsWith("Key") && !/^[a-z]$/.test(key)) key = e.code.slice(3).toLowerCase();
+  // The key typed something that is not a plain Latin character: a Hindi (Inscript) or other non-Latin layout
+  // ("ज" for J), Option+X on a Mac ("≈"), or an IME placeholder ("Process", "Unidentified"). Fall back to the
+  // physical key, so J/K, Ctrl+Z and the rest work whatever the layout. Latin layouts keep their own letters
+  // (AZERTY "a" stays "a"), and ASCII punctuation keeps its meaning ("!" on Digit1 stays "!").
+  const typedLatin = /^[\x20-\x7e]$/.test(key);
+  const named = key.length > 1 && /^[a-z0-9]+$/.test(key) && key !== "process" && key !== "unidentified" && key !== "dead";
+  if (!typedLatin && !named && e.code) {
+    if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();
+    // Devanagari digits ("१") on the top row; with Shift the layout types a symbol, so leave that one alone
+    else if (/^Digit[0-9]$/.test(e.code) && !e.shiftKey) key = e.code.slice(5);
+  }
   const parts: string[] = [];
   if (mod) parts.push("mod");
   if (e.altKey) parts.push("alt");

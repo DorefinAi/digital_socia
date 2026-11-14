@@ -188,9 +188,15 @@ export const NUDGE = { small: 0.01, big: 0.05 } as const;
 
 const editorLookup = lookup(EDITOR_KEYS);
 
-/** The editor command for a keyboard event, or undefined */
+/**
+ * The editor command for a keyboard event, or undefined. As on the queue, Shift with a plain letter still counts
+ * as that letter (Shift+J is J) unless the person gave the Shift combo a job of its own.
+ */
 export function editorKeyFor(e: KeyboardEvent): EditorKey | undefined {
-  return editorLookup(eventKey(e));
+  const combo = eventKey(e);
+  const cmd = editorLookup(combo);
+  if (!cmd && /^shift\+[a-z]$/.test(combo)) return editorLookup(combo.slice(6));
+  return cmd;
 }
 
 /** First key of a command for tooltips: "Ctrl+Enter", or "" when the person turned it off */
