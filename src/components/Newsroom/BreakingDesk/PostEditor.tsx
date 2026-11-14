@@ -167,7 +167,7 @@ const BAR = { bg: "#0E0E10", text: "rgba(255,255,255,0.7)", border: "rgba(255,25
 const SELECT_BLUE = "#2F7BFF";
 /** Saving the card image failed in the browser itself (out of memory), not because of the media */
 /** Ctrl+S while fixing a posted story */
-const PRESS_DONE = "Press Done to save your fix.";
+const PRESS_DONE = "Press Copy & Mark Posted to save your fix.";
 const CARD_IMAGE_FAILED = "The browser ran out of memory making the card image. Close other tabs and try again.";
 const BACKDROPS = ["blur", "#000000", "#FFFFFF", BREAKING_RED] as const;
 
@@ -238,7 +238,8 @@ interface PostEditorProps {
   queueOrder?: readonly FtpNewsItem[];
   item: FtpNewsItem;
   platform: SocialPlatform;
-  onClose: () => void;
+  /** Closes the editor; "queue" asks the desk to show its New tab (after a fix of a posted story) */
+  onClose: (returnTo?: "queue") => void;
   /** Opens another FTP story in the editor */
   onSwitch?: (item: FtpNewsItem) => void;
   /** Lets the desk confirm what happened after the editor closes */
@@ -1891,34 +1892,49 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   };
 
   /**
-   * Correction mode's Done: writes the fix (text, then card), ends the hold and goes back to the desk, saying
-   * what really happened: a post undone meanwhile is reported as such, never as "stays posted".
+   * Correction mode's Copy & mark posted (button, Ctrl+Enter, the leave dialog): copies the fixed text while the
+   * press still counts as the operator's, writes the fix (text, then card), ends the hold and goes to the desk's
+   * New tab, saying what really happened: a post undone meanwhile is reported as such, never as "stays posted".
    */
   const finishFix = () =>
     runLive("save", async () => {
       if (!live) return;
       const id = live.draft.id;
+      // A fix that can't be saved (hold gone) isn't copied: the clipboard would hold text the desk never kept
+      const copying = live.lease.kind === "mine" || !fixChanged;
+      if (copying) {
+        settleBox();
+        try {
+          await navigator.clipboard.writeText(finalText);
+        } catch {
+          setNotice("The browser blocked the clipboard, so nothing was saved. Select the text in the box and copy it by hand, then try again.");
+          return;
+        }
+      }
       const statusNow = () => socia.fetchDraft(id).then((d) => d.status as string, () => null);
       const wasTakenBack = async (err: unknown) => {
         const code = errorCode(err);
         return takenBack(code, code === "lease_lost" ? await statusNow() : null);
       };
       const leaveTakenBack = () => {
+        // The clipboard holds a post that is no longer posted: empty it (best effort)
+        if (copying) void navigator.clipboard?.writeText("").catch(() => undefined);
         live.onFinished();
         void desk?.refreshAll();
         onSaved?.(FIX_TAKEN_BACK);
-        onClose();
+        onClose("queue");
       };
       if (live.lease.kind !== "mine") {
         // The hold is gone: the post may have been undone, or the hold only ran out
         const status = await statusNow();
         if (status !== null && status !== "published") return leaveTakenBack();
         if (fixChanged) {
-          setNotice("You no longer hold this post, so your fix wasn't saved. Claim it again, then press Done.");
+          setNotice("You no longer hold this post, so your fix wasn't saved. Claim it again, then press Copy & Mark Posted.");
           return;
         }
         live.onFinished();
-        onClose();
+        onSaved?.(`Copied. "${item.headline}" stays posted.`);
+        onClose("queue");
         return;
       }
       try {
@@ -1932,10 +1948,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       void desk?.refreshAll();
       onSaved?.(
         fixChanged
-          ? `Fix saved. "${item.headline}" stays posted: copy the fixed text and edit or replace the tweet on X by hand.`
-          : `No changes. "${item.headline}" stays posted.`,
+          ? `Fix saved and copied. "${item.headline}" stays posted: paste it into the tweet on X by hand.`
+          : `No changes, text copied. "${item.headline}" stays posted.`,
       );
-      onClose();
+      onClose("queue");
     });
 
   /**
@@ -2064,8 +2080,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // ── Ctrl+Enter: the Post button, with the same checks ──
   const approveByKey = () => {
     if (busy || exporting !== null || approveResting()) return;
+    // Fixing a posted story: Ctrl+Enter is its Copy & Mark Posted
     if (correcting) {
-      setNotice("This story is already posted. Save fix, then Copy fixed text and edit the tweet on X.");
+      void finishFix();
       return;
     }
     if (copyMode ? !mayMarkPosted : !mayPublish || (!live && !mayMarkPosted)) {
@@ -2337,29 +2354,24 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // On the live desk Post to X is the main action, so Save as posted takes the quieter style of Copy
   const savePostedSx = { minHeight: 34, fontWeight: 700, whiteSpace: "nowrap", backgroundColor: "#111", color: "#fff", "&:hover": { backgroundColor: "#333" }, "&.Mui-disabled": { backgroundColor: "rgba(17,17,17,0.35)", color: "rgba(255,255,255,0.7)" } };
 
-  // Correction mode: copy the fixed post (nothing is marked posted) and Done, in place of the posting buttons
+  // Correction mode: one action in place of the posting buttons. Copy & mark posted copies the fixed text, saves the
+  // fix and goes to New; the story stays posted (nothing is posted or counted again)
   const correctionButtons = (
-    <>
-      <Tooltip title={copied ? "Copied" : "Copies the fixed post. Nothing is posted or marked posted again."}>
-        <Button onClick={copyText} aria-label={copied ? "Copied" : "Copy fixed text"} startIcon={copied ? <Check size={15} /> : <Copy size={15} />} sx={{ ...chromeButton, border: `1px solid ${BAR.border}`, whiteSpace: "nowrap", ...iconOnlyOnPhone }}>
-          {phoneLabel(copied ? "Copied" : "Copy fixed text")}
+    <Tooltip title="Copies the fixed text, saves the fix and goes to New. The story stays posted.">
+      <span>
+        <Button
+          variant="contained"
+          onClick={() => void finishFix()}
+          disabled={!!busy || exporting !== null}
+          aria-label={busy === "save" ? "Copying and saving the fix" : "Copy & Mark Posted"}
+          aria-keyshortcuts={ariaKeyShortcuts(keysById(EDITOR_KEYS, "post.approve"))}
+          startIcon={busy === "save" ? <CircularProgress size={14} sx={{ color: "#111" }} /> : <Copy size={16} />}
+          sx={{ minHeight: 38, px: { xs: 1.25, md: 2 }, flexShrink: 0, fontSize: "0.875rem", fontWeight: 800, whiteSpace: "nowrap", backgroundColor: "#fff", color: "#111", "&:hover": { backgroundColor: "rgba(255,255,255,0.86)" }, "&.Mui-disabled": { backgroundColor: "rgba(255,255,255,0.35)", color: "rgba(17,17,17,0.6)" } }}
+        >
+          {phoneLabel("Copy & Mark Posted", "Copy")}
         </Button>
-      </Tooltip>
-      <Tooltip title="Saves the fix, lets the story go and goes back to the desk. It stays posted.">
-        <span>
-          <Button
-            variant="contained"
-            onClick={() => void finishFix()}
-            disabled={!!busy || exporting !== null}
-            aria-label="Done fixing, back to the desk"
-            startIcon={<Check size={16} />}
-            sx={{ minHeight: 38, px: { xs: 1.25, md: 2 }, flexShrink: 0, fontSize: "0.875rem", fontWeight: 800, whiteSpace: "nowrap", backgroundColor: "#fff", color: "#111", "&:hover": { backgroundColor: "rgba(255,255,255,0.86)" }, "&.Mui-disabled": { backgroundColor: "rgba(255,255,255,0.35)", color: "rgba(17,17,17,0.6)" } }}
-          >
-            Done
-          </Button>
-        </span>
-      </Tooltip>
-    </>
+      </span>
+    </Tooltip>
   );
 
   const actionButtons = (onDark: boolean) => (correcting ? correctionButtons : (
@@ -3486,7 +3498,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 <Box sx={{ flex: 1 }} />
                 {correcting ? (
                   // A fix is written only with Done (top bar): no Save here
-                  <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", textAlign: "right" }}>Your fix is saved when you press Done.</Typography>
+                  <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", textAlign: "right" }}>Your fix is saved when you press Copy & Mark Posted.</Typography>
                 ) : (
                   <Button variant="outlined" onClick={save} disabled={!canEdit || !!busy} aria-keyshortcuts={ariaKeyShortcuts(keysById(EDITOR_KEYS, "post.save"))} startIcon={busy === "save" ? <CircularProgress size={13} color="inherit" /> : <Save size={14} />} sx={{ minHeight: 34, minWidth: 0, px: 1.25, whiteSpace: "nowrap" }}>
                     Save draft
@@ -3620,7 +3632,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   );
 }
 
-/** Correction mode: a fix is written only with Done, so leaving with changes asks first. "Keep fixing" has the focus. */
+/** Correction mode: a fix is written only with Copy & Mark Posted, so leaving with changes asks first. "Keep fixing" has the focus. */
 function LeaveFixDialog({ open, onStay, onDiscard, onDone }: { open: boolean; onStay: () => void; onDiscard: () => void; onDone: () => void }) {
   return (
     <Dialog open={open} onClose={onStay} maxWidth="xs" fullWidth aria-labelledby="x-editor-fix-leave-title" aria-describedby="x-editor-fix-leave-text" slotProps={{ paper: { role: "alertdialog", sx: { borderRadius: "14px", backgroundImage: "none" } } }}>
@@ -3629,7 +3641,7 @@ function LeaveFixDialog({ open, onStay, onDiscard, onDone }: { open: boolean; on
           Leave without saving your fix?
         </Typography>
         <Typography id="x-editor-fix-leave-text" sx={{ fontSize: "0.8125rem", color: "text.secondary", mt: 0.75, lineHeight: 1.55 }}>
-          Changes to this posted story are saved only when you press Done. Leave now and they are dropped; the post stays as it was.
+          Changes to this posted story are saved only with Copy & Mark Posted. Leave now and they are dropped; the post stays as it was.
         </Typography>
         <Box sx={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 1, mt: 2.5 }}>
           <Button onClick={onStay} autoFocus sx={{ color: "text.secondary" }}>
@@ -3639,7 +3651,7 @@ function LeaveFixDialog({ open, onStay, onDiscard, onDone }: { open: boolean; on
             Discard fix
           </Button>
           <Button variant="contained" onClick={onDone}>
-            Done
+            Copy & Mark Posted
           </Button>
         </Box>
       </Box>

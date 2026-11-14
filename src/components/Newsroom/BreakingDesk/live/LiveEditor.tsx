@@ -57,7 +57,8 @@ interface LiveEditorProps {
   queueOrder?: readonly FtpNewsItem[];
   item: FtpNewsItem;
   platform: SocialPlatform;
-  onClose: () => void;
+  /** "queue": show the desk's New tab after closing (see PostEditor) */
+  onClose: (returnTo?: "queue") => void;
   onSwitch: (item: FtpNewsItem) => void;
   onSaved: (message: string) => void;
   /** The open draft's readable link name, once the server has sent it (absent on older servers) */
@@ -315,13 +316,13 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
 
   if (!shown || !story || (error && !current)) {
     return (
-      <Dialog open fullScreen onClose={onClose} transitionDuration={150} slotProps={{ paper: { sx: { borderRadius: 0, backgroundImage: "none", backgroundColor: "background.default" } } }}>
+      <Dialog open fullScreen onClose={() => onClose()} transitionDuration={150} slotProps={{ paper: { sx: { borderRadius: 0, backgroundImage: "none", backgroundColor: "background.default" } } }}>
         <Box role={error ? "alert" : "status"} sx={{ flex: 1, display: "grid", placeItems: "center", px: 2 }}>
           {error ? (
             <Box sx={{ maxWidth: 420, textAlign: "center" }}>
               <Typography sx={{ fontWeight: 700 }}>This story didn&apos;t open</Typography>
               <Typography sx={{ fontSize: "0.875rem", color: "text.secondary", mt: 1 }}>{error}</Typography>
-              <Button variant="contained" onClick={onClose} sx={{ mt: 2 }}>
+              <Button variant="contained" onClick={() => onClose()} sx={{ mt: 2 }}>
                 Back to desk
               </Button>
             </Box>

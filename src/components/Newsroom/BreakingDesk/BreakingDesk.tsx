@@ -480,8 +480,10 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   // Phase 1: when the editor closes, focus goes back to the queue: the story's row if it is still there,
   // else the row now in its place (the next story after a Copy & Mark Posted), else the list's tab
   const returnFocus = useRef<{ id: string; index: number } | null>(null);
-  const closeEditor = () => {
-    if (p1 && composing) returnFocus.current = { id: composing.id, index: Math.max(0, visible.findIndex((n) => n.id === composing.id)) };
+  // A fix of a posted story ends on New ("queue"), not on the tab it was opened from; focus then takes New's first row
+  const closeEditor = (returnTo?: "queue") => {
+    if (p1 && composing) returnFocus.current = { id: composing.id, index: returnTo ? 0 : Math.max(0, visible.findIndex((n) => n.id === composing.id)) };
+    if (returnTo) setTab(returnTo);
     setComposing(null);
   };
   const visibleIds = visible.map((n) => n.id).join(",");
