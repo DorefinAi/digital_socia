@@ -334,7 +334,7 @@ const designStore = {
 function liveTags(d: DraftView) {
   const hashtags: TagOption[] = [
     ...d.hashtags.map((value) => ({ value, reason: "From the story", checked: true })),
-    ...offeredHashtags(d.hashtagSuggestions, d.hashtags),
+    ...offeredHashtags(d.hashtagSuggestions, d.hashtags, d.bodyText),
   ];
   const mentions: TagOption[] = [
     ...d.mentions.map((value) => ({ value, reason: "In the draft", checked: true })),

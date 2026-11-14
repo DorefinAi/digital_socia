@@ -251,3 +251,13 @@ test("missing lists, and non-text tags already on the draft, don't break the sug
   assert.equal(grouped.reporter.length, 1);
   assert.equal(grouped.normal.length, 1);
 });
+
+test("a hashtag already in the post text is not offered again (line 1's tag, a #<Place>News tag)", () => {
+  const body = "#Jaipur: हत्या के आरोपी से पूछताछ\n\nपुलिस ने की पूछताछ...";
+  assert.deepEqual(values(offeredHashtags(["#jaipur", "#Tonk"], [], body)), ["#Tonk"]);
+  assert.deepEqual(values(offeredHashtags(["#Jaipur", "#JaipurNews", "#Kota"], [], "पूछताछ जारी #JaipurNews")), ["#Kota"]);
+  assert.deepEqual(values(offeredHashtags(["#जयपुर"], [], "पूछताछ #जयपुरन्यूज़")), []);
+  // No text, or not text: nothing extra is filtered
+  assert.deepEqual(values(offeredHashtags(["#Jaipur"], [], undefined)), ["#Jaipur"]);
+  assert.deepEqual(values(offeredHashtags(["#Jaipur"], [], 4 as unknown as string)), ["#Jaipur"]);
+});

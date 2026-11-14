@@ -105,6 +105,27 @@ export function offerableHashtag(raw: unknown): string {
   return value && isHashtag(value) && value.slice(1) === tag.replace(/^#+/, "") ? value : "";
 }
 
+/** Any hashtag in running text (not only a whole tag): "#Jaipur:", "#JaipurNews," */
+const BODY_HASHTAG = /#([\p{L}\p{M}\p{N}_]+)/gu;
+/** "#JaipurNews", "#Jaipur_News", "#जयपुरन्यूज़", "#जयपुरसमाचार": the tag of the place a news tag names */
+const NEWS_STEM = /^(.+?)_?(?:news|न्यूज़?|समाचार)$/u;
+
+/**
+ * The tag keys (tagKey) of every hashtag in a post's text, each "<Place>News" tag also as its place's tag, so a
+ * "#Jaipur" suggestion is not offered beside a "#JaipurNews" the post already has. Not text: no keys.
+ */
+export function bodyTagKeys(body: unknown): Set<string> {
+  const keys = new Set<string>();
+  if (typeof body !== "string") return keys;
+  for (const m of body.normalize("NFC").matchAll(BODY_HASHTAG)) {
+    const key = tagKey(`#${m[1]}`);
+    keys.add(key);
+    const stem = NEWS_STEM.exec(key.slice(1))?.[1];
+    if (stem) keys.add(`#${stem}`);
+  }
+  return keys;
+}
+
 /** Reason line for a normal hashtag suggestion that carries none (bare strings, or objects without a reason) */
 export const PLAIN_HASHTAG_REASON = "Suggested";
 
@@ -115,8 +136,14 @@ export const PLAIN_HASHTAG_REASON = "Suggested";
  * anything offerableHashtag would have to rewrite, are skipped. A reason that isn't text hides that one
  * suggestion's reason line; the suggestion itself is still offered.
  */
-export function offeredHashtags(suggestions: readonly (string | HashtagSuggestion)[] | undefined, onDraft: readonly string[] | undefined): OfferedTag[] {
+export function offeredHashtags(
+  suggestions: readonly (string | HashtagSuggestion)[] | undefined,
+  onDraft: readonly string[] | undefined,
+  body?: string | null,
+): OfferedTag[] {
   const have = draftKeys(onDraft, hash);
+  // A hashtag already in the post text counts as on the draft ("#Jaipur: ..." in line 1, "#JaipurNews" in a line)
+  for (const k of bodyTagKeys(body)) have.add(k);
   const out: OfferedTag[] = [];
   const index = new Map<string, number>();
   for (const s of Array.isArray(suggestions) ? suggestions : []) {
