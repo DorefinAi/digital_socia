@@ -12,6 +12,7 @@ import { cardJpeg, fitCard } from "./live/cardImage";
 
 /** How long the card must stand still before its image is encoded ahead of time */
 const PREPARE_IDLE_MS = 600;
+import { joinBlockText, splitBlockText } from "./blockText";
 
 export { BIG_BREAKING_YELLOW, BREAKING_RED, DEFAULT_TEXT_Y, TEMPLATE_FORMATS } from "./cardRender";
 export type { TemplateFormat } from "./cardRender";
@@ -214,7 +215,6 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   // Typing ends when the editor selects something else (a text box picked in the panel, deleted, hidden)
   if (typing && selection !== typing) setTyping(null);
   const typingIn = editable && typing && selection === typing ? typing : null;
-  const typingRef = useRef<TextTarget | null>(null);
   // Each on-screen paint counts up: an image encoded at one count shows the card as long as the count holds
   const paintGen = useRef(0);
   const prepared = useRef<{ gen: number; maxBytes: number; blob: Blob } | null>(null);
@@ -238,6 +238,15 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     },
     [],
   );
+  // On a desk template the heading and the story are typed in one box, as one text (blockText.ts): the heading,
+  // a blank line, the story. Not while the story is hidden: then only the heading is typed in.
+  const blockStory = textBlock ? layout.layers?.find((l) => l.id === textBlock.layer && !l.hidden) : undefined;
+  const typedBlock = blockStory && (typingIn === "headline" || typingIn === `layer:${blockStory.id}`) ? blockStory : null;
+  /** The one text as typed (kept as it is, so the caret never jumps); null until typing in the one box starts */
+  const [blockDraft, setBlockDraft] = useState<string | null>(null);
+  const editingKey = typedBlock ? `headline|layer:${typedBlock.id}` : typingIn;
+  // What drawCard leaves out while it is typed in: one block, or the heading and the story together
+  const typingRef = useRef<string | string[] | null>(null);
 
   // `exporting` paints every word, even the ones being typed (the textarea covers them on screen), and leaves the boxes alone
   const paint = useCallback((exporting = false) => {
@@ -272,9 +281,9 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
 
   useEffect(() => {
     stateRef.current = { format, tag, layout, handle, renderScale, backdrop };
-    typingRef.current = typingIn;
+    typingRef.current = editingKey?.includes("|") ? editingKey.split("|") : editingKey;
     paint();
-  }, [format, tag, layout, handle, renderScale, backdrop, typingIn, paint]);
+  }, [format, tag, layout, handle, renderScale, backdrop, editingKey, paint]);
 
   // Once the words' place is known, the box over them takes focus with the caret where it was asked for
   useLayoutEffect(() => {
@@ -292,6 +301,8 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
 
   const startTyping = (target: TextTarget, caret: Caret) => {
     caretRef.current = caret;
+    // The one box starts from the heading and the story as they are now
+    setBlockDraft(null);
     onSelect?.(target);
     setTyping(target);
   };
@@ -872,17 +883,27 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   };
 
   /** The text being typed in, as stored, and how to write it back */
-  const typedLayer = typingIn?.startsWith("layer:") ? layout.layers?.find((l) => l.id === typingIn.slice(6)) : undefined;
-  const typedValue = typingIn === "headline" ? layout.headline : (typedLayer?.text ?? "");
+  const typedLayer = typedBlock ? typedBlock : typingIn?.startsWith("layer:") ? layout.layers?.find((l) => l.id === typingIn.slice(6)) : undefined;
+  const limitOf = (target: TextTarget) => (target === "headline" ? (textLimits?.headline ?? 500) : (textLimits?.byLayer?.[target.slice(6)] ?? textLimits?.layer ?? 300));
+  const typedValue = typedBlock ? (blockDraft ?? joinBlockText(layout.headline, typedBlock.text)) : typingIn === "headline" ? layout.headline : (typedLayer?.text ?? "");
   // Never shorter than the words already there, so typing never cuts a longer text short
-  const typedLimit = Math.max(typedValue.length, typingIn === "headline" ? (textLimits?.headline ?? 500) : (textLimits?.byLayer?.[typingIn?.slice(6) ?? ""] ?? textLimits?.layer ?? 300));
+  const typedLimit = !typingIn ? 0 : Math.max(typedValue.length, typedBlock ? limitOf("headline") + 2 + limitOf(`layer:${typedBlock.id}`) : limitOf(typingIn));
   const writeTyped = (value: string) => {
     if (!onLayoutChange || !typingIn) return;
+    if (typedBlock) {
+      // Heading and story as typed in the one box, each kept to its own limit (but never cut shorter than it was)
+      setBlockDraft(value);
+      const { headline, body } = splitBlockText(value);
+      const cut = (text: string, was: string, limit: number) => text.slice(0, Math.max(limit, was.length));
+      onLayoutChange(patchLayer({ ...layout, headline: cut(headline, layout.headline, limitOf("headline")) }, typedBlock.id, { text: cut(body, typedBlock.text, limitOf(`layer:${typedBlock.id}`)) }));
+      return;
+    }
     const text = value.slice(0, typedLimit);
     onLayoutChange(typingIn === "headline" ? { ...layout, headline: text } : patchLayer(layout, typingIn.slice(6), { text }));
   };
   const stopTyping = (refocus: boolean) => {
     setTyping(null);
+    setBlockDraft(null);
     // Back on the card, so the arrows, Delete and Ctrl+Z act on the selected box again
     if (refocus) frameRef.current?.focus({ preventScroll: true });
   };
@@ -902,21 +923,26 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   /** How the words being typed look: as close to the card's own drawing as a text box can get */
   const typeStyle = (): React.CSSProperties | null => {
     if (!typingIn || !typeArea) return null;
-    const s = typingIn === "headline" ? resolveHeadlineStyle(layout, tag) : typedLayer ? resolveLayerStyle(typedLayer) : null;
+    // The one box takes the story's look; the heading's own colour shows through the mirror under it (typeMirror)
+    const s = typedBlock ? resolveLayerStyle(typedBlock) : typingIn === "headline" ? resolveHeadlineStyle(layout, tag) : typedLayer ? resolveLayerStyle(typedLayer) : null;
     if (!s) return null;
     const font = fontById(s.font);
     const cq = (px: number) => `${(px / size.w) * 100}cqw`;
+    // An empty heading takes no room on the card, but the one text still starts with its blank line
+    const lift = typedBlock && !layout.headline.trim() ? 2 * typeArea.lineHeight : 0;
     return {
       position: "absolute",
       left: `${(typeArea.x / size.w) * 100}%`,
-      top: `${(typeArea.top / size.h) * 100}%`,
+      top: `${((typeArea.top - lift) / size.h) * 100}%`,
       width: `${(typeArea.width / size.w) * 100}%`,
-      height: `${(typeArea.height / size.h) * 100}%`,
+      height: `${((typeArea.height + lift) / size.h) * 100}%`,
       margin: 0,
       padding: 0,
       border: 0,
-      outline: `1px dashed ${SELECT_BLUE}`,
+      // A single box shows where its words end; the one box already has the selection frame round it
+      outline: typedBlock ? "none" : `1px dashed ${SELECT_BLUE}`,
       outlineOffset: 2,
+      overflowWrap: "break-word",
       background: "transparent",
       resize: "none",
       overflow: "hidden",
@@ -936,7 +962,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
       caretColor: s.color,
       opacity: s.opacity,
       transform: s.rotation ? `rotate(${s.rotation}deg)` : undefined,
-      transformOrigin: `${cq(typeArea.cx - typeArea.x)} ${cq(typeArea.cy - typeArea.top)}`,
+      transformOrigin: `${cq(typeArea.cx - typeArea.x)} ${cq(typeArea.cy - typeArea.top + lift)}`,
       cursor: "text",
       userSelect: "text",
       touchAction: "auto",
@@ -944,6 +970,14 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     };
   };
   const typeCss = typeStyle();
+  /**
+   * The one box shows the heading in its own colour: the words are drawn by a copy laid out exactly as the
+   * textarea (same box, face and wrapping) right under it, and the textarea's own letters are clear, so only its
+   * caret and selection show. The copy's heading is everything before the first blank line, as it will be split.
+   */
+  const mirrorRef = useRef<HTMLDivElement>(null);
+  const typeMirror = typedBlock && typeCss ? { css: { ...typeCss, pointerEvents: "none", userSelect: "none", zIndex: 1 } as React.CSSProperties, headLength: splitBlockText(typedValue).headline.length, headColor: resolveHeadlineStyle(layout, tag).color } : null;
+  const areaCss: React.CSSProperties | null = typeMirror && typeCss ? { ...typeCss, color: "transparent", WebkitTextFillColor: "transparent", textShadow: "none", WebkitTextStroke: undefined, textDecoration: "none", zIndex: 2 } : typeCss;
 
   const photoPct = photoRect ? { x: (photoRect.x / size.w) * 100, y: (photoRect.y / size.h) * 100, w: (photoRect.w / size.w) * 100, h: (photoRect.h / size.h) * 100 } : undefined;
   const blockRect = textBlock && inBlock(selection) ? textBlock.rect(layout) : null;
@@ -1001,12 +1035,23 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
       {editable && selection === "background" && !backdrop && (
         <div style={{ position: "absolute", inset: 0, outline: `2px solid ${SELECT_BLUE}`, outlineOffset: -2, pointerEvents: "none" }} />
       )}
-      {typingIn && typeCss && (
+      {typeMirror && (
+        <div ref={mirrorRef} aria-hidden style={typeMirror.css}>
+          <span style={{ color: typeMirror.headColor }}>{typedValue.slice(0, typeMirror.headLength)}</span>
+          {typedValue.slice(typeMirror.headLength)}
+          {/* A last empty line still takes its room, as in the textarea */}
+          {"​"}
+        </div>
+      )}
+      {typingIn && areaCss && (
         <textarea
           ref={typeRef}
           value={typedValue}
           maxLength={typedLimit}
-          aria-label={typingIn === "headline" ? "Card text" : "Text box words"}
+          aria-label={typedBlock ? "Card heading, a blank line, then the story" : typingIn === "headline" ? "Card text" : "Text box words"}
+          onScroll={(e) => {
+            if (mirrorRef.current) mirrorRef.current.scrollTop = e.currentTarget.scrollTop;
+          }}
           spellCheck={false}
           onChange={(e) => writeTyped(e.target.value)}
           onKeyDown={onTypeKeyDown}
@@ -1025,7 +1070,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
           }}
           onDoubleClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.stopPropagation()}
-          style={typeCss}
+          style={areaCss}
         />
       )}
       {editable && selectedBox && <ResizeFrame box={selectedBox} color={offCard(selectedBox) ? OFF_CARD_RED : SELECT_BLUE} onHandleDown={onHandleDown} />}

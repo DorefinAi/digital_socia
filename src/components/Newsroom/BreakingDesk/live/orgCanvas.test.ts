@@ -1,6 +1,7 @@
 // Unit checks for the one text box on a desk template (orgCanvas.ts) at a size set by hand (orgSize): the top
-// edge stays put while the words change, top and bottom handles do nothing, a corner keeps the opposite corner,
-// and placeOrgWords hands back the same object when nothing moved. Run with npm test.
+// edge stays put while the words change, every handle scales the words, a corner keeps the opposite corner,
+// placeOrgWords hands back the same object when nothing moved, and an old two-box draft becomes one box. Also
+// blockText's split of the one typed text. Run with npm test.
 //
 // orgCanvas pulls in next/font (through templateFonts) and the LiveDesk component, neither of which loads in
 // plain node, and imports with the "@/" alias. The hooks below map "@/" to src/ and stand in small stubs for
@@ -61,8 +62,9 @@ const fakeCtx = {
 };
 (globalThis as { document?: unknown }).document = { createElement: () => ({ getContext: () => fakeCtx }) };
 
-const { ORG_BODY_ID, ORG_DATE_ID, orgBlockRect, orgLayout, placeOrgWords, setOrgBlock, setOrgSize } = await import("./orgCanvas");
+const { ORG_BODY_ID, ORG_DATE_ID, isOneBox, orgBlockRect, orgLayout, placeOrgWords, setOrgBlock, setOrgSize, toOneBox } = await import("./orgCanvas");
 const { DATE_STROKE } = await import("./cardDate");
+const { joinBlockText, splitBlockText } = await import("../blockText");
 
 const T: OrgCardTemplate = {
   slug: "test",
@@ -117,23 +119,32 @@ test("typing keeps the top edge and grows or shrinks the box at the bottom", () 
   assert.ok(rect(shorter).h < start.h, "fewer words make the box shorter");
 });
 
-test("a top or bottom handle drag changes nothing at a size set by hand", () => {
+test("a top or bottom handle scales the size with the height and keeps the opposite edge", () => {
   const sized = setOrgSize(fresh(), T, 40);
   const r = rect(sized);
-  assert.equal(setOrgBlock(sized, T, { ...r, y: r.y - 60, h: r.h + 60 }), sized, "top handle");
-  assert.equal(setOrgBlock(sized, T, { ...r, h: r.h + 80 }), sized, "bottom handle");
-  assert.equal(setOrgBlock(sized, T, { ...r, h: r.h - 30 }), sized, "bottom handle up");
+  const bottom = setOrgBlock(sized, T, { ...r, h: r.h * 1.5 });
+  close(bottom.orgSize!, 60, "bottom handle down", 0.01);
+  close(rect(bottom).y, r.y, "bottom handle keeps the top");
+  close(rect(bottom).w, r.w, "bottom handle keeps the width");
+  assert.ok(rect(bottom).h > r.h, "bigger words make a taller box");
+  const up = setOrgBlock(sized, T, { ...r, h: r.h * 0.5 });
+  close(up.orgSize!, 20, "bottom handle up", 0.01);
+  const top = setOrgBlock(sized, T, { ...r, y: r.y - r.h * 0.25, h: r.h * 1.25 });
+  close(top.orgSize!, 50, "top handle", 0.01);
+  close(rect(top).y + rect(top).h, r.y + r.h, "top handle keeps the bottom");
+  assert.equal(placeOrgWords(top, T), top);
 });
 
-test("a side handle re-wraps at the same size and keeps the top and the opposite side", () => {
+test("a side handle scales the size with the width and keeps the top and the opposite side", () => {
   const sized = setOrgSize(fresh(), T, 40);
   const r = rect(sized);
-  const east = setOrgBlock(sized, T, { ...r, w: r.w - 200 });
-  assert.equal(east.orgSize, sized.orgSize);
+  const east = setOrgBlock(sized, T, { ...r, w: r.w * 0.5 });
+  close(east.orgSize!, 20, "east drag halves the size", 0.01);
   close(rect(east).x, r.x, "left edge on an east drag");
   close(rect(east).y, r.y, "top on an east drag");
-  assert.ok(rect(east).h > r.h, "narrower box wraps to more lines");
+  close(rect(east).w, r.w * 0.5, "width as dragged");
   const west = setOrgBlock(sized, T, { ...r, x: r.x + 200, w: r.w - 200 });
+  close(west.orgSize!, (40 * (r.w - 200)) / r.w, "west drag", 0.01);
   close(rect(west).x + rect(west).w, r.x + r.w, "right edge on a west drag");
 });
 
@@ -167,16 +178,46 @@ test("a corner drag scales the size with the width and keeps the opposite corner
   for (const l of [se, sw, ne, nw]) assert.equal(placeOrgWords(l, T), l);
 });
 
-test("without a size set by hand a resize takes the box as dragged", () => {
+test("without a size set by hand a resize starts from the fitted size", () => {
   const placed = placeOrgWords(fresh(), T);
+  const fitted = placed.layers!.find((l) => l.id === ORG_BODY_ID)!.size;
   const r = rect(placed);
-  const box = { x: r.x + 20, y: r.y - 40, w: r.w - 100, h: r.h + 60 };
-  const resized = setOrgBlock(placed, T, box);
-  assert.equal(resized.orgSize, undefined);
-  assert.deepEqual(resized.orgBlock, { x: box.x / 1080, y: box.y / 1080, w: box.w / 1080, h: box.h / 1080 });
-  const moved = setOrgBlock(resized, T, { ...rect(resized), x: rect(resized).x + 30 });
-  close(rect(moved).x, rect(resized).x + 30, "a move shifts the box");
-  close(rect(moved).h, rect(resized).h, "a move keeps its height");
+  const corner = setOrgBlock(placed, T, { x: r.x, y: r.y, w: r.w * 0.8, h: r.h * 0.8 });
+  close(corner.orgSize!, fitted * 0.8, "corner", 0.01);
+  const side = setOrgBlock(placed, T, { ...r, w: r.w * 0.9 });
+  close(side.orgSize!, fitted * 0.9, "side", 0.01);
+  const bottom = setOrgBlock(placed, T, { ...r, h: r.h * 0.7 });
+  close(bottom.orgSize!, fitted * 0.7, "bottom", 0.01);
+  const moved = setOrgBlock(corner, T, { ...rect(corner), x: rect(corner).x + 30 });
+  close(rect(moved).x, rect(corner).x + 30, "a move shifts the box");
+  close(rect(moved).h, rect(corner).h, "a move keeps its height");
+  assert.equal(moved.orgSize, corner.orgSize, "a move keeps the size");
+});
+
+test("a draft saved before the one box becomes one box", () => {
+  const one = placeOrgWords(fresh(), T);
+  // As saved before: the story at the older line pitch, the heading at a size of its own
+  const legacy: TemplateLayout = { ...one, fontScale: one.fontScale * 1.3, layers: one.layers!.map((l) => (l.id === ORG_BODY_ID ? { ...l, style: { ...l.style, lineHeight: 1.49 } } : l)) };
+  assert.equal(isOneBox(legacy), false);
+  const migrated = toOneBox(legacy, T);
+  assert.equal(isOneBox(migrated), true);
+  assert.equal(placeOrgWords(migrated, T), migrated, "placed as one block");
+  assert.equal(toOneBox(migrated, T), migrated, "one box already");
+  // The size control now changes heading and story together
+  const bigger = setOrgSize(migrated, T, 50);
+  const story = bigger.layers!.find((l) => l.id === ORG_BODY_ID)!;
+  close(story.size, 50, "story size", 0.01);
+  close(bigger.fontScale * 56, 50, "heading size (ORG_BASE_SIZE 56)", 0.01);
+});
+
+test("heading and story typed as one text split back at the first blank line", () => {
+  assert.equal(joinBlockText("Head", "Story"), "Head\n\nStory");
+  assert.deepEqual(splitBlockText("Head\n\nStory one.\n\nTwo."), { headline: "Head", body: "Story one.\n\nTwo." });
+  assert.deepEqual(splitBlockText("Line one\nline two\n\nStory"), { headline: "Line one\nline two", body: "Story" });
+  assert.deepEqual(splitBlockText("Head\nStory"), { headline: "Head", body: "Story" });
+  assert.deepEqual(splitBlockText("Head only"), { headline: "Head only", body: "" });
+  assert.deepEqual(splitBlockText("\n\nStory"), { headline: "", body: "Story" });
+  assert.deepEqual(splitBlockText("Head\r\n\r\nStory"), { headline: "Head", body: "Story" });
 });
 
 test("the editor's date is stroked in its own colour as wide as the X card's (cardDate.DATE_STROKE)", () => {
