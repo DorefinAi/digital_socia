@@ -18,6 +18,20 @@ const CAP_RAISE = 0.035;
 /** Letters and digits only: "/" and ":" reach above or below the capitals */
 const NOT_ALNUM = /[^\p{L}\p{N}]/gu;
 
+/**
+ * Extra weight for the date, as a share of its font size (the font size is the tag's height unless the date
+ * had to step down to fit): after the fill, the letters are stroked in their own colour this wide, round
+ * joins, so half of it lands outside the outline. Mardoto comes in one Bold cut only, and the desk's date
+ * reads heavier than Mardoto Bold filled plain: on 60 posted 1080² cards Socia's plain date had 11% less ink
+ * in the tag and strokes a pixel thinner (8 px against 9). At 0.014 (0.8 px on the 56 px tag) the ink is
+ * within 2% of the desk's and the strokes 9 px (dev-docs/breaking_news_cards_tools/datemeasure.py, 14 Nov
+ * 2026). Every path that draws the date (backgroundCard.ts, orgCanvas.ts) uses it.
+ */
+export const DATE_STROKE = 0.014;
+
+/** The date's stroke width (canvas lineWidth) in px, at font size `size` px */
+export const dateStrokePx = (size: number) => size * DATE_STROKE;
+
 export interface DateFit {
   /** Font size in card px */
   size: number;

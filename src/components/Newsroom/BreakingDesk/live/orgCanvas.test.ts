@@ -61,7 +61,8 @@ const fakeCtx = {
 };
 (globalThis as { document?: unknown }).document = { createElement: () => ({ getContext: () => fakeCtx }) };
 
-const { ORG_BODY_ID, orgBlockRect, orgLayout, placeOrgWords, setOrgBlock, setOrgSize } = await import("./orgCanvas");
+const { ORG_BODY_ID, ORG_DATE_ID, orgBlockRect, orgLayout, placeOrgWords, setOrgBlock, setOrgSize } = await import("./orgCanvas");
+const { DATE_STROKE } = await import("./cardDate");
 
 const T: OrgCardTemplate = {
   slug: "test",
@@ -176,4 +177,13 @@ test("without a size set by hand a resize takes the box as dragged", () => {
   const moved = setOrgBlock(resized, T, { ...rect(resized), x: rect(resized).x + 30 });
   close(rect(moved).x, rect(resized).x + 30, "a move shifts the box");
   close(rect(moved).h, rect(resized).h, "a move keeps its height");
+});
+
+test("the editor's date is stroked in its own colour as wide as the X card's (cardDate.DATE_STROKE)", () => {
+  const dated: OrgCardTemplate = { ...T, layout: { ...T.layout, date: { x: 0.537, y: 0.186, w: 0.421, h: 0.052, color: "#000000", format: "Date:DD/MM/YYYY" } } };
+  const date = orgLayout(dated, { headline: HEADLINE, body: STORY }, BASE).layers?.find((l) => l.id === ORG_DATE_ID);
+  assert.ok(date && date.size, "the card has a date box");
+  assert.equal(date.style.strokeColor, "#000000");
+  // cardRender strokes strokeWidth × u × 2 px wide (u = 1 on a 1080 card); backgroundCard strokes DATE_STROKE × size
+  close((date.style.strokeWidth ?? 0) * 2, DATE_STROKE * date.size, "stroke width", 1e-9);
 });

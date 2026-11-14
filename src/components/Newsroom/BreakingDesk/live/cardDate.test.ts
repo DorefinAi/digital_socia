@@ -4,7 +4,7 @@
 //   node --import <register-ts-resolve.mjs> --test src/components/Newsroom/BreakingDesk/live/cardDate.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fitDate } from "./cardDate";
+import { DATE_STROKE, dateStrokePx, fitDate } from "./cardDate";
 
 /** Each character 0.55 font sizes wide, ink flush with the advance; capitals 0.7 tall, 0.4 above "middle" */
 function fakeContext() {
@@ -50,4 +50,12 @@ test("a date too wide for the tag steps down until its ink fits inside the margi
   assert.ok(at.size < 56);
   assert.ok(ink <= 455 * (1 - 0.037 - 0.022));
   assert.ok(TEXT.length * 0.55 * (at.size + 1) > 455 * (1 - 0.037 - 0.022));
+});
+
+test("the date's stroke grows with its size and stays under a pixel on the 1080 card's 56 px tag", () => {
+  assert.ok(DATE_STROKE > 0);
+  assert.equal(dateStrokePx(56), 56 * DATE_STROKE);
+  assert.equal(dateStrokePx(28), dateStrokePx(56) / 2);
+  // The desk's strokes are about a pixel wider than Mardoto Bold's; half the line lands outside the letters
+  assert.ok(dateStrokePx(56) >= 0.5 && dateStrokePx(56) <= 1.2, `${dateStrokePx(56)} px`);
 });

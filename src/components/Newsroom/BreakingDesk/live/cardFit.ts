@@ -11,10 +11,10 @@
 /**
  * Which way cards are drawn. Part of every drawn card's cache key (useBackgroundCard, storyThumbs), so a
  * card drawn and uploaded the earlier way is drawn and sent again once. Raise it whenever the drawing changes
- * (3: Mardoto Bold became the cards' face). Not raised for the Noto Hindi and the centred block, on purpose: a
- * card already drawn stays as it was; only cards drawn from now on (new stories) take the new look.
+ * (3: Mardoto Bold became the cards' face; 4: the date's stroke, cardDate.DATE_STROKE). Not raised for the Noto
+ * Hindi and the centred block on their own; version 4 redraws cached cards, so they take those too.
  */
-export const CARD_DRAW_VERSION = 3;
+export const CARD_DRAW_VERSION = 4;
 
 /** Line pitch for heading and story alike, in font sizes (the desk's posts, measured in Noto Sans Devanagari Bold) */
 export const CARD_LINE = 1.38;

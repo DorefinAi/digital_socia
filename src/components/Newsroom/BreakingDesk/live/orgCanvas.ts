@@ -14,7 +14,7 @@ import { apiFileUrl } from "./LiveDesk";
 import { fontsReady, istDate, loadImage } from "./backgroundCard";
 import { cardBodyText } from "../cardWords";
 import { CARD_GAP_LINES, CARD_LINE, LEGACY_CARD_LINE, type PxRect, V3_CARD_HANG_TOP, V3_CARD_LINE, cardBlockTop, cardTextArea, largestFit, legacyTextArea } from "./cardFit";
-import { fitDate } from "./cardDate";
+import { DATE_STROKE, fitDate } from "./cardDate";
 
 /** The text box that holds the story under the headline */
 export const ORG_BODY_ID = "org-body";
@@ -290,8 +290,14 @@ const dateLayer = (t: DrawableCardTemplate, p: NonNullable<Placement["date"]>, s
   id: ORG_DATE_ID,
   text: istDate(t.layout.date!.format),
   ...p,
-  style: { ...DATE_STYLE, ...style, lineHeight: DATE_STYLE.lineHeight, color: t.layout.date!.color },
+  style: { ...DATE_STYLE, ...style, lineHeight: DATE_STYLE.lineHeight, color: t.layout.date!.color, ...dateStroke(p.size, t.layout.date!.color) },
 });
+
+/**
+ * The date's extra weight as backgroundCard.ts draws it (cardDate.DATE_STROKE): a stroke in the date's own colour.
+ * cardRender strokes `strokeWidth × u × 2` px wide and the box's size is in u, so half the share times the size.
+ */
+const dateStroke = (size: number, color: string): Pick<CardTextStyle, "strokeWidth" | "strokeColor"> => ({ strokeWidth: (DATE_STROKE * size) / 2, strokeColor: color });
 
 /** The story's text on the card: its own box when there is one, else the FTP story. */
 export const orgBodyText = (layout: TemplateLayout, fallback: string) => layout.layers?.find((l) => l.id === ORG_BODY_ID)?.text ?? cardBodyText(fallback);
