@@ -8,7 +8,7 @@ import { MARDOTO_FAMILY } from "../templateFonts";
 import { CARD_FACE_SAMPLE } from "../cardFace";
 import { cardBodyText } from "../cardWords";
 import { CARD_GAP_LINES, CARD_LINE, type PxRect, cardBlockTop, cardTextArea, largestFit } from "./cardFit";
-import { fitDate } from "./cardDate";
+import { dateStrokePx, fitDate } from "./cardDate";
 import { cardJpeg, fitCard } from "./cardImage";
 import { isTainted } from "./rgbPng";
 
@@ -220,7 +220,8 @@ export function paintCardText(ctx: CanvasRenderingContext2D, layout: OrgCardTemp
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  // Date: Mardoto Bold in its tag, sized and placed by cardDate.fitDate, as orgCanvas places the editor's date
+  // Date: Mardoto Bold in its tag, sized and placed by cardDate.fitDate and thickened by its stroke, as orgCanvas
+  // places and styles the editor's date
   const d = layout.date;
   if (d) {
     const dateText = istDate(d.format, words.date);
@@ -230,6 +231,17 @@ export function paintCardText(ctx: CanvasRenderingContext2D, layout: OrgCardTemp
     ctx.textAlign = "left";
     ctx.textBaseline = "alphabetic";
     ctx.fillText(dateText, at.originX, at.baseline);
+    // The desk's weight: the letters stroked in their own colour (cardDate.DATE_STROKE). A lineWidth of 0 is
+    // ignored by canvas (the last width stays), hence the check.
+    const stroke = dateStrokePx(at.size);
+    if (stroke > 0) {
+      ctx.save();
+      ctx.lineJoin = "round";
+      ctx.lineWidth = stroke;
+      ctx.strokeStyle = d.color;
+      ctx.strokeText(dateText, at.originX, at.baseline);
+      ctx.restore();
+    }
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
   }
