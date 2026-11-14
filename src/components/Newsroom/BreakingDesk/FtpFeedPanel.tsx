@@ -16,6 +16,7 @@ import NewStoriesPill, { freshHighlightSx } from "./NewStoriesPill";
 import StoryThumb, { THUMB_ROOT_ATTR } from "./live/StoryThumb";
 import { canCorrect, editedLabel, needsCheckDescription } from "./live/correction";
 import { RowPresence, RowPresenceSpace } from "./live/Presence";
+import { placeLine, reporterWithDistrict } from "./reporterLabel";
 
 const STATUS_STYLE: Record<string, { label: string; color: string }> = {
   posted: { label: "Posted", color: "success.main" },
@@ -191,6 +192,9 @@ export default function FtpFeedPanel({
             // Posted today: a small Edit to fix the post (the row itself stays plain), and a mark once it was fixed
             const editable = list === "published" && !!onEdit && !!desk?.canAct && canCorrect(live);
             const edited = list === "published" ? editedLabel(live?.corrected) : null;
+            // "BHANWAR (Rajsamand)" and "Rajsamand · रेलमगरा", as on the desk's rows
+            const reporter = reporterWithDistrict(live?.reporter, live?.district);
+            const place = live ? placeLine(live.district, live.town) : "";
             return (
               <Box
                 key={n.id}
@@ -269,6 +273,20 @@ export default function FtpFeedPanel({
                           {edited}
                         </Box>
                       </>
+                    )}
+                    {/* Last on the line, so a narrow panel cuts the place, never the status or who holds it */}
+                    {reporter && (
+                      <Box component="span" title={`Reporter: ${reporter}`} sx={{ flexShrink: 0, fontWeight: 600 }}>
+                        <Box component="span" sx={srOnly}>
+                          Reporter:{" "}
+                        </Box>
+                        {reporter}
+                      </Box>
+                    )}
+                    {place && (
+                      <Box component="span" title={place} sx={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {place}
+                      </Box>
                     )}
                   </Box>
                 </Box>

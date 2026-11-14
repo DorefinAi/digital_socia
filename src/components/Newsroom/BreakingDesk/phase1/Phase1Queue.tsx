@@ -19,6 +19,7 @@ import { X_LIMIT } from "../socialText";
 import { XRichText, X_COLORS } from "./XPostPreview";
 import { Badge, NeedsCheckBadges, Phase1Badges, needsCheckHint, needsCheckLabel, shownNeedsCheck } from "./badges";
 import { ageTone } from "../deskRules";
+import { placeLine, reporterWithDistrict } from "../reporterLabel";
 import { canCorrect, editedLabel, needsCheckDescription } from "../live/correction";
 
 const AGE_COLOR = { fresh: "success.main", recent: "warning.main", old: "text.disabled" } as const;
@@ -54,12 +55,21 @@ function NeedsCheckTags({ live, id }: { live: QueueItem; id?: string }) {
 
 /** Where the file came from and what it said, on one wrapping line; `reasons` false leaves the needs-check tags out */
 function RowMeta({ live, reasons = true }: { live: QueueItem; reasons?: boolean }) {
-  const place = [live.district, live.town].filter(Boolean).join(" · ");
+  const place = placeLine(live.district, live.town);
+  const reporter = reporterWithDistrict(live.reporter, live.district);
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap", fontSize: "0.75rem", color: "text.secondary" }}>
       <Phase1Badges tags={live.tags} needsCheck={live.needsCheck} showReasons={false} />
       {reasons && <NeedsCheckTags live={live} />}
       {place && <span>{place}</span>}
+      {reporter && (
+        <Box component="span" title="Reporter" sx={{ fontWeight: 600, overflowWrap: "anywhere" }}>
+          <Box component="span" sx={srOnly}>
+            Reporter:{" "}
+          </Box>
+          {reporter}
+        </Box>
+      )}
       {live.card?.state === "ready" && <Badge tone="plain">Card</Badge>}
     </Box>
   );
