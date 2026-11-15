@@ -81,6 +81,17 @@ export function advanceCandidates<T extends { id: string }>(stories: readonly T[
   return [...after, ...before].filter((s) => s.id !== postedId && !taken(s));
 }
 
+/**
+ * What the editor does after a post, or after a fix of a posted story (`fix`), given the next free story (if any):
+ * open it with the FTP feed on the left, or close when none is free. After a fix the desk behind turns to its
+ * New tab ("queue") either way, so closing lands there.
+ */
+export type AfterPost<T> = { open: T; tool: "ftp"; returnTo: "queue" | undefined } | { open: null; returnTo: "queue" | undefined };
+export function afterPost<T>(next: T | undefined, fix: boolean): AfterPost<T> {
+  const returnTo = fix ? "queue" : undefined;
+  return next ? { open: next, tool: "ftp", returnTo } : { open: null, returnTo };
+}
+
 /** The draft fields the pick after posting reads (a live queue item's status and claim) */
 export interface AdvanceDraft {
   status: string;

@@ -3,7 +3,7 @@
 //   node --import ./src/components/Newsroom/BreakingDesk/video/timeline/__checks__/resolve-ts.mjs --test src/components/Newsroom/BreakingDesk/deskRules.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { adjacentStory, advanceCandidates, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, freeForAdvance, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
+import { adjacentStory, advanceCandidates, afterPost, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, freeForAdvance, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
 
 const now = Date.parse("2026-11-11T07:13:00Z");
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -118,6 +118,16 @@ test("All / BIG Breaking / Breaking count the chosen day only, and BIG + Breakin
   for (const day of [today, yesterday]) assert.equal(count(day).big_breaking + count(day).breaking, count(day).all);
   // An untagged story counts in All only
   assert.deepEqual(dayPriorityCounts([{ at: ago(0) }], today, (s) => istDay(s.at), () => null), { all: 1, big_breaking: 0, breaking: 0 });
+});
+
+test("after a post the editor opens the next free story on the FTP feed; after a fix the desk turns to New too", () => {
+  const next = { id: "n" };
+  // Copy & Mark Posted / Save as posted
+  assert.deepEqual(afterPost(next, false), { open: next, tool: "ftp", returnTo: undefined });
+  assert.deepEqual(afterPost(undefined, false), { open: null, returnTo: undefined });
+  // A fix of a posted story (saved, unchanged, or taken back): the desk behind shows New, whether it moves on or closes
+  assert.deepEqual(afterPost(next, true), { open: next, tool: "ftp", returnTo: "queue" });
+  assert.deepEqual(afterPost(undefined, true), { open: null, returnTo: "queue" });
 });
 
 test("after posting: the stories to try run on after the posted one, then back before it, nearest first", () => {

@@ -59,7 +59,8 @@ interface LiveEditorProps {
   platform: SocialPlatform;
   /** "queue": show the desk's New tab after closing (see PostEditor) */
   onClose: (returnTo?: "queue") => void;
-  onSwitch: (item: FtpNewsItem) => void;
+  /** Opens another story; "queue" also turns the desk behind to its New tab (PostEditor's moveOn after a fix) */
+  onSwitch: (item: FtpNewsItem, returnTo?: "queue") => void;
   onSaved: (message: string) => void;
   /** The open draft's readable link name, once the server has sent it (absent on older servers) */
   onLinkSlug?: (id: string, linkSlug: string) => void;

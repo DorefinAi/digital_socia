@@ -6,6 +6,7 @@ import { CHANNEL } from "@/constants";
 import { CardBackdrop, CardRects, FrameTime, MIN_BOX, Rect, TemplateFormat, TextGeometry, cardSize, drawCard, fittedSize, fontsFor, mediaRectFor, resolveHeadlineStyle, resolveLayerStyle } from "./cardRender";
 import { BoxHandle, FrameBox, ResizeFrame, resizeBox, useBoxGesture } from "./ResizeFrame";
 import { NUDGE, eventKey, isMac } from "./editorKeys";
+import { typingKeyAction } from "./cardTyping";
 import { fontById, nearestWeight } from "./templateFonts";
 import { flatCopy, isTainted, rgbPng } from "./live/rgbPng";
 import { cardJpeg, fitCard } from "./live/cardImage";
@@ -885,19 +886,14 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     if (refocus) frameRef.current?.focus({ preventScroll: true });
   };
   const onTypeKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // The editor's shortcuts (Ctrl+Enter posts, Delete removes the box, arrows move it) stay out while typing;
-    // only Ctrl+S (save) and Ctrl+Enter (post) go through. Esc just stops typing (a click outside the words does too); it is kept
-    // here so it never reaches the editor, which would close.
-    const key = eventKey(e);
-    if (key === "mod+s") return;
-    if (e.nativeEvent.isComposing || e.key === "Process") return e.stopPropagation();
-    // Ctrl+Enter stops typing and goes on to the editor, which posts (Copy & Mark Posted) as from anywhere else
-    if (key === "mod+enter") {
-      stopTyping(true);
-      return;
-    }
+    // While typing, the editor's shortcuts (Delete removes the box, arrows move it...) stay out, except two:
+    // Ctrl+S saves and Ctrl+Enter posts. Esc only stops typing (as a click outside the words does) and is kept
+    // from the editor, where it would close it. The rules: cardTyping.ts.
+    const action = typingKeyAction(eventKey(e), e.nativeEvent.isComposing || e.key === "Process");
+    if (action === "editor") return;
+    if (action === "post") return stopTyping(true);
     e.stopPropagation();
-    if (key === "escape") {
+    if (action === "stop") {
       e.preventDefault();
       stopTyping(true);
     }

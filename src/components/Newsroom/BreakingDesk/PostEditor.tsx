@@ -114,7 +114,7 @@ import LiveCaret from "./live/LiveCaret";
 import { HeaderPresence } from "./live/Presence";
 import { HandedOverNote, HolderLeftBanner, LiveNote, LiveUnavailableNote, TakeoverDialog, WatchBanner } from "./live/WatchMode";
 import { LIVE_PLATFORM, createRefreshGate, firstName } from "@/lib/socia/liveCore";
-import { adjacentStory, counterTone, steppedTextSize, workableOrder } from "./deskRules";
+import { adjacentStory, afterPost, counterTone, steppedTextSize, workableOrder } from "./deskRules";
 import { beginAdvance } from "./live/autoAdvance";
 
 /** Someone else holds this story (their claim), so the studio steps over it */
@@ -242,8 +242,8 @@ interface PostEditorProps {
   platform: SocialPlatform;
   /** Closes the editor; "queue" asks the desk to show its New tab (after a fix of a posted story) */
   onClose: (returnTo?: "queue") => void;
-  /** Opens another FTP story in the editor */
-  onSwitch?: (item: FtpNewsItem) => void;
+  /** Opens another FTP story in the editor; "queue" also turns the desk behind it to its New tab (after a fix) */
+  onSwitch?: (item: FtpNewsItem, returnTo?: "queue") => void;
   /** Lets the desk confirm what happened after the editor closes */
   onSaved?: (message: string) => void;
   /** Set on the live desk: the real draft, the claim on it, and how to report back */
@@ -1561,16 +1561,16 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   /**
    * After a post (or a fix of a posted story): stay in the studio on the next free story in the queue's order,
    * stepping over stories someone else holds or has open and ones that can't be worked (live/autoAdvance.ts), with
-   * the FTP feed open on the left. False when no story is free: the caller closes the editor.
+   * the FTP feed open on the left; with none free the editor closes (deskRules afterPost). After a fix (`fix`) the
+   * desk behind turns to its New tab, so closing, now or later, lands there.
    */
-  const moveOn = (): boolean => {
-    const after = onSwitch ? beginAdvance(queueOrder ?? desk?.queue ?? [], item.id) : undefined;
-    if (!after) return false;
+  const moveOn = (fix = false) => {
+    const step = afterPost(onSwitch ? beginAdvance(queueOrder ?? desk?.queue ?? [], item.id) : undefined, fix);
+    if (!step.open) return onClose(step.returnTo);
     restApproveAfterAdvance();
-    setTool("ftp");
+    setTool(step.tool);
     leftPanel.setCollapsed(false);
-    onSwitch?.(after);
-    return true;
+    onSwitch?.(step.open, step.returnTo);
   };
 
   // ── Phase 1: Copy & Mark Posted ──
@@ -1652,7 +1652,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       desk?.addCopied({ draftId: id, postId: res.postId, headline: item.headline, undoUntil: res.undoUntil, withCard: cardSaved });
       setPreviewOpen(false);
       // Stay in the studio on the next free story (the posted one is now in Posted)
-      if (!moveOn()) onClose();
+      moveOn();
     } catch (err) {
       timer.done("failed");
       // The clipboard holds a post the server didn't mark: empty it (best effort) and block with a banner. Not when
@@ -1689,7 +1689,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       setLinkOpen(false);
       setPreviewOpen(false);
       onSaved?.(`Saved. "${item.headline}" is marked as posted on ${meta.short}.`);
-      if (!moveOn()) onClose();
+      moveOn();
       return null;
     } catch (err) {
       const code = errorCode(err);
@@ -1953,8 +1953,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   /**
    * Correction mode's Copy & mark posted (button, Ctrl+Enter, the leave dialog): copies the fixed text while the
-   * press still counts as the operator's, writes the fix (text, then card), ends the hold and goes to the desk's
-   * New tab, saying what really happened: a post undone meanwhile is reported as such, never as "stays posted".
+   * press still counts as the operator's, writes the fix (text, then card), ends the hold and opens the next free
+   * story (moveOn; the desk behind turns to its New tab, or the editor closes onto it when none is free), saying
+   * what really happened: a post undone meanwhile is reported as such, never as "stays posted".
    */
   const finishFix = () =>
     runLive("save", async () => {
@@ -1982,7 +1983,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         live.onFinished();
         void desk?.refreshAll();
         onSaved?.(FIX_TAKEN_BACK);
-        if (!moveOn()) onClose("queue");
+        moveOn(true);
       };
       if (live.lease.kind !== "mine") {
         // The hold is gone: the post may have been undone, or the hold only ran out
@@ -1994,7 +1995,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         }
         live.onFinished();
         onSaved?.(`Copied. "${item.headline}" stays posted.`);
-        if (!moveOn()) onClose("queue");
+        moveOn(true);
         return;
       }
       try {
@@ -2011,7 +2012,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           ? `Fix saved and copied. "${item.headline}" stays posted: paste it into the tweet on X by hand.`
           : `No changes, text copied. "${item.headline}" stays posted.`,
       );
-      if (!moveOn()) onClose("queue");
+      moveOn(true);
     });
 
   /**

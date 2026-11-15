@@ -481,6 +481,11 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   // else the row now in its place (the next story after a Copy & Mark Posted), else the list's tab
   const returnFocus = useRef<{ id: string; index: number } | null>(null);
   // A fix of a posted story ends on New ("queue"), not on the tab it was opened from; focus then takes New's first row
+  /** The editor moves to another story; after a fix of a posted story the desk behind it turns to New as well */
+  const switchEditor = (next: FtpNewsItem, returnTo?: "queue") => {
+    if (returnTo) setTab(returnTo);
+    setComposing(next);
+  };
   const closeEditor = (returnTo?: "queue") => {
     if (p1 && composing) returnFocus.current = { id: composing.id, index: returnTo ? 0 : Math.max(0, visible.findIndex((n) => n.id === composing.id)) };
     if (returnTo) setTab(returnTo);
@@ -834,7 +839,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       {tab === "published" && !p1 && <PostedPostsList platform={platform} allowRecall emptyHint={`No posts on ${meta.short} yet. Approved stories land here with their link.`} />}
       {composing &&
         (desk ? (
-          <LiveEditor queueOrder={visible} item={composing} platform={platform} onClose={closeEditor} onSwitch={setComposing} onSaved={setNotice} onLinkSlug={onLinkSlug} />
+          <LiveEditor queueOrder={visible} item={composing} platform={platform} onClose={closeEditor} onSwitch={switchEditor} onSaved={setNotice} onLinkSlug={onLinkSlug} />
         ) : (
           <PostEditor queueOrder={visible} item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />
         ))}
