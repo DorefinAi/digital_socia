@@ -3280,7 +3280,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               )}
               {!selection && (
                 <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", px: 1 }}>
-                  {bgMode ? `Drawn on ${bgName}. Click the card to change the headline.` : orgMode ? "Click a text to select it, drag to move, pull a handle to resize. Double-click to type." : "Click a text or the picture to select it, drag to move. Double-click a text to type in it."}
+                  {bgMode ? `Drawn on ${bgName}. Click the card to change the headline.` : orgMode ? "Click a text to select it; drag or the arrow keys move it, a handle resizes it. Double-click or Enter to type." : "Click a text or the picture to select it; drag or the arrow keys move it. Double-click or Enter to type."}
                 </Typography>
               )}
             </Box>

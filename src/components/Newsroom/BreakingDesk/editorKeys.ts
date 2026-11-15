@@ -163,7 +163,7 @@ export const EDITOR_POINTER_KEYS: { keys: string; label: string }[] = [
   { keys: "right-click", label: "Text box and card options" },
   { keys: "shift+right-click", label: "The browser's own menu" },
   { keys: "click", label: "Select a text box (drag to move it)" },
-  { keys: "double-click", label: "Type in the text under the pointer" },
+  { keys: "double-click", label: "Type in the text under the pointer (or Enter on the selected text box)" },
 ];
 
 /**

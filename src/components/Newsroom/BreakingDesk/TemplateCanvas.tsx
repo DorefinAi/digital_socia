@@ -120,6 +120,8 @@ const CLICK_SLOP = 4;
 const BORDER_PX = 10;
 /** Screen px inside the frame line that count as its edge: a press there while typing stops typing and selects the box */
 const BORDER_IN_PX = 4;
+/** Shift, Alt, Ctrl or Meta held (Enter with one of them is left to the editor, e.g. Ctrl+Enter posts) */
+const anyMod = (e: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }) => e.shiftKey || e.altKey || e.ctrlKey || e.metaKey;
 /** The frame turns this red when the selected text runs off the card (a size set by hand grew it past an edge) */
 const OFF_CARD_RED = "#E53935";
 const offCard = (b: { x: number; y: number; w: number; h: number }) => b.x < -0.5 || b.y < -0.5 || b.x + b.w > 100.5 || b.y + b.h > 100.5;
@@ -695,14 +697,11 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     return Math.min(p.x - r.x, r.x + r.w - p.x, p.y - r.y, r.y + r.h - p.y) <= BORDER_IN_PX * p.perPx;
   };
 
-  /**
-   * What a press picks, and whether it landed on the edge of a text box. The edge of the selected box counts
-   * just outside its frame line too, where the line is drawn.
-   */
-  const pickAt = (p: { x: number; y: number; perPx: number }): { target: CanvasSelection; edge: boolean } => {
+  /** What a press picks. The selected box also counts just outside its frame line, where the line is drawn. */
+  const pickAt = (p: { x: number; y: number; perPx: number }): CanvasSelection => {
     const hit = hitTest(p);
-    if (isTextTarget(selection) && !isTextTarget(hit) && onEdge(p, rectOf(selection))) return { target: selection, edge: true };
-    return { target: hit, edge: isTextTarget(hit) && onEdge(p, rectOf(hit)) };
+    if (isTextTarget(selection) && !isTextTarget(hit) && onEdge(p, rectOf(selection))) return selection;
+    return hit;
   };
 
   /** Topmost thing under the pointer: text boxes, then the headline, then the media (on a desk template, only inside the photo frame) */
@@ -725,7 +724,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!editable) return;
     const p = toCanvas(e);
-    const { target } = pickAt(p);
+    const target = pickAt(p);
     onSelect?.(target);
     // The template's own picture: nothing to pick or drag
     if (!target) return;
@@ -832,9 +831,15 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
 
   /**
    * Keyboard resize for the selected text: Alt+arrows move the bottom-right corner (Shift for bigger steps).
-   * Plain arrows are left to the editor, which moves the selection.
+   * Plain arrows are left to the editor, which moves the selection. Enter types in the selected text (caret at the end).
    */
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (editable && e.key === "Enter" && !anyMod(e) && !typingIn && isTextTarget(selection)) {
+      e.preventDefault();
+      e.stopPropagation();
+      startTyping(selection, "end");
+      return;
+    }
     if (!editable || !onLayoutChange || !e.altKey || !e.key.startsWith("Arrow")) return;
     if (!selection || (selection === "background" && !photoRect)) return;
     const start = rectOf(selection);
@@ -962,7 +967,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
       ref={frameRef}
       tabIndex={editable ? 0 : undefined}
       role={editable ? "group" : undefined}
-      aria-label={editable ? "Card designer. Click a text to select it and drag to move it; double-click it to type. Arrow keys move the selected text; Alt and arrow keys resize it. Right-click for options." : undefined}
+      aria-label={editable ? "Card designer. Click a text to select it and drag to move it; double-click it or press Enter to type. Arrow keys move the selected text; Alt and arrow keys resize it. Right-click for options." : undefined}
       onKeyDown={onKeyDown}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
