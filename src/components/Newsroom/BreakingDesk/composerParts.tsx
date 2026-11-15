@@ -118,16 +118,17 @@ export function TagPicker({
             }}
           >
             {tick(option)}
-            <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+            {/* The reason is not shown on the row (owner, 15 Nov), only on hover */}
+            <Typography title={option.reason || undefined} sx={{ fontSize: "0.8125rem", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
               {option.value}
             </Typography>
-            {/* An empty reason (the server sent a malformed one) hides only this row's reason line */}
-            {(option.reason || (option.ai && !option.checked)) && (
+            {/* A suggestion not in the directory still says it needs a tick to be accepted */}
+            {option.ai && !option.checked && (
               <Typography
-                title={option.ai && !option.checked ? `${option.reason ? `${option.reason}. ` : ""}Not in the directory: tick to accept.` : option.reason}
-                sx={{ maxWidth: "58%", fontSize: "0.6875rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: option.ai && !option.checked ? "warning.main" : "text.secondary", fontWeight: option.ai && !option.checked ? 600 : 400 }}
+                title={`${option.reason ? `${option.reason}. ` : ""}Not in the directory: tick to accept.`}
+                sx={{ fontSize: "0.6875rem", whiteSpace: "nowrap", color: "warning.main", fontWeight: 600 }}
               >
-                {option.ai && !option.checked ? (option.reason ? `Confirm · ${option.reason}` : "Confirm") : option.reason}
+                Confirm
               </Typography>
             )}
           </Box>
@@ -143,14 +144,15 @@ export function TagPicker({
               // The tick is named by the tag (and its source chip); the reason is its description, not its name
               const valueId = `${reporterHeadId}-${i}-value`;
               const tagId = `${reporterHeadId}-${i}-source`;
-              const reasonId = `${reporterHeadId}-${i}-reason`;
               return (
                 <Box
                   key={option.value}
                   component="label"
+                  // The reason is not shown on the row (owner, 15 Nov), only on hover
+                  title={option.reason || undefined}
                   sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, pr: 1.25, pb: 0.5, cursor: disabled ? "default" : "pointer", "&:hover": { backgroundColor: "action.hover" } }}
                 >
-                  {tick(option, { labelledBy: tag ? `${valueId} ${tagId}` : valueId, describedBy: option.reason ? reasonId : "" })}
+                  {tick(option, { labelledBy: tag ? `${valueId} ${tagId}` : valueId, describedBy: "" })}
                   <Box sx={{ flex: 1, minWidth: 0, pt: 0.6 }}>
                     <Typography id={valueId} component="span" sx={{ fontSize: "0.8125rem", fontWeight: 600, overflowWrap: "anywhere" }}>
                       {option.value}
@@ -158,12 +160,6 @@ export function TagPicker({
                     {tag && (
                       <Typography id={tagId} component="span" sx={{ ml: 0.75, px: 0.5, fontSize: "0.625rem", fontWeight: 600, color: "text.secondary", border: "1px solid", borderColor: "divider", borderRadius: "4px", whiteSpace: "nowrap" }}>
                         {tag}
-                      </Typography>
-                    )}
-                    {/* The reason wraps in full: it is the evidence for ticking it. A malformed one ("") hides only this line */}
-                    {option.reason && (
-                      <Typography id={reasonId} sx={{ fontSize: "0.6875rem", lineHeight: 1.4, color: "text.secondary", overflowWrap: "anywhere" }}>
-                        {option.reason}
                       </Typography>
                     )}
                   </Box>
