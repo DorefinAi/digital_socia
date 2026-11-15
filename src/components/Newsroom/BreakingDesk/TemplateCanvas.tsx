@@ -6,6 +6,7 @@ import { CHANNEL } from "@/constants";
 import { CardBackdrop, CardRects, FrameTime, MIN_BOX, Rect, TemplateFormat, TextGeometry, cardSize, drawCard, fittedSize, fontsFor, mediaRectFor, resolveHeadlineStyle, resolveLayerStyle } from "./cardRender";
 import { BoxHandle, FrameBox, ResizeFrame, resizeBox, useBoxGesture } from "./ResizeFrame";
 import { NUDGE, eventKey, isMac } from "./editorKeys";
+import { TEXT_HANDLES, resizeHeadline, resizeLayer } from "./textResize";
 import { typingKeyAction } from "./cardTyping";
 import { fontById, nearestWeight } from "./templateFonts";
 import { flatCopy, isTainted, rgbPng } from "./live/rgbPng";
@@ -100,9 +101,10 @@ interface TemplateCanvasProps {
   /**
    * A desk template's one text box: the headline and the text box `layer` (the story) are picked, moved and
    * resized together as one box, as the desk's posts set them. `rect` gives the box in canvas px; `place`
-   * returns the layout with the box at `rect` and the words placed in it. Typing still goes to the part clicked.
+   * returns the layout with the box at `rect` and the words placed in it (`handle`: the handle dragged, absent on a
+   * move). Typing still goes to the part clicked.
    */
-  textBlock?: { layer: string; rect: (layout: TemplateLayout) => Rect | null; place: (layout: TemplateLayout, rect: Rect) => TemplateLayout };
+  textBlock?: { layer: string; rect: (layout: TemplateLayout) => Rect | null; place: (layout: TemplateLayout, rect: Rect, handle?: BoxHandle) => TemplateLayout };
   ref?: React.Ref<TemplateCanvasHandle>;
   style?: React.CSSProperties;
 }
@@ -176,6 +178,8 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   const startGesture = useBoxGesture();
   const sourceRef = useRef<Source | null>(null);
   const rectsRef = useRef<CardRects>({ headline: null, headlineArea: null, layers: {} });
+  // An off-screen canvas that lays text out to measure a resize (textResize.ts), the card on screen left alone
+  const measureRef = useRef<CanvasRenderingContext2D | null>(null);
   const dragRef = useRef<Drag | null>(null);
   const stateRef = useRef({ format, tag, layout, handle, renderScale, backdrop });
   // On a desk template the photo is a still in its own frame, and only loaded once it has one
@@ -741,34 +745,62 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
-  /** Writes a hand-sized box back: from now on it keeps this size and its text shrinks to fit. */
-  const applyBox = (base: TemplateLayout, target: Exclude<CanvasSelection, null>, box: FrameBox): TemplateLayout => {
-    // The photo's frame on a desk template
-    if (target === "background") return { ...base, photoBox: { x: box.x / size.w, y: box.y / size.h, w: box.w / size.w, h: box.h / size.h } };
-    if (textBlock && inBlock(target)) return textBlock.place(base, box);
-    const centre = { x: (box.x + box.w / 2) / size.w, y: (box.y + box.h / 2) / size.h };
-    if (target === "headline") {
-      const areaW = rectsRef.current.headlineArea?.width || size.w;
-      return { ...base, textX: centre.x, textY: centre.y, textWidth: box.w / areaW, textHeight: box.h / size.h };
-    }
-    return patchLayer(base, target.slice(6), { x: centre.x, y: centre.y, width: box.w / size.w, height: box.h / size.h });
+  /** `l` drawn off screen with `key`'s words laid out as if typed in: where its box and its words land */
+  const layoutOff = (l: TemplateLayout, key: TextTarget): CardRects | null => {
+    if (!measureRef.current) measureRef.current = document.createElement("canvas").getContext("2d");
+    const ctx = measureRef.current;
+    return ctx ? drawCard(ctx, format, null, l, tag, handle, undefined, key, backdrop) : null;
+  };
+  /** The size, in canvas px, the words of `target` are drawn at now (a box sized by hand may have shrunk them) */
+  const drawnSize = (base: TemplateLayout, target: TextTarget): number | null => layoutOff(base, target)?.editing?.size ?? null;
+  /** How tall the headline's box is with its words at their size, insets included (its height set to the whole card to measure) */
+  const headlineHeight = (l: TemplateLayout): number | null => {
+    const r = layoutOff({ ...l, textHeight: 1, textY: 0.5 }, "headline");
+    return r?.editing && r.headlineArea ? r.editing.height + r.headlineArea.inset.t + r.headlineArea.inset.b : null;
   };
 
-  /** One of the eight handles on the selected box: top and bottom change the height, the sides the width, corners both. */
-  const onHandleDown = (handle: BoxHandle, e: React.PointerEvent<HTMLSpanElement>) => {
+  /** The photo's frame on a desk template at `box` (canvas px), as shares of the card */
+  const photoShare = (box: FrameBox) => ({ x: box.x / size.w, y: box.y / size.h, w: box.w / size.w, h: box.h / size.h });
+
+  /**
+   * A box resized by `grip` from `start` to `box` (canvas px). The photo's frame takes the box as it is. Text resizes
+   * Canva-style (textResize.ts; the desk template's one box in textBlock.place): a side changes only the width (the
+   * words keep their size and re-wrap, the height follows them), a corner scales the words with the width.
+   * `fitted` is the size the words were drawn at when the drag started.
+   */
+  const applyBox = (base: TemplateLayout, target: Exclude<CanvasSelection, null>, box: FrameBox, grip: BoxHandle, start: FrameBox, fitted: number | null): TemplateLayout => {
+    // The photo's frame on a desk template
+    if (target === "background") return { ...base, photoBox: photoShare(box) };
+    if (textBlock && inBlock(target)) return textBlock.place(base, box, grip);
+    const card = { W: size.w, H: size.h, u };
+    if (target === "headline") {
+      const area = rectsRef.current.headlineArea;
+      if (!area) return base;
+      return resizeHeadline(base, grip, start, box, card, area, fitted ?? area.baseSize * base.fontScale, headlineHeight);
+    }
+    const id = target.slice(6);
+    const layer = base.layers?.find((l) => l.id === id);
+    if (!layer) return base;
+    const next = resizeLayer(layer, grip, start, box, card, fitted ?? layer.size * u, (l) => layoutOff(patchLayer(base, id, l), target)?.layers[id]?.h ?? null);
+    return next === layer ? base : patchLayer(base, id, next);
+  };
+
+  /** A handle on the selected box: all eight on the photo's frame; on text the corners and the sides (TEXT_HANDLES). */
+  const onHandleDown = (grip: BoxHandle, e: React.PointerEvent<HTMLSpanElement>) => {
     const frame = frameRef.current;
     if (!editable || !onLayoutChange || !frame || !selection || (selection === "background" && !photoRect)) return;
     const target = selection;
-    // The box as drawn now; an older design without a height starts from the height its text takes
+    // The box as drawn now
     const start = rectOf(target);
     if (!start) return;
     const base = layout;
+    const fitted = isTextTarget(target) && !inBlock(target) ? drawnSize(base, target) : null;
     startGesture(e, {
       frame,
-      gesture: handle,
+      gesture: grip,
       start: { ...start },
       limits: { W: size.w, H: size.h, minW: MIN_BOX.w * u, minH: MIN_BOX.h * u },
-      onChange: (box) => onLayoutChange(applyBox(base, target, box)),
+      onChange: (box) => onLayoutChange(applyBox(base, target, box, grip, start, fitted)),
     });
   };
 
@@ -786,7 +818,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     // The photo's frame on a desk template moves like a text box
     if (drag.target === "background" && !drag.pan) {
       if (!drag.box) return;
-      onLayoutChange(applyBox(base, "background", resizeBox(drag.box, "move", p.x - drag.x, p.y - drag.y, { W: size.w, H: size.h, minW: 0, minH: 0 })));
+      onLayoutChange({ ...base, photoBox: photoShare(resizeBox(drag.box, "move", p.x - drag.x, p.y - drag.y, { W: size.w, H: size.h, minW: 0, minH: 0 })) });
       return;
     }
 
@@ -831,7 +863,10 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   };
 
   /**
-   * Keyboard resize for the selected text: Alt+arrows move the bottom-right corner (Shift for bigger steps).
+   * Keyboard resize (Shift for bigger steps). On text, as with the handles: Alt+Left/Right move the right side (the
+   * width alone: the words keep their size and re-wrap), Alt+Up/Down the bottom-right corner across (smaller,
+   * bigger: the words scale with the width). Text has no height of its own to change. On the photo's frame Alt+arrows
+   * move the bottom-right corner.
    * Plain arrows are left to the editor, which moves the selection. Enter types in the selected text (caret at the end).
    */
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -849,10 +884,17 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
     // Keeps the editor's own arrow handling (which moves the box) out of it
     e.stopPropagation();
     const step = (e.shiftKey ? NUDGE.big : NUDGE.small) * Math.min(size.w, size.h);
-    const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
-    const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
-    const box = resizeBox({ ...start }, "se", dx, dy, { W: size.w, H: size.h, minW: MIN_BOX.w * u, minH: MIN_BOX.h * u });
-    onLayoutChange(applyBox(layout, selection, box));
+    const across = e.key === "ArrowLeft" || e.key === "ArrowRight";
+    const text = isTextTarget(selection);
+    const grip: BoxHandle = text && across ? "e" : "se";
+    let dx = e.key === "ArrowLeft" || e.key === "ArrowUp" ? -step : step;
+    let dy = 0;
+    if (!text) {
+      dx = across ? dx : 0;
+      dy = across ? 0 : e.key === "ArrowUp" ? -step : step;
+    }
+    const box = resizeBox({ ...start }, grip, dx, dy, { W: size.w, H: size.h, minW: MIN_BOX.w * u, minH: MIN_BOX.h * u });
+    onLayoutChange(applyBox(layout, selection, box, grip, start, isTextTarget(selection) && !inBlock(selection) ? drawnSize(layout, selection) : null));
   };
 
   const endDrag = () => {
@@ -968,7 +1010,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
       ref={frameRef}
       tabIndex={editable ? 0 : undefined}
       role={editable ? "group" : undefined}
-      aria-label={editable ? "Card designer. Click a text to select it and drag to move it; double-click it or press Enter to type. Arrow keys move the selected text; Alt and arrow keys resize it. Right-click for options." : undefined}
+      aria-label={editable ? "Card designer. Click a text to select it and drag to move it; double-click it or press Enter to type. Arrow keys move the selected text; Alt with Left or Right changes its width, Alt with Up or Down makes it smaller or bigger. Right-click for options." : undefined}
       onKeyDown={onKeyDown}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -1051,7 +1093,7 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
           style={areaCss}
         />
       )}
-      {editable && selectedBox && <ResizeFrame box={selectedBox} color={offCard(selectedBox) ? OFF_CARD_RED : SELECT_BLUE} onHandleDown={onHandleDown} />}
+      {editable && selectedBox && <ResizeFrame box={selectedBox} color={offCard(selectedBox) ? OFF_CARD_RED : SELECT_BLUE} onHandleDown={onHandleDown} handles={isTextTarget(selection) ? TEXT_HANDLES : undefined} />}
       {guides.v && <div style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "#FF3EA5", pointerEvents: "none" }} />}
       {guides.h && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "#FF3EA5", pointerEvents: "none" }} />}
     </div>

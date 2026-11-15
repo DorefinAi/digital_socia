@@ -80,6 +80,7 @@ import TextControls, { ALIGN_ICONS, FontSelect } from "./TextControls";
 import TemplatePicker from "./TemplatePicker";
 import { ENTER_SECONDS, MEDIA_LOOKS, TEXT_ANIMATIONS, accentFor, inkOn, mediaFilter, mediaWarmth, resolveHeadlineStyle, resolveLayerStyle, templateById, templatePatch, textSpan, warmthColor } from "./cardRender";
 import { BODY_STYLE, ORG_BODY_ID, ORG_DATE_ID, ORG_SIZE_MAX, ORG_SIZE_MIN, isOneBox, orgBlockRect, orgBodyText, orgFontsOf, orgLayout, orgPlacement, placeOrgWords, refreshOrgDate, resetOrgBlock, setOrgBlock, setOrgSize, switchOrgTemplate, toOneBox, useBackdrop, useOrgFontsReady, useTemplateImage } from "./live/orgCanvas";
+import type { BoxHandle } from "./ResizeFrame";
 import { ORG_CARD_FONT, fontById, nearestWeight } from "./templateFonts";
 import FtpFeedPanel from "./FtpFeedPanel";
 import { DAILY_CAP, isLiveOn } from "@/data/socialDesk";
@@ -1093,7 +1094,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   /** Where the template puts the headline, story and date for the words on the card now */
   const orgHome = () => (orgTpl ? orgPlacement(orgTpl, { headline: layout.headline, body: orgBodyText(layout, item.body) }, orgFontsOf(layout)) : null);
   /** The canvas's one text box on a desk template: the heading and the story picked, moved and resized together */
-  const orgTextBlock = oneBox ? { layer: ORG_BODY_ID, rect: (l: TemplateLayout) => orgBlockRect(l, orgTpl), place: (l: TemplateLayout, r: { x: number; y: number; w: number; h: number }) => setOrgBlock(l, orgTpl, r) } : undefined;
+  const orgTextBlock = oneBox ? { layer: ORG_BODY_ID, rect: (l: TemplateLayout) => orgBlockRect(l, orgTpl), place: (l: TemplateLayout, r: { x: number; y: number; w: number; h: number }, handle?: BoxHandle) => setOrgBlock(l, orgTpl, r, handle) } : undefined;
   /** The heading and the story back in the template's own box (the one text box's Reset position and size) */
   const resetOrgText = () => orgTpl && setLayout((l) => resetOrgBlock(l, orgTpl));
 

@@ -177,15 +177,17 @@ interface ResizeFrameProps {
   color: string;
   /** A handle was pressed; start the gesture from here */
   onHandleDown: (handle: BoxHandle, e: React.PointerEvent<HTMLSpanElement>) => void;
+  /** The handles offered; all eight when absent (a text box offers no top or bottom: its height follows its words) */
+  handles?: readonly BoxHandle[];
   children?: React.ReactNode;
 }
 
 /**
- * Selection outline with eight handles. The outline lets pointers through (so a drag inside the box
+ * Selection outline with eight handles (or the ones in `handles`). The outline lets pointers through (so a drag inside the box
  * reaches whatever moves it); only the handles catch them. Targets are 22 px, reaching just 6 px into
  * the box; each edge handle covers its whole edge between the corners.
  */
-export function ResizeFrame({ box, color, onHandleDown, children }: ResizeFrameProps) {
+export function ResizeFrame({ box, color, onHandleDown, handles, children }: ResizeFrameProps) {
   return (
     <div
       style={{
@@ -200,7 +202,7 @@ export function ResizeFrame({ box, color, onHandleDown, children }: ResizeFrameP
       }}
     >
       {children}
-      {HANDLES.map((h) => {
+      {(handles ? HANDLES.filter((h) => handles.includes(h.id)) : HANDLES).map((h) => {
         const side = h.id.length === 1;
         const horizontal = h.id === "n" || h.id === "s";
         return (

@@ -155,7 +155,7 @@ function layoutLines(ctx: CanvasRenderingContext2D, paragraphs: Word[][], maxWid
   return lines;
 }
 
-interface Inset {
+export interface Inset {
   l: number;
   r: number;
   t: number;
@@ -810,8 +810,8 @@ export const MIN_BOX = { w: 80, h: 36 };
 
 export interface CardRects {
   headline: Rect | null;
-  /** The headline's column, for resizing */
-  headlineArea: { x: number; width: number } | null;
+  /** The headline's column, its base size (fontScale multiplies it) and its insets, for resizing */
+  headlineArea: { x: number; width: number; baseSize: number; inset: Inset } | null;
   layers: Record<string, Rect>;
   /** Where the words of the block named in drawCard's `editing` were laid out */
   editing?: TextGeometry;
@@ -988,5 +988,5 @@ function drawWords(
     ctx.fillRect(0, 0, W, H);
   }
 
-  return { headline: headlineRect, headlineArea: { x, width: area.width }, layers, editing: editingGeometry() };
+  return { headline: headlineRect, headlineArea: { x, width: area.width, baseSize: area.baseSize, inset: area.inset }, layers, editing: editingGeometry() };
 }
