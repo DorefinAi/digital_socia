@@ -162,6 +162,7 @@ export function queueHint(phase1: boolean): string {
 export const EDITOR_POINTER_KEYS: { keys: string; label: string }[] = [
   { keys: "right-click", label: "Text box and card options" },
   { keys: "shift+right-click", label: "The browser's own menu" },
+  { keys: "click", label: "Select a text box (drag to move it)" },
   { keys: "double-click", label: "Type in the text under the pointer" },
 ];
 
@@ -244,6 +245,7 @@ export function editorKeyLabel(key: string): string {
   const arrows = "←↑→↓";
   if (key === "arrows") return arrows;
   if (key.endsWith("+arrows")) return `${keyLabel(key.slice(0, -"+arrows".length) + "+x").slice(0, -1)}${arrows}`;
+  if (key === "click") return "Click";
   if (key === "double-click") return "Double-click";
   if (key === "shift+right-click") return `${keyLabel("shift+x").slice(0, -1)}Right-click`;
   return keyLabel(key);

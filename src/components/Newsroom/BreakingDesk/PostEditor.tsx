@@ -1318,7 +1318,6 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     (!!uploaded && uploaded.layout === layout && uploaded.url === media.url) ||
     // Reopened with the design this browser last sent, unchanged (and its date still today's)
     (orgMode && start.savedDesign && !start.dateStale && !cardTouched);
-  const ownCard = bgMode || orgMode || designEdited || !!live?.draft.card.custom;
   // The card goes up only when the operator means it: Post, Save draft, Save as posted, or leaving after
   // changing the card here (its words or design, or picking the X background over a card made elsewhere)
   const cardChosen = cardTouched || cardSource !== null;
@@ -2189,7 +2188,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const home = orgMode && id === ORG_DATE_ID ? (orgHome()?.date ?? null) : null;
       const storyBox = orgMode && id === ORG_BODY_ID;
       return [
-        { label: "Edit text", icon: <Pencil size={14} />, hint: "Click", onSelect: () => editText(`layer:${id}`) },
+        { label: "Edit text", icon: <Pencil size={14} />, hint: "Double-click", onSelect: () => editText(`layer:${id}`) },
         ...textOptions,
         { kind: "divider" },
         { label: "Bring forward", icon: <ArrowUpToLine size={14} />, disabled: index >= layers.length - 1, onSelect: () => restack(id, 1) },
@@ -2222,7 +2221,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     }
     if (target === "headline" && orgMode) {
       return [
-        { label: "Edit text", icon: <Pencil size={14} />, hint: "Click", onSelect: () => editText("headline") },
+        { label: "Edit text", icon: <Pencil size={14} />, hint: "Double-click", onSelect: () => editText("headline") },
         ...textOptions,
         { kind: "divider" },
         // Heading and story are one text box: it goes back to the template's box as a whole
@@ -2234,7 +2233,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const home = templatePatch(templateById(layout.template), format).textY ?? DEFAULT_TEXT_Y[format];
       const sizedByHand = layout.textHeight !== undefined || layout.textWidth !== undefined;
       return [
-        { label: "Edit text", icon: <Pencil size={14} />, hint: "Click", onSelect: () => editText("headline") },
+        { label: "Edit text", icon: <Pencil size={14} />, hint: "Double-click", onSelect: () => editText("headline") },
         ...textOptions,
         { kind: "divider" },
         { label: "Reset position", icon: <Move size={14} />, disabled: layout.textY === home && layout.textX === undefined, onSelect: () => patch({ textY: home, textX: undefined }) },
@@ -2583,7 +2582,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               </IconButton>
             </Tooltip>
             <Box role="tablist" aria-label="Design tools" sx={{ display: "flex", flex: 1, minWidth: 0, flexDirection: { xs: "row", lg: "column" }, gap: 0.5 }}>
-            {TOOLS.filter((t) => !t.videoOnly || (isVideo && !phase1 && !orgMode)).map((t) => (
+            {/* No tab for the photo (a click on it opens its settings) or the story (shown under the tags, right) */}
+            {TOOLS.filter((t) => t.id !== "background" && t.id !== "story" && (!t.videoOnly || (isVideo && !phase1 && !orgMode))).map((t) => (
               <Box
                 key={t.id}
                 component="button"
@@ -3045,20 +3045,6 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               </>
             )}
 
-            {panel === "story" && (
-              <>
-                <Typography sx={panelTitle}>Story from FTP</Typography>
-                <Typography sx={{ fontSize: "0.9375rem", fontWeight: 600, lineHeight: 1.45 }}>{item.headline}</Typography>
-                {phase1 ? (
-                  <Typography lang="hi" sx={{ fontSize: "0.8125rem", lineHeight: 1.7, color: "text.secondary", mt: 1, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-                    {live?.draft.story.sourceText?.trim() || item.body}
-                  </Typography>
-                ) : (
-                  <Typography sx={{ fontSize: "0.8125rem", lineHeight: 1.7, color: "text.secondary", mt: 1 }}>{item.body}</Typography>
-                )}
-                <Typography sx={{ fontSize: "0.6875rem", fontFamily: "var(--font-mono), monospace", color: "text.disabled", mt: 1.5, wordBreak: "break-all" }}>{item.ftpPath}</Typography>
-              </>
-            )}
           </Box>
 
           {/* Stage */}
@@ -3294,7 +3280,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               )}
               {!selection && (
                 <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", px: 1 }}>
-                  {bgMode ? `Drawn on ${bgName}. Click the card to change the headline.` : orgMode ? "Click any text to type in it. Drag to move, pull a handle to resize." : "Click any text to type in it, or the picture to edit it. Drag to move."}
+                  {bgMode ? `Drawn on ${bgName}. Click the card to change the headline.` : orgMode ? "Click a text to select it, drag to move, pull a handle to resize. Double-click to type." : "Click a text or the picture to select it, drag to move. Double-click a text to type in it."}
                 </Typography>
               )}
             </Box>
@@ -3503,18 +3489,26 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             </Box>
             <TagPicker label="Hashtags" prefix="#" options={hashtagRows} max={hashtagMax} onChange={(o) => pickTags("#", o)} disabled={!!live && !canEdit} />
             <TagPicker label="Mentions" prefix="@" options={mentionRows} max={mentionMax} onChange={(o) => pickTags("@", o)} disabled={!!live && !canEdit} />
+            {/* The story as it came from FTP, under the tags */}
+            <Box>
+              <Typography sx={panelTitle}>Story from FTP</Typography>
+              <Typography sx={{ fontSize: "0.9375rem", fontWeight: 600, lineHeight: 1.45 }}>{item.headline}</Typography>
+              {phase1 ? (
+                <Typography lang="hi" sx={{ fontSize: "0.8125rem", lineHeight: 1.7, color: "text.secondary", mt: 1, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                  {live?.draft.story.sourceText?.trim() || item.body}
+                </Typography>
+              ) : (
+                <Typography sx={{ fontSize: "0.8125rem", lineHeight: 1.7, color: "text.secondary", mt: 1 }}>{item.body}</Typography>
+              )}
+              <Typography sx={{ fontSize: "0.6875rem", fontFamily: "var(--font-mono), monospace", color: "text.disabled", mt: 1.5, wordBreak: "break-all" }}>{item.ftpPath}</Typography>
+            </Box>
             {live && (
               <Box>
-                {(ownCard && canEdit) || busy === "card" || (bgMode && bg.status === "drawing") ? (
+                {(busy === "card" || (bgMode && bg.status === "drawing")) && (
                   <Box sx={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 1 }}>
-                    {(busy === "card" || (bgMode && bg.status === "drawing")) && <CircularProgress size={12} aria-label="Working" />}
-                    {ownCard && canEdit && (
-                      <Button size="small" onClick={() => void switchToAutoCard()} disabled={!!busy} startIcon={<RotateCcw size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.secondary", whiteSpace: "nowrap" }}>
-                        Use automatic card
-                      </Button>
-                    )}
+                    <CircularProgress size={12} aria-label="Working" />
                   </Box>
-                ) : null}
+                )}
                 {bgMode && bg.status === "ready" && bg.card?.cut && (
                   <Alert severity="warning" sx={{ mt: 1, py: 0, fontSize: "0.75rem", borderRadius: "8px" }}>
                     The story is too long for the box even at the smallest size, so its end is cut. Shorten the headline, or design the card here.
