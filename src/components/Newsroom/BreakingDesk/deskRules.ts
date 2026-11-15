@@ -71,10 +71,11 @@ export function storyAfterPosted<T extends { id: string }>(stories: readonly T[]
  * The stories to try, in turn, after `postedId` was posted: the ones after it in the queue's order, then the ones
  * before it (nearest first), leaving out the posted one and every story `taken` says someone else has or can't be
  * worked. The first is the story to open; the rest are where to go if its claim fails. Empty: back to the desk.
+ * A posted story not in the list (filtered out, or a fix of one already posted) starts from the top of the list.
  */
 export function advanceCandidates<T extends { id: string }>(stories: readonly T[], postedId: string, taken: (story: T) => boolean): T[] {
   const at = stories.findIndex((s) => s.id === postedId);
-  if (at < 0) return [];
+  if (at < 0) return stories.filter((s) => !taken(s));
   const after = stories.slice(at + 1);
   const before = stories.slice(0, at).reverse();
   return [...after, ...before].filter((s) => s.id !== postedId && !taken(s));

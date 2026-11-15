@@ -128,7 +128,10 @@ test("after posting: the stories to try run on after the posted one, then back b
   // Taken stories are left out; none left means back to the desk
   assert.deepEqual(advanceCandidates(order, "p", (s) => s.id === "c").map((s) => s.id), ["d", "b", "a"]);
   assert.deepEqual(advanceCandidates([{ id: "p" }, { id: "x" }], "p", (s) => s.id === "x"), []);
-  assert.deepEqual(advanceCandidates(order, "gone", none), []);
+  // A story not in the list (filtered out, or a posted one fixed from Posted today): from the top, taken ones left out
+  assert.deepEqual(advanceCandidates(order, "gone", none).map((s) => s.id), ["a", "b", "p", "c", "d"]);
+  assert.deepEqual(advanceCandidates(order, "gone", (s) => s.id === "a").map((s) => s.id), ["b", "p", "c", "d"]);
+  assert.deepEqual(advanceCandidates([], "gone", none), []);
   // The first candidate is the story storyAfterPosted would pick when nothing is taken
   assert.equal(advanceCandidates(order, "p", none)[0]?.id, storyAfterPosted(order, "p")?.id);
 });

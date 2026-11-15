@@ -886,13 +886,18 @@ export default function TemplateCanvas({ media, format, handle = `@${CHANNEL.xHa
   };
   const onTypeKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // The editor's shortcuts (Ctrl+Enter posts, Delete removes the box, arrows move it) stay out while typing;
-    // only Ctrl+S (save) goes through. Esc just stops typing (a click outside the words does too); it is kept
+    // only Ctrl+S (save) and Ctrl+Enter (post) go through. Esc just stops typing (a click outside the words does too); it is kept
     // here so it never reaches the editor, which would close.
     const key = eventKey(e);
     if (key === "mod+s") return;
+    if (e.nativeEvent.isComposing || e.key === "Process") return e.stopPropagation();
+    // Ctrl+Enter stops typing and goes on to the editor, which posts (Copy & Mark Posted) as from anywhere else
+    if (key === "mod+enter") {
+      stopTyping(true);
+      return;
+    }
     e.stopPropagation();
-    if (e.nativeEvent.isComposing || e.key === "Process") return;
-    if (key === "escape" || key === "mod+enter") {
+    if (key === "escape") {
       e.preventDefault();
       stopTyping(true);
     }

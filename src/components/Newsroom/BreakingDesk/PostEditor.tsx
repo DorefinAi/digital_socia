@@ -1558,6 +1558,21 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       onClose();
     });
 
+  /**
+   * After a post (or a fix of a posted story): stay in the studio on the next free story in the queue's order,
+   * stepping over stories someone else holds or has open and ones that can't be worked (live/autoAdvance.ts), with
+   * the FTP feed open on the left. False when no story is free: the caller closes the editor.
+   */
+  const moveOn = (): boolean => {
+    const after = onSwitch ? beginAdvance(queueOrder ?? desk?.queue ?? [], item.id) : undefined;
+    if (!after) return false;
+    restApproveAfterAdvance();
+    setTool("ftp");
+    leftPanel.setCollapsed(false);
+    onSwitch?.(after);
+    return true;
+  };
+
   // ── Phase 1: Copy & Mark Posted ──
   const canCopyPost = canPost && mayMarkPosted && !takenBy;
 
@@ -1636,13 +1651,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       live.onFinished();
       desk?.addCopied({ draftId: id, postId: res.postId, headline: item.headline, undoUntil: res.undoUntil, withCard: cardSaved });
       setPreviewOpen(false);
-      // Stay in the studio: the next free story in the queue's order (the posted one is now in Posted), stepping
-      // over stories someone else holds or has open and ones that can't be worked (live/autoAdvance.ts)
-      const after = onSwitch ? beginAdvance(queueOrder ?? desk?.queue ?? [], item.id) : undefined;
-      if (after) {
-        restApproveAfterAdvance();
-        onSwitch?.(after);
-      } else onClose();
+      // Stay in the studio on the next free story (the posted one is now in Posted)
+      if (!moveOn()) onClose();
     } catch (err) {
       timer.done("failed");
       // The clipboard holds a post the server didn't mark: empty it (best effort) and block with a banner. Not when
@@ -1679,7 +1689,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       setLinkOpen(false);
       setPreviewOpen(false);
       onSaved?.(`Saved. "${item.headline}" is marked as posted on ${meta.short}.`);
-      onClose();
+      if (!moveOn()) onClose();
       return null;
     } catch (err) {
       const code = errorCode(err);
@@ -1972,7 +1982,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         live.onFinished();
         void desk?.refreshAll();
         onSaved?.(FIX_TAKEN_BACK);
-        onClose("queue");
+        if (!moveOn()) onClose("queue");
       };
       if (live.lease.kind !== "mine") {
         // The hold is gone: the post may have been undone, or the hold only ran out
@@ -1984,7 +1994,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         }
         live.onFinished();
         onSaved?.(`Copied. "${item.headline}" stays posted.`);
-        onClose("queue");
+        if (!moveOn()) onClose("queue");
         return;
       }
       try {
@@ -2001,7 +2011,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           ? `Fix saved and copied. "${item.headline}" stays posted: paste it into the tweet on X by hand.`
           : `No changes, text copied. "${item.headline}" stays posted.`,
       );
-      onClose("queue");
+      if (!moveOn()) onClose("queue");
     });
 
   /**
