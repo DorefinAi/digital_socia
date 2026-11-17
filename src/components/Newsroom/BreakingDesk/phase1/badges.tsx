@@ -20,6 +20,7 @@ const NEEDS_CHECK_LABEL: Record<string, string> = {
   update_of_posted: "Update of a posted story",
   place_conflict: "Two districts, check",
   file_deleted: "File deleted",
+  text_changed: "Text differs from file",
 };
 
 /** What a needs-check reason means, in the desk's words */
@@ -33,6 +34,7 @@ const NEEDS_CHECK_HINT: Record<string, string> = {
   resaved: "The desk saved this file again with new text, and the post was rewritten from it. Check it against the source.",
   update_of_posted: "This file was re-saved after its story was posted. Post it only if the change is news.",
   file_deleted: "File is deleted, please check FTP.",
+  text_changed: "A word or number of the file is missing from the post text. Check it against Story from FTP before posting.",
   place_conflict: "The headline's #District tag and the place line name different districts. The post uses the headline's tag; check which is right.",
 };
 

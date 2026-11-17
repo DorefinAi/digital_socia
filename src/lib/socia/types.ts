@@ -104,7 +104,7 @@ export interface FileTags {
 }
 
 /** Why a ready post needs a second look (phase1-contract.md §1) */
-export type NeedsCheckCode = "empty" | "no_hindi" | "very_long" | "no_district" | "desk_note" | "headline_cut" | "no_headline" | "resaved" | "update_of_posted" | "place_conflict" | "file_deleted" | (string & {});
+export type NeedsCheckCode = "empty" | "no_hindi" | "very_long" | "no_district" | "desk_note" | "headline_cut" | "no_headline" | "resaved" | "update_of_posted" | "place_conflict" | "file_deleted" | "text_changed" | (string & {});
 
 export type CardState = "none" | "rendering" | "ready" | "failed";
 
