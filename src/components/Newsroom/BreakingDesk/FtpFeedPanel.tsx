@@ -21,6 +21,13 @@ import { pattiNumber, tabTarget } from "./deskRules";
 
 /** The story last open in each BIG Breaking / Breaking tab, kept for the page's life (the panel remounts per story) */
 const lastInTab = new Map<BreakingTag, string>();
+
+/**
+ * The rows this list last showed in its open tab, top to bottom (posted ones included, search ignored). The editor
+ * picks the story after Copy & Mark Posted from it: the row directly above (owner, 17 Nov 2026). Kept while the panel
+ * is folded or another tool is open.
+ */
+export const feedShown: { items: FtpNewsItem[] } = { items: [] };
 import { Search } from "lucide-react";
 
 const STATUS_STYLE: Record<string, { label: string; color: string }> = {
@@ -109,6 +116,10 @@ export default function FtpFeedPanel({
     if (target && target.id !== currentId) onPick(target);
   };
   const listed = allListed.filter((n) => ((!!q || tabOf(n) === tagTab) && (!q || `${n.headline} ${isLiveItem(n) ? n.live.sourcePath ?? "" : ""}`.toLowerCase().includes(q))));
+  // The open tab's rows as shown (search aside), for the story after Copy & Mark Posted
+  useEffect(() => {
+    if (!otherList && !loading) feedShown.items = allListed.filter((n) => tabOf(n) === tagTab);
+  });
   const [highlight, setHighlight] = useState<ReadonlySet<string>>(() => new Set());
   useEffect(() => {
     if (!highlight.size) return;

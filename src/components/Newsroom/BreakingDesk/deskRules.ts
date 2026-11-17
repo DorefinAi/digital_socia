@@ -128,6 +128,17 @@ export function storiesAbove<T extends { id: string; receivedAt: string }>(pool:
   return at < 0 ? [] : feed.slice(0, at + 1);
 }
 
+/**
+ * After Copy & Mark Posted (owner, 17 Nov 2026, "the next story just above it, whether it is posted or not"): the id
+ * of the row directly above the posted one in the list the editor shows. null: it is the top row (stay on it);
+ * undefined: it is not in that list (the caller works the list out another way).
+ */
+export function storyJustAbove(listIds: readonly string[], currentId: string): string | null | undefined {
+  const at = listIds.indexOf(currentId);
+  if (at < 0) return undefined;
+  return at === 0 ? null : listIds[at - 1]!;
+}
+
 /** Only the body of the FTP story is copied: never the headline or the file name */
 export function ftpCopyText(sourceText: string | null | undefined, body: string | null | undefined): string {
   return sourceText?.trim() || body?.trim() || "";

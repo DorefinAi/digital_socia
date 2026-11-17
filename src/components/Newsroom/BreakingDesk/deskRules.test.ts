@@ -3,7 +3,7 @@
 //   node --import ./src/components/Newsroom/BreakingDesk/video/timeline/__checks__/resolve-ts.mjs --test src/components/Newsroom/BreakingDesk/deskRules.test.ts
 import { describe, it, test } from "node:test";
 import assert from "node:assert/strict";
-import { afterPostOrder, storiesAbove, tabTarget, pattiNumber, adjacentStory, advanceCandidates, afterPost, ftpCopyText, sameTab, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, freeForAdvance, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
+import { afterPostOrder, storiesAbove, storyJustAbove, tabTarget, pattiNumber, adjacentStory, advanceCandidates, afterPost, ftpCopyText, sameTab, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, freeForAdvance, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
 
 const now = Date.parse("2026-11-11T07:13:00Z");
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -281,7 +281,7 @@ describe("FTP copy text", () => {
   });
 });
 
-describe("after Copy & Mark Posted: only the story just above in the left list (owner, 17 Nov 2026)", () => {
+describe("storiesAbove + advanceCandidates (the rebuilt-list helpers; the editor now takes the row directly above, posted or not)", () => {
   type S = { id: string; big: boolean; receivedAt: string; posted?: boolean; heldByOther?: boolean };
   const at = (min: number) => new Date(Date.UTC(2026, 10, 17, 10, min)).toISOString();
   // The editor's left list, newest first: A (10:40), B (10:30), C (10:20, posted), D (10:10)
@@ -311,4 +311,13 @@ describe("after Copy & Mark Posted: only the story just above in the left list (
     assert.equal(next([A, B, C, D], "D"), "B");
     assert.equal(next([{ ...A, heldByOther: true }, B, C, D], "B"), undefined);
   });
+});
+
+describe("after Copy & Mark Posted: the row directly above in the list on screen, posted or not (owner, 17 Nov 2026)", () => {
+  // The editor's left list, top to bottom: A, B, C (posted), D
+  const list = ["A", "B", "C", "D"];
+  it("case 1: posting B opens A", () => assert.equal(storyJustAbove(list, "B"), "A"));
+  it("case 2: posting A (the top row) stays on A", () => assert.equal(storyJustAbove(list, "A"), null));
+  it("case 3: posting D opens C, even though C is posted", () => assert.equal(storyJustAbove(list, "D"), "C"));
+  it("case 4: a story the list does not show: worked out another way (undefined), never a guess", () => assert.equal(storyJustAbove(list, "X"), undefined));
 });

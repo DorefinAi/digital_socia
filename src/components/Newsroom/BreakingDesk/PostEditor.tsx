@@ -83,7 +83,7 @@ import { ENTER_SECONDS, MEDIA_LOOKS, TEXT_ANIMATIONS, accentFor, inkOn, mediaFil
 import { BODY_STYLE, ORG_BODY_ID, ORG_DATE_ID, ORG_SIZE_MAX, ORG_SIZE_MIN, isOneBox, orgBlockRect, orgBodyText, orgFontsOf, orgLayout, orgPlacement, placeOrgWords, refreshOrgDate, resetOrgBlock, setOrgBlock, setOrgSize, switchOrgTemplate, toOneBox, useBackdrop, useOrgFontsReady, useTemplateImage } from "./live/orgCanvas";
 import type { BoxHandle } from "./ResizeFrame";
 import { ORG_CARD_FONT, fontById, nearestWeight } from "./templateFonts";
-import FtpFeedPanel from "./FtpFeedPanel";
+import FtpFeedPanel, { feedShown } from "./FtpFeedPanel";
 import { DAILY_CAP, isLiveOn } from "@/data/socialDesk";
 import * as socia from "@/lib/socia/api";
 import type { DraftView, DrawableCardTemplate, OrgCardTemplate } from "@/lib/socia/types";
@@ -116,8 +116,7 @@ import LiveCaret from "./live/LiveCaret";
 import { HeaderPresence } from "./live/Presence";
 import { HandedOverNote, HolderLeftBanner, LiveNote, LiveUnavailableNote, TakeoverDialog, WatchBanner } from "./live/WatchMode";
 import { LIVE_PLATFORM, createRefreshGate, firstName } from "@/lib/socia/liveCore";
-import { adjacentStory, afterPost, afterPostOrder, storiesAbove, counterTone, ftpCopyText, steppedTextSize, workableOrder } from "./deskRules";
-import { beginAdvance } from "./live/autoAdvance";
+import { adjacentStory, afterPost, afterPostOrder, storiesAbove, storyJustAbove, counterTone, ftpCopyText, steppedTextSize, workableOrder } from "./deskRules";
 
 /** Someone else holds this story (their claim), so the studio steps over it */
 const heldByOther = (n: FtpNewsItem) => isLiveItem(n) && !!n.live.claim && !n.live.claim.mine;
@@ -1575,16 +1574,28 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   /** The last free story of this tab was just posted: the editor stays on it and says so */
   const tabDone = tabDoneFor === item.id;
   const moveOn = (fix = false) => {
-    const order = queueOrder ?? desk?.queue ?? [];
-    const tabOf = (n: FtpNewsItem) => (storyTag(n) === "big_breaking" ? "big_breaking" : "breaking");
-    // The tab as the desk knows the story: its queue row carries the file's BIG tag, the editor's copy doesn't
-    const tags = live?.draft.story.tags;
-    const row = order.find((n) => n.id === item.id);
-    const currentTab = row ? tabOf(row) : tags ? (tags.big ? "big_breaking" : "breaking") : tabOf(item);
-    const pool = afterPostOrder(order, item.id, currentTab, tabOf, (n) => !!postedIds?.has(n.id));
-    // Only the stories above it in the left list (newest first), nearest first; none free above: stay on this one
-    const above = storiesAbove(pool, item.id);
-    const step = afterPost(onSwitch && above.length > 1 ? beginAdvance(above, item.id) : undefined, fix);
+    // Owner, 17 Nov 2026: the story directly above the posted one in the left list, posted or not; the top row stays.
+    // 1. The list as the FTP feed panel last showed it (exactly what the operator sees)
+    const shown = feedShown.items;
+    const fromList = storyJustAbove(shown.map((n) => n.id), item.id);
+    let target: FtpNewsItem | null = null;
+    let via = "list";
+    if (fromList !== undefined) {
+      target = fromList === null ? null : (shown.find((n) => n.id === fromList) ?? null);
+    } else {
+      // 2. The panel never showed this story: the same list rebuilt (its tab, newest first, posted included)
+      via = "rebuilt";
+      const order = queueOrder ?? desk?.queue ?? [];
+      const tabOf = (n: FtpNewsItem) => (storyTag(n) === "big_breaking" ? "big_breaking" : "breaking");
+      // The tab as the desk knows the story: its queue row carries the file's BIG tag, the editor's copy doesn't
+      const tags = live?.draft.story.tags;
+      const row = order.find((n) => n.id === item.id);
+      const currentTab = row ? tabOf(row) : tags ? (tags.big ? "big_breaking" : "breaking") : tabOf(item);
+      const above = storiesAbove(afterPostOrder(order, item.id, currentTab, tabOf, () => false), item.id);
+      target = above.length > 1 ? above[above.length - 2]! : null;
+    }
+    console.debug("[after-post]", { posted: item.id, via, list: shown.map((n) => n.id), next: target?.id ?? "stay" });
+    const step = afterPost(onSwitch && target ? target : undefined, fix);
     // No other free story in this tab: stay on the posted one and say so; only "← Desk" leaves the editor
     if (!step.open) {
       setTabDoneFor(item.id);
