@@ -116,6 +116,18 @@ export function tabTarget<T extends { id: string }, K>(listed: readonly T[], tab
   return (remembered ? inTab.find((s) => s.id === remembered) : undefined) ?? inTab.find((s) => !isPosted(s));
 }
 
+/**
+ * The stories the pick after Copy & Mark Posted may open: the ones ABOVE the open story in the editor's left list
+ * (newest first by arrival, as FtpFeedPanel shows it, whatever the desk's own sort), the open story last. Only
+ * upward (owner, 17 Nov 2026): posting B in A, B, C, D opens A; posting the top story opens nothing (the editor stays).
+ * Empty when the open story is not in the list (stay).
+ */
+export function storiesAbove<T extends { id: string; receivedAt: string }>(pool: readonly T[], currentId: string): T[] {
+  const feed = [...pool].sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
+  const at = feed.findIndex((s) => s.id === currentId);
+  return at < 0 ? [] : feed.slice(0, at + 1);
+}
+
 /** Only the body of the FTP story is copied: never the headline or the file name */
 export function ftpCopyText(sourceText: string | null | undefined, body: string | null | undefined): string {
   return sourceText?.trim() || body?.trim() || "";

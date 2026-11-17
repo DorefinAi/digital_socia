@@ -116,7 +116,7 @@ import LiveCaret from "./live/LiveCaret";
 import { HeaderPresence } from "./live/Presence";
 import { HandedOverNote, HolderLeftBanner, LiveNote, LiveUnavailableNote, TakeoverDialog, WatchBanner } from "./live/WatchMode";
 import { LIVE_PLATFORM, createRefreshGate, firstName } from "@/lib/socia/liveCore";
-import { adjacentStory, afterPost, afterPostOrder, counterTone, ftpCopyText, steppedTextSize, workableOrder } from "./deskRules";
+import { adjacentStory, afterPost, afterPostOrder, storiesAbove, counterTone, ftpCopyText, steppedTextSize, workableOrder } from "./deskRules";
 import { beginAdvance } from "./live/autoAdvance";
 
 /** Someone else holds this story (their claim), so the studio steps over it */
@@ -1582,7 +1582,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     const row = order.find((n) => n.id === item.id);
     const currentTab = row ? tabOf(row) : tags ? (tags.big ? "big_breaking" : "breaking") : tabOf(item);
     const pool = afterPostOrder(order, item.id, currentTab, tabOf, (n) => !!postedIds?.has(n.id));
-    const step = afterPost(onSwitch ? beginAdvance(pool, item.id) : undefined, fix);
+    // Only the stories above it in the left list (newest first), nearest first; none free above: stay on this one
+    const above = storiesAbove(pool, item.id);
+    const step = afterPost(onSwitch && above.length > 1 ? beginAdvance(above, item.id) : undefined, fix);
     // No other free story in this tab: stay on the posted one and say so; only "← Desk" leaves the editor
     if (!step.open) {
       setTabDoneFor(item.id);
@@ -2624,7 +2626,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
         {tabDone && (
           <Alert severity="success" onClose={() => setTabDoneFor(null)} sx={{ borderRadius: 0, fontSize: "0.8125rem", py: 0 }}>
-            No more stories to post in this tab. Switch tabs in the FTP feed, or press ← Desk to leave.
+            Posted. There is no free story above this one in the list: pick the next one in the FTP feed, or press ← Desk to leave.
           </Alert>
         )}
 

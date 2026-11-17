@@ -3,7 +3,7 @@
 //   node --import ./src/components/Newsroom/BreakingDesk/video/timeline/__checks__/resolve-ts.mjs --test src/components/Newsroom/BreakingDesk/deskRules.test.ts
 import { describe, it, test } from "node:test";
 import assert from "node:assert/strict";
-import { afterPostOrder, tabTarget, pattiNumber, adjacentStory, advanceCandidates, afterPost, ftpCopyText, sameTab, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, freeForAdvance, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
+import { afterPostOrder, storiesAbove, tabTarget, pattiNumber, adjacentStory, advanceCandidates, afterPost, ftpCopyText, sameTab, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, freeForAdvance, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
 
 const now = Date.parse("2026-11-11T07:13:00Z");
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -278,5 +278,37 @@ describe("FTP copy text", () => {
   it("falls back to the queue body when the FTP text is empty", () => {
     assert.equal(ftpCopyText("", "queue body"), "queue body");
     assert.equal(ftpCopyText(null, undefined), "");
+  });
+});
+
+describe("after Copy & Mark Posted: only the story just above in the left list (owner, 17 Nov 2026)", () => {
+  type S = { id: string; big: boolean; receivedAt: string; posted?: boolean; heldByOther?: boolean };
+  const at = (min: number) => new Date(Date.UTC(2026, 10, 17, 10, min)).toISOString();
+  // The editor's left list, newest first: A (10:40), B (10:30), C (10:20, posted), D (10:10)
+  const A: S = { id: "A", big: true, receivedAt: at(40) };
+  const B: S = { id: "B", big: true, receivedAt: at(30) };
+  const C: S = { id: "C", big: true, receivedAt: at(20), posted: true };
+  const D: S = { id: "D", big: true, receivedAt: at(10) };
+  const tab = (x: S) => (x.big ? "big" : "breaking");
+  const taken = (x: S) => !!x.heldByOther;
+  /** What the editor opens after posting `id`: undefined = it stays on the story */
+  const next = (order: S[], id: string) => {
+    const above = storiesAbove(afterPostOrder(order, id, "big", tab, (x) => !!x.posted), id);
+    return above.length > 1 ? advanceCandidates(above, id, taken)[0]?.id : undefined;
+  };
+  it("case 1: A, B, C (posted), D: posting B opens A, not D", () => {
+    assert.equal(next([A, B, C, D], "B"), "A");
+  });
+  it("case 2: posting A (the top story, nothing above) stays on A", () => {
+    assert.equal(next([A, B, C, D], "A"), undefined);
+    assert.equal(afterPost(undefined, false).open, null);
+  });
+  it("case 3: the desk's queue sorted oldest first (D, C, B, A) still opens A after B: the list's order decides", () => {
+    assert.equal(next([D, C, B, A], "B"), "A");
+    assert.equal(next([D, C, B, A], "A"), undefined);
+  });
+  it("case 4: posting D skips the posted C and opens B; with A held by someone else, posting B stays on B", () => {
+    assert.equal(next([A, B, C, D], "D"), "B");
+    assert.equal(next([{ ...A, heldByOther: true }, B, C, D], "B"), undefined);
   });
 });
