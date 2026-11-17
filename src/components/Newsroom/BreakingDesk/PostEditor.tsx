@@ -116,7 +116,7 @@ import LiveCaret from "./live/LiveCaret";
 import { HeaderPresence } from "./live/Presence";
 import { HandedOverNote, HolderLeftBanner, LiveNote, LiveUnavailableNote, TakeoverDialog, WatchBanner } from "./live/WatchMode";
 import { LIVE_PLATFORM, createRefreshGate, firstName } from "@/lib/socia/liveCore";
-import { adjacentStory, afterPost, counterTone, ftpCopyText, sameTab, steppedTextSize, workableOrder } from "./deskRules";
+import { adjacentStory, afterPost, afterPostOrder, counterTone, ftpCopyText, steppedTextSize, workableOrder } from "./deskRules";
 import { beginAdvance } from "./live/autoAdvance";
 
 /** Someone else holds this story (their claim), so the studio steps over it */
@@ -172,6 +172,8 @@ const SELECT_BLUE = "#2F7BFF";
 /** Saving the card image failed in the browser itself (out of memory), not because of the media */
 /** Ctrl+S while fixing a posted story */
 const PRESS_DONE = "Press Copy & Mark Posted to save your fix.";
+/** The fix's card download failed (the fix itself is saved and copied) */
+const FIX_CARD_FAILED = "The fix is saved and copied, but its card didn't download. Open the story from the list to download it again.";
 const CARD_IMAGE_FAILED = "The browser ran out of memory making the card image. Close other tabs and try again.";
 const BACKDROPS = ["blur", "#000000", "#FFFFFF", BREAKING_RED] as const;
 
@@ -240,6 +242,8 @@ function withDraftChoices(suggestions: TagSuggestion[], chosen?: string[]): TagO
 interface PostEditorProps {
   /** The desk's queue in its current filter order: Prev / Next, J / K and the story after Copy & Mark Posted follow it */
   queueOrder?: readonly FtpNewsItem[];
+  /** Phase 1: stories already marked posted. They stay in `queueOrder` in place (so a fixed story knows the one above it) but Prev/Next and the pick after posting step over them. */
+  postedIds?: ReadonlySet<string>;
   item: FtpNewsItem;
   platform: SocialPlatform;
   /** Closes the editor; "queue" asks the desk to show its New tab (after a fix of a posted story) */
@@ -348,7 +352,7 @@ function liveTags(d: DraftView) {
 /** A handle whose add to the directory failed lately (`until` per tag key); only called from event handlers */
 const addCoolingDown = (until: ReadonlyMap<string, number>, key: string) => (until.get(key) ?? 0) > Date.now();
 
-export default function PostEditor({ item, platform, onClose, onSwitch, onSaved, live, queueOrder }: PostEditorProps) {
+export default function PostEditor({ item, platform, onClose, onSwitch, onSaved, live, queueOrder, postedIds }: PostEditorProps) {
   const { publishSocialPost, saveDraft, scheduleDraft, rejectDraft, socialDrafts, socialPosts, hashtagRules, handleDirectory } = useNewsroom();
   const { can, roleLabel } = usePermissions();
   const desk = useLiveDesk();
@@ -1567,11 +1571,23 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
    * the FTP feed open on the left; with none free the editor closes (deskRules afterPost). After a fix (`fix`) the
    * desk behind turns to its New tab, so closing, now or later, lands there.
    */
+  const [tabDoneFor, setTabDoneFor] = useState<string | null>(null);
+  /** The last free story of this tab was just posted: the editor stays on it and says so */
+  const tabDone = tabDoneFor === item.id;
   const moveOn = (fix = false) => {
+    const order = queueOrder ?? desk?.queue ?? [];
     const tabOf = (n: FtpNewsItem) => (storyTag(n) === "big_breaking" ? "big_breaking" : "breaking");
-    const step = afterPost(onSwitch ? beginAdvance(sameTab(queueOrder ?? desk?.queue ?? [], item, tabOf), item.id) : undefined, fix);
-    // No other free story in this tab: stay on the posted one; only "← Desk" leaves the editor
-    if (!step.open) return;
+    // The tab as the desk knows the story: its queue row carries the file's BIG tag, the editor's copy doesn't
+    const tags = live?.draft.story.tags;
+    const row = order.find((n) => n.id === item.id);
+    const currentTab = row ? tabOf(row) : tags ? (tags.big ? "big_breaking" : "breaking") : tabOf(item);
+    const pool = afterPostOrder(order, item.id, currentTab, tabOf, (n) => !!postedIds?.has(n.id));
+    const step = afterPost(onSwitch ? beginAdvance(pool, item.id) : undefined, fix);
+    // No other free story in this tab: stay on the posted one and say so; only "← Desk" leaves the editor
+    if (!step.open) {
+      setTabDoneFor(item.id);
+      return;
+    }
     restApproveAfterAdvance();
     setTool(step.tool);
     leftPanel.setCollapsed(false);
@@ -1962,6 +1978,23 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
    * story (moveOn; the desk behind turns to its New tab, or the editor closes onto it when none is free), saying
    * what really happened: a post undone meanwhile is reported as such, never as "stays posted".
    */
+  /**
+   * The fixed card, downloaded like a first Copy & Mark Posted does. Only after the fix was saved (or nothing
+   * changed), so a fix that didn't save never leaves a card behind. Resolves even when it fails (it says so).
+   */
+  const downloadFixCard = async () => {
+    if (fixDownloading) return;
+    setFixDownloading(true);
+    try {
+      const ok = bgMode ? await downloadBackgroundCard() : (await downloadCardImage()) !== "failed";
+      if (!ok) setNotice(FIX_CARD_FAILED);
+    } catch {
+      setNotice(FIX_CARD_FAILED);
+    } finally {
+      setFixDownloading(false);
+    }
+  };
+
   const finishFix = () =>
     runLive("save", async () => {
       if (!live) return;
@@ -1976,8 +2009,6 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           setNotice("The browser blocked the clipboard, so nothing was saved. Select the text in the box and copy it by hand, then try again.");
           return;
         }
-        // Same as a first Copy & Mark Posted: the card downloads too
-        void downloadFixCard();
       }
       const statusNow = () => socia.fetchDraft(id).then((d) => d.status as string, () => null);
       const wasTakenBack = async (err: unknown) => {
@@ -2000,6 +2031,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           setNotice("You no longer hold this post, so your fix wasn't saved. Claim it again, then press Copy & Mark Posted.");
           return;
         }
+        // Nothing changed and the post still stands: its card downloads, as after a save
+        await downloadFixCard();
         live.onFinished();
         onSaved?.(`Copied. "${item.headline}" stays posted.`);
         moveOn(true);
@@ -2012,6 +2045,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         if (await wasTakenBack(err)) return leaveTakenBack();
         throw err;
       }
+      // Saved: now the card downloads (before moving on, while this story's card is still on the canvas)
+      await downloadFixCard();
       live.onFinished();
       void desk?.refreshAll();
       onSaved?.(
@@ -2426,17 +2461,6 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   // Correction mode: one action in place of the posting buttons. Copy & mark posted copies the fixed text, saves the
   // fix and goes to New; the story stays posted (nothing is posted or counted again)
-  // Editing a posted story: the card can be downloaded again (the fix flow had no download before)
-  const downloadFixCard = async () => {
-    if (fixDownloading) return;
-    setFixDownloading(true);
-    try {
-      const ok = bgMode ? await downloadBackgroundCard() : (await downloadCardImage()) !== "failed";
-      if (!ok) setNotice("The card didn't download. Try again.");
-    } finally {
-      setFixDownloading(false);
-    }
-  };
   const correctionButtons = (
     <>
     <Tooltip title="Copies the fixed text, saves the fix and goes to New. The story stays posted.">
@@ -2491,7 +2515,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   ));
 
   // The queue's order without the stories someone else is working on (the open one always stays in it)
-  const navigationOrder = workableOrder(queueOrder ?? desk?.queue ?? [], item.id, heldByOther);
+  const navigationOrder = workableOrder((queueOrder ?? desk?.queue ?? []).filter((n) => n.id === item.id || !postedIds?.has(n.id)), item.id, heldByOther);
   const previousStory = adjacentStory(navigationOrder, item.id, -1);
   const nextStory = adjacentStory(navigationOrder, item.id, 1);
   const switchStory = (next: FtpNewsItem) => {
@@ -2598,7 +2622,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           {actionButtons(true)}
         </Box>
 
-        
+        {tabDone && (
+          <Alert severity="success" onClose={() => setTabDoneFor(null)} sx={{ borderRadius: 0, fontSize: "0.8125rem", py: 0 }}>
+            No more stories to post in this tab. Switch tabs in the FTP feed, or press ← Desk to leave.
+          </Alert>
+        )}
 
         <VolumeStrip name={meta.short} used={postedToday} cap={cap} />
 
@@ -3809,25 +3837,56 @@ function Phase1Checks({ story, takenBy, notPosted, retry }: { story: DraftView["
   );
 }
 
-/** Copies the story as it came from FTP (headline, text, file name) */
+/** Copies `text`: the clipboard API, else the browser's older copy command. Resolves false when both are blocked. */
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // Blocked (permissions, an insecure page) or missing: copy through a hidden text box
+    try {
+      const box = document.createElement("textarea");
+      box.value = text;
+      box.setAttribute("readonly", "");
+      box.style.position = "fixed";
+      box.style.opacity = "0";
+      document.body.appendChild(box);
+      box.select();
+      const ok = document.execCommand("copy");
+      box.remove();
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/** Copies the body of the story as it came from FTP; says so when the browser blocks the copy */
 function FtpCopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
+  const [state, setState] = useState<"idle" | "copied" | "blocked">("idle");
   useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 1500);
+    if (state === "idle") return;
+    const t = setTimeout(() => setState("idle"), state === "copied" ? 1500 : 5000);
     return () => clearTimeout(t);
-  }, [copied]);
+  }, [state]);
   return (
-    <Button
-      size="small"
-      variant="outlined"
-      color="inherit"
-      onClick={() => void navigator.clipboard.writeText(text).then(() => setCopied(true), () => undefined)}
-      aria-label="Copy the story from FTP"
-      startIcon={copied ? <Check size={12} /> : <Copy size={12} />}
-      sx={{ minWidth: 0, minHeight: 24, px: 0.75, py: 0, mb: 0.5, borderRadius: "6px", borderColor: "divider", textTransform: "none", fontSize: "0.6875rem", fontWeight: 700, "& .MuiButton-startIcon": { mr: 0.5 } }}
-    >
-      {copied ? "Copied" : "Copy"}
-    </Button>
+    <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}>
+      {state === "blocked" && (
+        <Typography role="alert" sx={{ fontSize: "0.6875rem", color: "error.main", lineHeight: 1.3 }}>
+          Copy blocked by the browser. Select the text below and copy it by hand.
+        </Typography>
+      )}
+      <Button
+        size="small"
+        variant="outlined"
+        color="inherit"
+        onClick={() => void copyToClipboard(text).then((ok) => setState(ok ? "copied" : "blocked"))}
+        aria-label="Copy the story from FTP"
+        startIcon={state === "copied" ? <Check size={12} /> : <Copy size={12} />}
+        sx={{ flexShrink: 0, minWidth: 0, minHeight: 24, px: 0.75, py: 0, mb: 0.5, borderRadius: "6px", borderColor: "divider", textTransform: "none", fontSize: "0.6875rem", fontWeight: 700, "& .MuiButton-startIcon": { mr: 0.5 } }}
+      >
+        {state === "copied" ? "Copied" : "Copy"}
+      </Button>
+    </Box>
   );
 }

@@ -98,6 +98,24 @@ export function sameTab<T extends { id: string }, K>(order: readonly T[], curren
   return order.filter((s) => s.id === current.id || tabOf(s) === tab);
 }
 
+/**
+ * The stories to pick from after Copy & Mark Posted (or a fix): the open story's own tab only, without posted
+ * stories, the open story kept in its place so the pick starts from the one just above it. `currentTab` is the
+ * tab the desk knows the open story by (its queue row), so a story whose editor copy lacks the BIG tag never flips tabs.
+ */
+export function afterPostOrder<T extends { id: string }, K>(order: readonly T[], currentId: string, currentTab: K, tabOf: (story: T) => K, isPosted: (story: T) => boolean): T[] {
+  return order.filter((s) => s.id === currentId || (tabOf(s) === currentTab && !isPosted(s)));
+}
+
+/**
+ * The story a click on a BIG Breaking / Breaking tab opens: the one last open in that tab while it is still listed,
+ * else the tab's top story that isn't posted, else none (the tab shows, nothing opens). Never starts a fix.
+ */
+export function tabTarget<T extends { id: string }, K>(listed: readonly T[], tab: K, tabOf: (story: T) => K, remembered: string | null | undefined, isPosted: (story: T) => boolean): T | undefined {
+  const inTab = listed.filter((s) => tabOf(s) === tab);
+  return (remembered ? inTab.find((s) => s.id === remembered) : undefined) ?? inTab.find((s) => !isPosted(s));
+}
+
 /** Only the body of the FTP story is copied: never the headline or the file name */
 export function ftpCopyText(sourceText: string | null | undefined, body: string | null | undefined): string {
   return sourceText?.trim() || body?.trim() || "";

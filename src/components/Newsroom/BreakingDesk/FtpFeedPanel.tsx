@@ -17,7 +17,10 @@ import StoryThumb, { THUMB_ROOT_ATTR } from "./live/StoryThumb";
 import { canCorrect, editedLabel, needsCheckDescription } from "./live/correction";
 import { RowPresence, RowPresenceSpace } from "./live/Presence";
 import { placeLine, reporterWithDistrict } from "./reporterLabel";
-import { pattiNumber } from "./deskRules";
+import { pattiNumber, tabTarget } from "./deskRules";
+
+/** The story last open in each BIG Breaking / Breaking tab, kept for the page's life (the panel remounts per story) */
+const lastInTab = new Map<BreakingTag, string>();
 import { Search } from "lucide-react";
 
 const STATUS_STYLE: Record<string, { label: string; color: string }> = {
@@ -89,19 +92,21 @@ export default function FtpFeedPanel({
     setTabFor(currentId);
     setTagTab(currentTab);
   }
+  // The story last open in each tab, so switching back returns to it
+  useEffect(() => {
+    if (currentTab) lastInTab.set(currentTab, currentId);
+  }, [currentTab, currentId]);
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
-  /** Switching tab opens that tab's top story (saved first by the editor's switch); an empty tab switches nothing */
+  /**
+   * Switching tab opens the story last open in that tab, else its top story that isn't posted (saved first by the
+   * editor's switch). It only views: a posted story is never opened for a fix this way. Nothing to open: the tab shows.
+   */
   const chooseTab = (tag: BreakingTag) => {
     setTagTab(tag);
     if (otherList || tag === tagTab) return;
-    const top = allListed.find((n) => tabOf(n) === tag);
-    if (!top || top.id === currentId) return;
-    const live = isLiveItem(top) ? top.live : undefined;
-    const fixable = postedIds.has(top.id) && !!onEdit && !!desk?.canAct && canCorrect(live);
-    if (fixable) {
-      if (!editingId) onEdit?.(top);
-    } else onPick(top);
+    const target = tabTarget(allListed, tag, tabOf, lastInTab.get(tag), (n) => postedIds.has(n.id));
+    if (target && target.id !== currentId) onPick(target);
   };
   const listed = allListed.filter((n) => ((!!q || tabOf(n) === tagTab) && (!q || `${n.headline} ${isLiveItem(n) ? n.live.sourcePath ?? "" : ""}`.toLowerCase().includes(q))));
   const [highlight, setHighlight] = useState<ReadonlySet<string>>(() => new Set());

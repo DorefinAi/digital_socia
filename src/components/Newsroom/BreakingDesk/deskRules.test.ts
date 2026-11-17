@@ -3,7 +3,7 @@
 //   node --import ./src/components/Newsroom/BreakingDesk/video/timeline/__checks__/resolve-ts.mjs --test src/components/Newsroom/BreakingDesk/deskRules.test.ts
 import { describe, it, test } from "node:test";
 import assert from "node:assert/strict";
-import { pattiNumber, adjacentStory, advanceCandidates, afterPost, ftpCopyText, sameTab, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, freeForAdvance, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
+import { afterPostOrder, tabTarget, pattiNumber, adjacentStory, advanceCandidates, afterPost, ftpCopyText, sameTab, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, freeForAdvance, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
 
 const now = Date.parse("2026-11-11T07:13:00Z");
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -197,6 +197,77 @@ describe("after posting stays in the same tab and in the editor", () => {
     assert.deepEqual(only.map((x) => x.id), ["B"]);
     assert.equal(afterPost(undefined, false).open, null);
     assert.equal(afterPost(undefined, true).open, null);
+  });
+});
+
+describe("after Copy & Mark Posted: the story just above, in the same tab, never a posted one", () => {
+  type S = { id: string; big: boolean; posted?: boolean };
+  const tab = (x: S) => (x.big ? "big" : "breaking");
+  const posted = (x: S) => !!x.posted;
+  const none = () => false;
+  // The list as the editor shows it, newest first: BIG and Breaking mixed, two already posted
+  const order: S[] = [
+    { id: "B1", big: true },
+    { id: "R1", big: false },
+    { id: "B2", big: true, posted: true },
+    { id: "B3", big: true },
+    { id: "R2", big: false },
+    { id: "B4", big: true },
+  ];
+  const next = (currentId: string, currentTab: string) => advanceCandidates(afterPostOrder(order, currentId, currentTab, tab, posted), currentId, none)[0]?.id;
+  it("opens the BIG story just above, stepping over the posted one and the Breaking ones", () => {
+    assert.equal(next("B4", "big"), "B3");
+    assert.equal(next("B3", "big"), "B1");
+  });
+  it("the top story of the tab falls back to the one below it in the same tab", () => {
+    assert.equal(next("B1", "big"), "B3");
+    assert.equal(next("R1", "breaking"), "R2");
+  });
+  it("a Breaking story never opens a BIG one, and a BIG one never a Breaking one", () => {
+    assert.equal(next("R2", "breaking"), "R1");
+    for (const id of ["B1", "B3", "B4"]) assert.notEqual(tab(order.find((s) => s.id === next(id, "big"))!), "breaking");
+  });
+  it("a fix of a posted story opens the one just above it, not the newest", () => {
+    // B2 is posted and being fixed: it stays in its place, so the pick starts above it
+    assert.equal(next("B2", "big"), "B1");
+  });
+  it("the tab comes from the desk's row, so an editor copy without the BIG tag doesn't flip tabs", () => {
+    // What the old code did: the editor copy read as Breaking, so R stories were offered after a BIG post
+    assert.equal(advanceCandidates(afterPostOrder(order, "B4", "breaking", tab, posted), "B4", none)[0]?.id, "R2");
+    assert.equal(next("B4", "big"), "B3");
+  });
+  it("none left in the tab: nothing to open, the editor stays", () => {
+    const only: S[] = [{ id: "B1", big: true }, { id: "B2", big: true, posted: true }, { id: "R1", big: false }];
+    assert.deepEqual(advanceCandidates(afterPostOrder(only, "B1", "big", tab, posted), "B1", none), []);
+    assert.equal(afterPost(undefined, false).open, null);
+  });
+});
+
+describe("clicking a BIG Breaking / Breaking tab", () => {
+  type S = { id: string; big: boolean; posted?: boolean };
+  const tab = (x: S) => (x.big ? "big" : "breaking");
+  const posted = (x: S) => !!x.posted;
+  const listed: S[] = [
+    { id: "B1", big: true, posted: true },
+    { id: "R1", big: false, posted: true },
+    { id: "B2", big: true },
+    { id: "R2", big: false },
+  ];
+  it("opens the story last open in that tab", () => {
+    assert.equal(tabTarget(listed, "breaking", tab, "R2", posted)?.id, "R2");
+    // Even a posted one: it is viewed, not opened for a fix
+    assert.equal(tabTarget(listed, "big", tab, "B1", posted)?.id, "B1");
+  });
+  it("with none remembered, the top story that isn't posted (a posted top story is skipped)", () => {
+    assert.equal(tabTarget(listed, "big", tab, null, posted)?.id, "B2");
+    assert.equal(tabTarget(listed, "breaking", tab, undefined, posted)?.id, "R2");
+  });
+  it("a remembered story that left the list or is in the other tab is ignored", () => {
+    assert.equal(tabTarget(listed, "big", tab, "gone", posted)?.id, "B2");
+    assert.equal(tabTarget(listed, "big", tab, "R2", posted)?.id, "B2");
+  });
+  it("a tab with only posted stories opens nothing", () => {
+    assert.equal(tabTarget([{ id: "B1", big: true, posted: true }], "big", tab, null, posted), undefined);
   });
 });
 

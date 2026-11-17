@@ -393,13 +393,17 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   // The stories still to post, in order: what the editor walks and picks the next story from
   const unposted = useMemo(() => sortStories(matching.filter((n) => matchesPriority(n, filters.priority) && !postedIds.has(n.id)), filters.sort), [matching, filters.priority, filters.sort, postedIds]);
   const postedKey = postedItems.map((n) => n.id).join(",");
-  const visible = useMemo(() => {
+  // Waiting and posted stories in the list's order: what the editor walks, so a fixed (posted) story knows the one above it
+  const withPosted = useMemo(() => {
     if (!p1 || pastDay) return unposted;
-    if (postedOnly) return sortStories(postedItems, filters.sort);
     return sortStories([...unposted, ...postedItems], filters.sort);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p1, pastDay, unposted, postedOnly, postedKey, filters.sort]);
-  const openRow = (n: FtpNewsItem) => (postedIds.has(n.id) ? void editPosted(n) : setComposing(n));
+  }, [p1, pastDay, unposted, postedKey, filters.sort]);
+  const visible = useMemo(() => (p1 && !pastDay && postedOnly ? withPosted.filter((n) => postedIds.has(n.id)) : withPosted), [p1, pastDay, postedOnly, withPosted, postedIds]);
+  // Enter / Open on a row: a posted story opens for a fix, the rest open as usual. One function for the whole
+  // render life (it reads the latest through a ref), so the memoised rows don't all redraw on every poll.
+  const openRowLatest = useRef<(n: FtpNewsItem) => void>(() => undefined);
+  const openRow = useCallback((n: FtpNewsItem) => openRowLatest.current(n), []);
   const narrowed = !!q || activeFilterCount(filters) > 0;
   // The priority tabs mirror a single-priority choice made in Filters (phase 1 has no priority in Filters)
   const quickPriority: "all" | BreakingTag | null = !filters.priority.length ? "all" : filters.priority.length === 1 && filters.priority[0] !== "normal" ? filters.priority[0] : null;
@@ -492,14 +496,14 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       } else if (cmd.id === "queue.open" && focused && canAct) {
         e.preventDefault();
         openRow(focused);
-      } else if (cmd.id === "queue.reject" && focused && canReject && !(isLiveItem(focused) && focused.live.claim && !focused.live.claim.mine)) {
+      } else if (cmd.id === "queue.reject" && focused && canReject && !postedIds.has(focused.id) && !(isLiveItem(focused) && focused.live.claim && !focused.live.claim.mine)) {
         e.preventDefault();
         setRejecting(focused);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tab, composing, rejecting, visible, focusIndex, focused, canAct, canReject, p1]);
+  }, [tab, composing, rejecting, visible, focusIndex, focused, canAct, canReject, p1, openRow, postedIds]);
 
 
   // Phase 1: when the editor closes, focus goes back to the queue: the story's row if it is still there,
@@ -546,6 +550,9 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     });
     if (error) setNotice(error);
   };
+  useEffect(() => {
+    openRowLatest.current = (n) => (postedIds.has(n.id) ? void editPosted(n) : setComposing(n));
+  });
 
   const openStory = (newsId: string) => {
     const item = ftpNews.find((n) => n.id === newsId);
@@ -857,9 +864,9 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       {tab === "published" && !p1 && <PostedPostsList platform={platform} allowRecall emptyHint={`No posts on ${meta.short} yet. Approved stories land here with their link.`} />}
       {composing &&
         (desk ? (
-          <LiveEditor queueOrder={unposted} item={composing} platform={platform} onClose={closeEditor} onSwitch={switchEditor} onSaved={setNotice} onLinkSlug={onLinkSlug} />
+          <LiveEditor queueOrder={withPosted} postedIds={postedIds} item={composing} platform={platform} onClose={closeEditor} onSwitch={switchEditor} onSaved={setNotice} onLinkSlug={onLinkSlug} />
         ) : (
-          <PostEditor queueOrder={unposted} item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />
+          <PostEditor queueOrder={withPosted} postedIds={postedIds} item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />
         ))}
       {rejecting && (
         <RejectDialog
