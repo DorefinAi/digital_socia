@@ -207,7 +207,10 @@ interface FiltersButtonProps {
   showStatus?: boolean;
   /** Phase 1: the server's counts for the view (null while loading); switches the menu to the breaking-file filters */
   facets?: QueueFacets | null;
+  /** Phase 1 queue: narrow the list to today's posted stories */
+  posted?: PostedFilter;
 }
+type PostedFilter = { on: boolean; count: number; onToggle: () => void };
 
 /** "Jaipur 151": a filter option's label with its count */
 const counted = (label: string, n?: number) => (
@@ -221,10 +224,10 @@ const counted = (label: string, n?: number) => (
   </>
 );
 
-export function QueueFiltersButton({ filters: f, onChange, categories, districts, live, showStatus = true, facets }: FiltersButtonProps) {
+export function QueueFiltersButton({ filters: f, onChange, categories, districts, live, showStatus = true, facets, posted }: FiltersButtonProps) {
   const set = (patch: Partial<QueueFilterState>) => onChange({ ...f, ...patch });
   const statusLabel = STATUS_LABEL(live);
-  if (facets !== undefined) return <Phase1FiltersMenu filters={f} onChange={onChange} facets={facets} />;
+  if (facets !== undefined) return <Phase1FiltersMenu filters={f} onChange={onChange} facets={facets} posted={posted} />;
   return (
     <FiltersButton activeCount={activeFilterCount(f)} onClearAll={() => onChange({ ...EMPTY_FILTERS, sort: f.sort })}>
       <FilterSection title="Sort">
@@ -301,13 +304,19 @@ export function QueueFiltersButton({ filters: f, onChange, categories, districts
 }
 
 /** Phase 1's menu: one district at a time (as the server filters), UPDATE and needs-check. Priority (BIG) is the tabs beside it. */
-function Phase1FiltersMenu({ filters: f, onChange, facets }: { filters: QueueFilterState; onChange: (f: QueueFilterState) => void; facets: QueueFacets | null }) {
+function Phase1FiltersMenu({ filters: f, onChange, facets, posted }: { filters: QueueFilterState; onChange: (f: QueueFilterState) => void; facets: QueueFacets | null; posted?: PostedFilter }) {
   const set = (patch: Partial<QueueFilterState>) => onChange({ ...f, ...patch });
   const pickOne = (list: string[], value: string) => (list[0] === value ? [] : [value]);
   // Busiest first; "No district" last
   const districts = [...(facets?.districts ?? [])].sort((a, b) => (a.name === null ? 1 : b.name === null ? -1 : b.n - a.n || a.name.localeCompare(b.name)));
   return (
-    <FiltersButton activeCount={activeFilterCount(f)} onClearAll={() => onChange({ ...EMPTY_FILTERS, sort: f.sort })}>
+    <FiltersButton
+      activeCount={activeFilterCount(f) + (posted?.on ? 1 : 0)}
+      onClearAll={() => {
+        if (posted?.on) posted.onToggle();
+        onChange({ ...EMPTY_FILTERS, sort: f.sort });
+      }}
+    >
       <FilterSection title="Sort">
         <SegmentedControl
           ariaLabel="Sort"
@@ -319,6 +328,13 @@ function Phase1FiltersMenu({ filters: f, onChange, facets }: { filters: QueueFil
           ]}
         />
       </FilterSection>
+      {posted && (
+        <FilterSection title="Status">
+          <FilterOption on={posted.on} onClick={posted.onToggle}>
+            {counted("Posted only", posted.count)}
+          </FilterOption>
+        </FilterSection>
+      )}
       <FilterSection title="File">
         <FilterOption on={f.update} onClick={() => set({ update: !f.update })}>
           {counted("UPDATE only", facets?.update)}

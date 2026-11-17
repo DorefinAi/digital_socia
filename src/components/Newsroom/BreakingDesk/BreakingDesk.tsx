@@ -137,7 +137,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   // Phase 1 has no Sending tab (nothing is sent through the X API)
   // Rejected needs page.rejected_news (the same as the Rejected news page)
   const canSeeRejected = can(REJECTED_NEWS_PERMISSION);
-  const tab: ConsoleTab = (p1 && tabState === "scheduled") || (tabState === "rejected" && !canSeeRejected) ? "queue" : tabState;
+  const tab: ConsoleTab = (p1 && (tabState === "scheduled" || tabState === "published")) || (tabState === "rejected" && !canSeeRejected) ? "queue" : tabState;
   // The saved view is applied after mount: the page is prerendered, and reading storage while rendering would not match the server's HTML
   const [viewMode, setViewMode] = useState<"cards" | "list">("cards");
   useEffect(() => {
@@ -374,7 +374,32 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   // Guarded so it runs once per arrival: after it, latestUnseen equals seenUntil and nothing is waiting.
   // Not while an earlier day is shown: today's arrivals wait behind the pill until the operator goes back.
   if (tab === "queue" && !pastDay && arrived.length > 0 && latestUnseen > seenUntil && atTop && !pointerInList && !composing) mergeArrived();
-  const visible = useMemo(() => sortStories(matching.filter((n) => matchesPriority(n, filters.priority)), filters.sort), [matching, filters.priority, filters.sort]);
+  // Phase 1 Posted tab: drafts marked with Copy & Mark Posted, filtered like the queue
+  const postedData = desk?.postedView.data;
+  // Mapped once per answer; unchanged stories keep their objects, so the rows skip re-rendering
+  const optimisticPosted = desk?.optimisticPosted;
+  const postedNews = useMemo(() => {
+    if (!p1) return [];
+    const fromServer = (postedData?.items ?? []).map(stableQueueToNews);
+    const have = new Set(fromServer.map((n) => n.id));
+    // Just marked posted: shown green straight away, before the Posted list catches up
+    return [...fromServer, ...(optimisticPosted ?? []).filter((n) => !have.has(n.id))];
+  }, [p1, postedData, optimisticPosted]);
+  // The priority switch narrows Posted too (the server no longer does), and its "Posted today (N)" follows
+  const postedItems = postedNews.filter((n) => matchesSearchAndFilters(n) && matchesPriority(n, filters.priority));
+  // Posted stories stay in the list in place (marked Posted in green); "Posted only" in Filters narrows to them
+  const [postedOnly, setPostedOnly] = useState(false);
+  const postedIds = useMemo(() => new Set(postedNews.map((n) => n.id)), [postedNews]);
+  // The stories still to post, in order: what the editor walks and picks the next story from
+  const unposted = useMemo(() => sortStories(matching.filter((n) => matchesPriority(n, filters.priority) && !postedIds.has(n.id)), filters.sort), [matching, filters.priority, filters.sort, postedIds]);
+  const postedKey = postedItems.map((n) => n.id).join(",");
+  const visible = useMemo(() => {
+    if (!p1 || pastDay) return unposted;
+    if (postedOnly) return sortStories(postedItems, filters.sort);
+    return sortStories([...unposted, ...postedItems], filters.sort);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p1, pastDay, unposted, postedOnly, postedKey, filters.sort]);
+  const openRow = (n: FtpNewsItem) => (postedIds.has(n.id) ? void editPosted(n) : setComposing(n));
   const narrowed = !!q || activeFilterCount(filters) > 0;
   // The priority tabs mirror a single-priority choice made in Filters (phase 1 has no priority in Filters)
   const quickPriority: "all" | BreakingTag | null = !filters.priority.length ? "all" : filters.priority.length === 1 && filters.priority[0] !== "normal" ? filters.priority[0] : null;
@@ -466,7 +491,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
         }
       } else if (cmd.id === "queue.open" && focused && canAct) {
         e.preventDefault();
-        setComposing(focused);
+        openRow(focused);
       } else if (cmd.id === "queue.reject" && focused && canReject && !(isLiveItem(focused) && focused.live.claim && !focused.live.claim.mine)) {
         e.preventDefault();
         setRejecting(focused);
@@ -543,12 +568,6 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
         { label: "Published today", value: publishedToday, tone: "success.main" },
       ];
 
-  // Phase 1 Posted tab: drafts marked with Copy & Mark Posted, filtered like the queue
-  const postedData = desk?.postedView.data;
-  // Mapped once per answer; unchanged stories keep their objects, so the rows skip re-rendering
-  const postedNews = useMemo(() => (p1 ? (postedData?.items ?? []).map(stableQueueToNews) : []), [p1, postedData]);
-  // The priority switch narrows Posted too (the server no longer does), and its "Posted today (N)" follows
-  const postedItems = postedNews.filter((n) => matchesSearchAndFilters(n) && matchesPriority(n, filters.priority));
   const postedTotal = facetsPosted?.total ?? desk?.postedView.data?.items.length ?? 0;
   const p1Narrowed = activeFilterCount(filters) > 0 || !!q;
 
@@ -673,7 +692,6 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
             p1
               ? [
                   { value: "queue", label: `New (${p1Narrowed || pastDay ? visible.length : inboxToday?.total ?? facetsInbox?.total ?? queue.length})` },
-                  { value: "published", label: `Posted today (${p1Narrowed ? postedItems.length : postedTotal})` },
                   ...(canSeeRejected ? [{ value: "rejected" as const, label: "Rejected" }] : []),
                 ]
               : [
@@ -749,7 +767,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
               categories={categoriesInQueue}
               districts={districtsInQueue}
               live={!!desk}
-              {...(p1 ? { facets: tab === "published" ? facetsPosted : facetsInbox, showStatus: false } : {})}
+              {...(p1 ? { facets: tab === "published" ? facetsPosted : facetsInbox, showStatus: false, posted: tab === "queue" && !pastDay ? { on: postedOnly, count: postedItems.length, onToggle: () => setPostedOnly((v) => !v) } : undefined } : {})}
             />
           </Box>
         )}
@@ -793,7 +811,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
                 items: visible,
                 focusedId: focused?.id,
                 onFocus: setFocusIndex,
-                onOpen: setComposing,
+                onOpen: openRow,
                 onReject: setRejecting,
                 isSaved: (newsId: string) => (desk ? !!desk.queue.find((n) => n.id === newsId)?.live.claim?.mine : draftFor(newsId)?.status === "saved"),
                 liveElsewhere: (newsId: string) => (desk ? null : otherPlatforms.filter((p) => isLiveOn(socialPosts, newsId, p)).map((p) => PLATFORM_META[p].short).join(", ") || null),
@@ -809,7 +827,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
                     }
                   : {}),
               };
-              if (p1) return <Phase1QueueList {...props} highlightIds={highlight} now={now} />;
+              if (p1) return <Phase1QueueList {...props} highlightIds={highlight} now={now} postedIds={postedIds} />;
               return viewMode === "list" ? <QueueTable {...props} highlightIds={highlight} /> : <QueueCards {...props} highlightIds={highlight} />;
             })()
           )}
@@ -839,9 +857,9 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       {tab === "published" && !p1 && <PostedPostsList platform={platform} allowRecall emptyHint={`No posts on ${meta.short} yet. Approved stories land here with their link.`} />}
       {composing &&
         (desk ? (
-          <LiveEditor queueOrder={visible} item={composing} platform={platform} onClose={closeEditor} onSwitch={switchEditor} onSaved={setNotice} onLinkSlug={onLinkSlug} />
+          <LiveEditor queueOrder={unposted} item={composing} platform={platform} onClose={closeEditor} onSwitch={switchEditor} onSaved={setNotice} onLinkSlug={onLinkSlug} />
         ) : (
-          <PostEditor queueOrder={visible} item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />
+          <PostEditor queueOrder={unposted} item={composing} platform={platform} onClose={() => setComposing(null)} onSwitch={setComposing} onSaved={setNotice} />
         ))}
       {rejecting && (
         <RejectDialog

@@ -125,6 +125,12 @@ export const tagTint = (tag: BreakingTag, mode: "light" | "dark", boost = 1) => 
   return `linear-gradient(90deg, rgba(${rgb}, ${Math.min(1, from * boost)}) 0%, rgba(${rgb}, ${Math.min(1, to * boost)}) 100%)`;
 };
 
+/** A posted story's row: the same fade in a mild green, in place of its BIG Breaking / Breaking colour */
+export const postedTint = (mode: "light" | "dark", boost = 1) => {
+  const [from, to] = mode === "light" ? [0.24, 0.05] : [0.26, 0.05];
+  return `linear-gradient(90deg, rgba(46, 160, 90, ${Math.min(1, from * boost)}) 0%, rgba(46, 160, 90, ${Math.min(1, to * boost)}) 100%)`;
+};
+
 /** The toast after a reject, which points to the Rejected news page. */
 const REJECTED_NOTICE_END = "Find it in News - Desk Rejected.";
 export const rejectedNotice = (headline: string) => `Rejected "${headline}". ${REJECTED_NOTICE_END}`;

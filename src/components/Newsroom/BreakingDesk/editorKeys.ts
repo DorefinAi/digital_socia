@@ -184,8 +184,8 @@ export function swallowNextContextMenu() {
   const timer = window.setTimeout(off, 800);
 }
 
-/** Steps for the arrow keys, as shares of the card */
-export const NUDGE = { small: 0.01, big: 0.05 } as const;
+/** Steps for the arrow keys, as shares of the card: 4px, and 15px with Shift, on the 1080 card */
+export const NUDGE = { small: 4 / 1080, big: 15 / 1080 } as const;
 
 const editorLookup = lookup(EDITOR_KEYS);
 

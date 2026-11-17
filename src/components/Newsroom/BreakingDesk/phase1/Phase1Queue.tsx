@@ -4,6 +4,7 @@
 // with the file's badges, district, time and an age dot; the post itself is read in the studio. Rows are plain
 // and light so a day of ~700 files stays quick.
 
+import { pattiNumber } from "../deskRules";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, CircularProgress, IconButton, Tooltip, Typography } from "@mui/material";
 import { Ban, Check, Copy, Eye, Lock, PenLine, Undo2 } from "lucide-react";
@@ -14,7 +15,7 @@ import { fileUrl, isLiveItem, postToSocial, useLiveDesk } from "../live/LiveDesk
 import PostedPreviewDialog from "../PostedPreviewDialog";
 import type { QueueViewProps } from "../QueueViews";
 import { freshHighlightSx } from "../NewStoriesPill";
-import { srOnly, timeAgo } from "../shared";
+import { postedTint, srOnly, timeAgo } from "../shared";
 import { X_LIMIT } from "../socialText";
 import { XRichText, X_COLORS } from "./XPostPreview";
 import { Badge, NeedsCheckBadges, Phase1Badges, needsCheckHint, needsCheckLabel, shownNeedsCheck } from "./badges";
@@ -119,10 +120,12 @@ interface RowProps {
   onFocusId: (id: string) => void;
   onOpen: (item: FtpNewsItem) => void;
   onReject: (item: FtpNewsItem) => void;
+  /** Marked with Copy & Mark Posted: stays in place, mild green with a Posted tag */
+  posted?: boolean;
 }
 
 /** One ready post. Memoised: a poll that changes nothing about this story doesn't re-render it. */
-const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, canReject, highlighted, now, onFocusId, onOpen, onReject }: RowProps) {
+const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, canReject, highlighted, now, onFocusId, onOpen, onReject, posted = false }: RowProps) {
   const live = isLiveItem(item) ? item.live : null;
   return (
     <Box
@@ -136,7 +139,7 @@ const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, can
       onClick={() => onFocusId(item.id)}
       onFocus={(e: React.FocusEvent) => e.target === e.currentTarget && onFocusId(item.id)}
       onDoubleClick={() => canAct && onOpen(item)}
-      sx={[focused ? rowFocusedSx : rowIdleSx, lazyRowSx, highlighted ? freshHighlightSx : {}, { "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: -2 } }]}
+      sx={[focused ? rowFocusedSx : rowIdleSx, lazyRowSx, posted ? { position: "relative", background: (t) => postedTint(t.palette.mode, focused ? 1.6 : 1) } : {}, highlighted ? freshHighlightSx : {}, { "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: -2 } }]}
     >
       <Box sx={{ display: { xs: "none", md: "block" }, pt: 0.25 }}>
         <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, fontVariantNumeric: "tabular-nums", display: "flex", alignItems: "center", gap: 0.5 }}>
@@ -151,6 +154,7 @@ const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, can
           <Box component="span" sx={{ display: { md: "none" }, color: "text.secondary", fontWeight: 500, fontVariantNumeric: "tabular-nums", mr: 0.75 }}>
             {clock(item.receivedAt)}
           </Box>
+          <PattiPrefix live={live} />
           {item.headline || "No headline"}
         </Typography>
         {held && (
@@ -165,12 +169,17 @@ const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, can
             <NeedsCheckTags live={live} id={`${phase1RowId(item.id)}-checks`} />
           </Box>
         )}
-        {canReject && !held && (
+        {canReject && !held && !posted && (
           <Tooltip title="Reject (R)">
             <IconButton size="small" aria-label={`Reject ${item.headline}`} onClick={() => onReject(item)} sx={rejectSx}>
               <Ban size={15} />
             </IconButton>
           </Tooltip>
+        )}
+        {posted && (
+          <Box component="span" sx={{ alignSelf: "center", px: 0.75, borderRadius: "4px", backgroundColor: "success.main", color: "#fff", fontSize: "0.625rem", fontWeight: 800, lineHeight: 1.6, letterSpacing: "0.02em" }}>
+            Posted
+          </Box>
         )}
         <Tooltip title={held ? `${held} is working on this story. Open it to read` : canAct ? "Open to check and copy (Enter)" : "Your role can read posts but not mark them posted"}>
           <span>
@@ -180,12 +189,13 @@ const QueueRow = React.memo(function QueueRow({ item, focused, held, canAct, can
           </span>
         </Tooltip>
       </Box>
+
     </Box>
   );
 });
 
 /** Phase 1 queue: one row per ready post, a listbox whose selection the preview panel shows. Same props as the cards and table, so J/K/Enter/R keep working. */
-export function Phase1QueueList({ items, focusedId, onFocus, onOpen, onReject, canAct, canReject = canAct, heldBy, highlightIds, now }: QueueViewProps) {
+export function Phase1QueueList({ items, focusedId, onFocus, onOpen, onReject, canAct, canReject = canAct, heldBy, highlightIds, now, postedIds }: QueueViewProps & { postedIds?: ReadonlySet<string> }) {
   // Rows report focus by id; the desk keeps an index. Read through refs so the callback never changes.
   const latest = useRef({ items, onFocus });
   useEffect(() => {
@@ -211,6 +221,7 @@ export function Phase1QueueList({ items, focusedId, onFocus, onOpen, onReject, c
           onFocusId={onFocusId}
           onOpen={onOpen}
           onReject={onReject}
+          posted={!!postedIds?.has(item.id)}
         />
       ))}
     </Box>
@@ -332,7 +343,13 @@ export function Phase1PostedList({
         const editable = !!onEdit && !!desk?.canAct && canCorrect(live);
         const edited = editedLabel(live?.corrected);
         return (
-          <Box key={item.id} role="listitem" sx={rowSx}>
+          <Box
+            key={item.id}
+            role="listitem"
+            // A click anywhere on the row (not on its own buttons) opens the story for editing, like Edit
+            onClick={editable && !editing ? (e: React.MouseEvent) => !(e.target as HTMLElement).closest("button, a, [tabindex], [role='dialog']") && void edit(item) : undefined}
+            sx={[rowSx, editable ? { cursor: "pointer" } : {}]}
+          >
             <Box sx={{ display: { xs: "none", md: "block" }, pt: 0.25 }}>
               <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{posted ? clock(posted.at) : "-"}</Typography>
               <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary" }}>posted</Typography>
@@ -340,6 +357,7 @@ export function Phase1PostedList({
             <Box sx={{ minWidth: 0 }}>
               {live && <RowMeta live={live} />}
               <Typography lang="hi" sx={{ mt: 0.5, fontSize: "0.9375rem", fontWeight: 600, lineHeight: 1.45, overflowWrap: "anywhere" }}>
+                <PattiPrefix live={live} />
                 {item.headline || "No headline"}
               </Typography>
               {live?.postText && <PostText text={live.postText} />}
@@ -414,4 +432,10 @@ export function Phase1PostedList({
       {previewing && <PostedPreviewDialog post={previewing} onClose={() => setPreviewing(null)} />}
     </Box>
   );
+}
+
+/** "7920 · " before a headline: the patti number from the story's file name, bold, when it has one */
+function PattiPrefix({ live }: { live: { sourcePath?: string | null } | null }) {
+  const patti = pattiNumber(live?.sourcePath);
+  return patti ? <Box component="span" sx={{ fontWeight: 800 }}>{patti} · </Box> : null;
 }

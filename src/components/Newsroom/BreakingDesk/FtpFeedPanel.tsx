@@ -8,7 +8,7 @@ import { useNewsroom } from "@/providers/NewsroomProvider";
 import { BreakingTag, FtpNewsItem, SocialPlatform } from "@/types/newsroom";
 import { isLiveOn } from "@/data/socialDesk";
 import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
-import { CategoryLabel, srOnly, storyCategory, storyTag, TAG_TINT, tagTint, timeAgo } from "./shared";
+import { CategoryLabel, srOnly, storyCategory, storyTag, TAG_TINT, tagTint, postedTint, timeAgo } from "./shared";
 import { usePermissions } from "@/lib/access/usePermissions";
 import { REJECTED_NEWS_PERMISSION } from "@/lib/rejectedNews";
 import { isLiveItem, stableQueueToNews, useLiveDesk } from "./live/LiveDesk";
@@ -17,6 +17,8 @@ import StoryThumb, { THUMB_ROOT_ATTR } from "./live/StoryThumb";
 import { canCorrect, editedLabel, needsCheckDescription } from "./live/correction";
 import { RowPresence, RowPresenceSpace } from "./live/Presence";
 import { placeLine, reporterWithDistrict } from "./reporterLabel";
+import { pattiNumber } from "./deskRules";
+import { Search } from "lucide-react";
 
 const STATUS_STYLE: Record<string, { label: string; color: string }> = {
   posted: { label: "Posted", color: "success.main" },
@@ -28,7 +30,6 @@ const STATUS_STYLE: Record<string, { label: string; color: string }> = {
 type FeedList = "queue" | "published" | "rejected";
 const FEED_TABS: [FeedList, string][] = [
   ["queue", "New"],
-  ["published", "Posted today"],
   ["rejected", "Rejected"],
 ];
 /** About how wide the needs-check tag is, for the headline's room beside the corner badges */
@@ -65,15 +66,44 @@ export default function FtpFeedPanel({
   const [openedAt] = useState(() => Date.now());
   // Live: the stories waiting in the X queue for the shown day, newest first
   const stories: FtpNewsItem[] = desk ? desk.queue : ftpNews;
-  const sorted = otherList ? otherItems : [...stories].sort(newestFirst);
+  // Posted today's stories stay in the list where they were, marked Posted in green (no Posted tab)
+  const postedItems = useMemo(() => (desk?.postedView.data?.items ?? []).map(stableQueueToNews), [desk?.postedView.data]);
+  const postedIds = useMemo(() => new Set(postedItems.map((n) => n.id)), [postedItems]);
+  const sorted = otherList ? otherItems : [...stories, ...postedItems.filter((p) => !stories.some((n) => n.id === p.id))].sort(newestFirst);
   const loading = !!desk && !(otherList ?? desk.inbox).data;
 
   // Stories that arrive while the feed is open wait behind the "new stories" pill, so the list never jumps
   const [shownState, setShown] = useState<ReadonlySet<string> | null>(null);
   const shown = otherList ? new Set(sorted.map((n) => n.id)) : shownState;
   if (!otherList && shownState === null && !loading) setShown(new Set(sorted.map((n) => n.id)));
-  const waiting = shown ? sorted.filter((n) => !shown.has(n.id) && n.id !== currentId) : [];
-  const listed = shown ? sorted.filter((n) => shown.has(n.id) || n.id === currentId) : sorted;
+  const waiting = shown ? sorted.filter((n) => !shown.has(n.id) && !postedIds.has(n.id) && n.id !== currentId) : [];
+  const allListed = shown ? sorted.filter((n) => shown.has(n.id) || postedIds.has(n.id) || n.id === currentId) : sorted;
+  // BIG Breaking / Breaking tabs (BIG Breaking first) and a small headline search; the open story always stays listed
+  const tabOf = (n: FtpNewsItem): BreakingTag => (storyTag(n) === "big_breaking" ? "big_breaking" : "breaking");
+  // The tab follows the open story (Prev/Next, the next story after posting), so it is always listed in its own tab
+  const currentItem = sorted.find((n) => n.id === currentId);
+  const currentTab = currentItem ? tabOf(currentItem) : null;
+  const [tagTab, setTagTab] = useState<BreakingTag>(currentTab ?? "big_breaking");
+  const [tabFor, setTabFor] = useState<string | null>(currentTab ? currentId : null);
+  if (currentTab && tabFor !== currentId) {
+    setTabFor(currentId);
+    setTagTab(currentTab);
+  }
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  /** Switching tab opens that tab's top story (saved first by the editor's switch); an empty tab switches nothing */
+  const chooseTab = (tag: BreakingTag) => {
+    setTagTab(tag);
+    if (otherList || tag === tagTab) return;
+    const top = allListed.find((n) => tabOf(n) === tag);
+    if (!top || top.id === currentId) return;
+    const live = isLiveItem(top) ? top.live : undefined;
+    const fixable = postedIds.has(top.id) && !!onEdit && !!desk?.canAct && canCorrect(live);
+    if (fixable) {
+      if (!editingId) onEdit?.(top);
+    } else onPick(top);
+  };
+  const listed = allListed.filter((n) => ((!!q || tabOf(n) === tagTab) && (!q || `${n.headline} ${isLiveItem(n) ? n.live.sourcePath ?? "" : ""}`.toLowerCase().includes(q))));
   const [highlight, setHighlight] = useState<ReadonlySet<string>>(() => new Set());
   useEffect(() => {
     if (!highlight.size) return;
@@ -119,21 +149,38 @@ export default function FtpFeedPanel({
           ))}
         </Tabs>
       )}
-      <Box>
-        <Typography component="h2" sx={{ fontSize: "0.9375rem", fontWeight: 700 }}>
-          {list === "queue" ? "FTP feed" : list === "published" ? "Posted today" : "Rejected"}
-        </Typography>
-        <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.25 }}>
-          {loading ? "Loading stories" : `${listed.length} ${listed.length === 1 ? "story" : "stories"}${otherList ? "" : ", newest first"}`}
-        </Typography>
+      <Box sx={{ display: "flex", alignItems: "flex-end", gap: 1 }}>
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          <Typography component="h2" sx={{ fontSize: "0.9375rem", fontWeight: 700 }}>
+            {list === "queue" ? "FTP feed" : list === "published" ? "Posted today" : "Rejected"}
+          </Typography>
+          <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {loading ? "Loading stories" : `${listed.length} ${listed.length === 1 ? "story" : "stories"}${otherList ? "" : ", newest first"}`}
+          </Typography>
+        </Box>
+        <Box component="label" sx={{ display: "flex", alignItems: "center", gap: 0.5, width: 112, flexShrink: 0, height: 26, px: 0.75, border: "1px solid", borderColor: "divider", borderRadius: "6px", color: "text.secondary", "&:focus-within": { borderColor: "text.primary" } }}>
+          <Search size={12} aria-hidden />
+          <Box component="input" type="search" value={query} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setQuery(e.target.value)} placeholder="Search" aria-label="Search stories" sx={{ flex: 1, minWidth: 0, border: 0, outline: 0, background: "transparent", color: "text.primary", font: "inherit", fontSize: "0.75rem", p: 0 }} />
+        </Box>
       </Box>
-      <Box aria-hidden sx={{ display: "flex", flexWrap: "wrap", columnGap: 1.5, rowGap: 0.5 }}>
-        {(Object.keys(TAG_TINT) as BreakingTag[]).map((tag) => (
-          <Box key={tag} sx={{ display: "flex", alignItems: "center", gap: 0.6, fontSize: "0.6875rem", color: "text.secondary", whiteSpace: "nowrap" }}>
-            <Box sx={{ width: 18, height: 10, borderRadius: "3px", background: (t) => tagTint(tag, t.palette.mode, 1.6) }} />
-            {TAG_TINT[tag].label}
-          </Box>
-        ))}
+      <Box role="tablist" aria-label="Story priority" sx={{ display: "flex", gap: 0.75 }}>
+        {(Object.keys(TAG_TINT) as BreakingTag[]).map((tag) => {
+          const on = tagTab === tag;
+          return (
+            <Box
+              key={tag}
+              component="button"
+              type="button"
+              role="tab"
+              aria-selected={on}
+              onClick={() => chooseTab(tag)}
+              sx={{ display: "flex", alignItems: "center", gap: 0.6, px: 1, py: 0.4, borderRadius: "6px", border: "1px solid", borderColor: on ? "text.primary" : "divider", background: (t) => (on ? tagTint(tag, t.palette.mode, 1.6) : "transparent"), color: on ? "text.primary" : "text.secondary", fontFamily: "inherit", fontSize: "0.6875rem", fontWeight: 700, whiteSpace: "nowrap", cursor: "pointer", "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}
+            >
+              <Box sx={{ width: 14, height: 8, borderRadius: "2px", background: (t) => tagTint(tag, t.palette.mode, 1.6) }} />
+              {TAG_TINT[tag].label}
+            </Box>
+          );
+        })}
       </Box>
       <Box
         ref={listRef}
@@ -190,7 +237,10 @@ export default function FtpFeedPanel({
             // Why the post needs a second look (no district, two districts, headline cut...), as the queue outside shows
             const checks = live ? shownNeedsCheck(live.needsCheck) : [];
             // Posted today: a small Edit to fix the post (the row itself stays plain), and a mark once it was fixed
-            const editable = list === "published" && !!onEdit && !!desk?.canAct && canCorrect(live);
+            const posted = !otherList && postedIds.has(n.id);
+            // A posted row opens its fix on click (it stays posted); no separate Edit button
+            const fixable = posted && !!onEdit && !!desk?.canAct && canCorrect(live);
+            const editable = false;
             const edited = list === "published" ? editedLabel(live?.corrected) : null;
             // "BHANWAR (Rajsamand)" and "Rajsamand · रेलमगरा", as on the desk's rows
             const reporter = reporterWithDistrict(live?.reporter, live?.district);
@@ -200,7 +250,7 @@ export default function FtpFeedPanel({
                 key={n.id}
                 component={pickable ? "button" : "div"}
                 type={pickable ? "button" : undefined}
-                onClick={pickable ? () => !current && onPick(n) : undefined}
+                onClick={pickable ? () => !current && (fixable ? !editingId && onEdit?.(n) : onPick(n)) : undefined}
                 aria-current={current ? "true" : undefined}
                 sx={{
                   // Positioned so the screen-reader label stays inside the scrolling list
@@ -217,12 +267,12 @@ export default function FtpFeedPanel({
                   borderRadius: "8px",
                   fontFamily: "inherit",
                   color: "text.primary",
-                  cursor: current || !pickable ? "default" : "pointer",
+                  cursor: (pickable && !current) || (editable && !editingId) ? "pointer" : "default",
                   // Flagged stories carry their tag colour; the rest stay neutral
-                  background: (t) => (tag ? tagTint(tag, t.palette.mode, current ? 1.6 : 1) : current ? t.palette.action.selected : "transparent"),
+                  background: (t) => (posted ? postedTint(t.palette.mode, current ? 1.6 : 1) : tag ? tagTint(tag, t.palette.mode, current ? 1.6 : 1) : current ? t.palette.action.selected : "transparent"),
                   // The open story is outlined so it stays distinct from the tint
                   boxShadow: (t) => (current ? `inset 0 0 0 2px ${t.palette.text.primary}` : "none"),
-                  ...(pickable ? { "&:hover": { background: (t) => (tag ? tagTint(tag, t.palette.mode, current ? 1.6 : 1.35) : current ? t.palette.action.selected : t.palette.action.hover) } } : {}),
+                  ...(pickable ? { "&:hover": { background: (t) => (posted ? postedTint(t.palette.mode, current ? 1.6 : 1.35) : tag ? tagTint(tag, t.palette.mode, current ? 1.6 : 1.35) : current ? t.palette.action.selected : t.palette.action.hover) } } : {}),
                   "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "2px" },
                   ...(highlight.has(n.id) ? freshHighlightSx : {}),
                 }}
@@ -238,8 +288,12 @@ export default function FtpFeedPanel({
                 <Box sx={{ minWidth: 0 }}>
                   <Typography sx={{ fontSize: "0.75rem", fontWeight: 600, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
                     {/* Live: the first line keeps clear of the corner badges (and the needs-check tag beside them) */}
-                    {live && <RowPresenceSpace draftId={n.id} besideWidth={checks.length ? CHECK_TAG_W + 6 : 0} />}
-                    {n.headline}
+                    {/* One block inside the clamp box, so the badge float wraps the first line instead of taking a line of its own */}
+                    <Box component="span" sx={{ display: "block" }}>
+                      {live && <RowPresenceSpace draftId={n.id} besideWidth={checks.length ? CHECK_TAG_W + 6 : 0} />}
+                      {pattiNumber(live?.sourcePath) && <Box component="span" sx={{ fontWeight: 800 }}>{pattiNumber(live?.sourcePath)} · </Box>}
+                      {n.headline}
+                    </Box>
                   </Typography>
                   <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.4, minWidth: 0, overflow: "hidden", fontSize: "0.625rem", color: "text.secondary", whiteSpace: "nowrap" }}>
                     {/* The tint carries the tag on screen; screen readers hear it */}
@@ -290,13 +344,21 @@ export default function FtpFeedPanel({
                     )}
                   </Box>
                 </Box>
+                {posted && (
+                  <Box component="span" sx={{ position: "absolute", right: 6, bottom: 5, px: 0.6, borderRadius: "4px", backgroundColor: "success.main", color: "#fff", fontSize: "0.5625rem", fontWeight: 800, lineHeight: 1.6, letterSpacing: "0.02em" }}>
+                    {editingId === n.id ? <CircularProgress size={8} color="inherit" /> : "Posted"}
+                  </Box>
+                )}
                 {editable && (
                   // Sits at the row's foot, clear of the needs-check tag in the top corner
                   <Button
                     size="small"
                     variant="outlined"
                     color="inherit"
-                    onClick={() => onEdit?.(n)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEdit?.(n);
+                    }}
                     disabled={!!editingId}
                     aria-label={`Edit the posted story: ${n.headline || "No headline"}`}
                     startIcon={editingId === n.id ? <CircularProgress size={11} color="inherit" /> : <PenLine size={12} aria-hidden />}

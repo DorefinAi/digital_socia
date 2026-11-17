@@ -238,6 +238,8 @@ interface LiveDeskValue {
   postedView: Polled<QueueResponse>;
   /** Phase 1: counts for the filter menus, over the whole view */
   facets: { inbox: Polled<QueueFacets>; posted: Polled<QueueFacets> };
+  /** Stories just marked with Copy & Mark Posted that the Posted list hasn't returned yet (shown green at once) */
+  optimisticPosted: LiveNewsItem[];
   /** Copy & Mark Posted went through: show the toast with Undo */
   addCopied: (p: { draftId: string; postId: string; headline: string; undoUntil: string; withCard: boolean }) => void;
   /** Undo a Copy & Mark Posted from the Posted list (within the server's window). Resolves to an error sentence or null. */
@@ -474,6 +476,19 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
 
   // ─── Undo window ───────────────────────────────────────────────────────────
   const [pending, setPending] = useState<LivePending[]>([]);
+  // Copy & Mark Posted: the story stays on screen as posted until the Posted list returns it
+  const [optimistic, setOptimistic] = useState<Map<string, LiveNewsItem>>(() => new Map());
+  const postedViewData = postedView.data;
+  useEffect(() => {
+    if (!postedViewData) return;
+    setOptimistic((m) => {
+      if (!m.size) return m;
+      const next = new Map(m);
+      for (const i of postedViewData.items) next.delete(i.id);
+      return next.size === m.size ? m : next;
+    });
+  }, [postedViewData]);
+  const optimisticPosted = useMemo(() => [...optimistic.values()], [optimistic]);
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   const dismiss = useCallback((id: string) => {
@@ -567,6 +582,8 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
   const addCopied = useCallback(
     (c: { draftId: string; postId: string; headline: string; undoUntil: string; withCard: boolean }) => {
       const id = `copied:${c.postId}`;
+      const row = inbox.data?.items.find((i) => i.id === c.draftId);
+      if (row) setOptimistic((m) => new Map(m).set(c.draftId, stableQueueToNews({ ...row, claim: null } as QueueItem)));
       clearTimeout(timers.current.get(id));
       setPending((list) => [
         ...list.filter((x) => x.id !== id),
@@ -575,13 +592,21 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
       timers.current.set(id, setTimeout(() => dismiss(id), COPIED_TOAST_MS));
       refreshSoon();
     },
-    [dismiss, refreshSoon],
+    [dismiss, refreshSoon, inbox.data],
   );
 
   const undoCopied = useCallback(
     async (draftId: string) => {
       const error = await tryAction(() => socia.undoCopyPosted(draftId));
-      if (!error) setPending((list) => list.filter((p) => !(p.copied && p.draftId === draftId)));
+      if (!error) {
+        setPending((list) => list.filter((p) => !(p.copied && p.draftId === draftId)));
+        setOptimistic((m) => {
+          if (!m.has(draftId)) return m;
+          const next = new Map(m);
+          next.delete(draftId);
+          return next;
+        });
+      }
       refreshSoon();
       return error;
     },
@@ -680,6 +705,7 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
       setQueueQuery,
       postedView,
       facets,
+      optimisticPosted,
       addCopied,
       undoCopied,
       refreshAll,
@@ -711,6 +737,7 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
       queueQuery,
       postedView,
       facets,
+      optimisticPosted,
       addCopied,
       undoCopied,
       refreshAll,

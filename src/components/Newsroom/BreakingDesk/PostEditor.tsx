@@ -51,6 +51,7 @@ import {
   MoreHorizontal,
   PenLine,
   ClipboardCopy,
+  Download,
 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { Playhead, usePlayhead, usePlayheadTime } from "@/hooks/usePlayhead";
@@ -115,7 +116,7 @@ import LiveCaret from "./live/LiveCaret";
 import { HeaderPresence } from "./live/Presence";
 import { HandedOverNote, HolderLeftBanner, LiveNote, LiveUnavailableNote, TakeoverDialog, WatchBanner } from "./live/WatchMode";
 import { LIVE_PLATFORM, createRefreshGate, firstName } from "@/lib/socia/liveCore";
-import { adjacentStory, afterPost, counterTone, steppedTextSize, workableOrder } from "./deskRules";
+import { adjacentStory, afterPost, counterTone, ftpCopyText, sameTab, steppedTextSize, workableOrder } from "./deskRules";
 import { beginAdvance } from "./live/autoAdvance";
 
 /** Someone else holds this story (their claim), so the studio steps over it */
@@ -518,6 +519,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const [uploaded, setUploaded] = useState<{ layout: TemplateLayout; url: string } | null>(null);
   // Where the posted card comes from: the operator's X background or this editor's design. null follows the default.
   const [cardSource, setCardSource] = useState<"background" | "design" | null>(null);
+  const [fixDownloading, setFixDownloading] = useState(false);
   const [bgPick, setBgPick] = useState<string | null>(start.bgPick);
   // The background card last uploaded as this draft's card, by draft and drawing
   const [bgUploaded, setBgUploaded] = useState<{ id: string; key: string } | null>(null);
@@ -603,7 +605,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const cardTemplate = cardTemplates?.data?.template ?? null;
   // The card on the draft was made elsewhere: it is shown and kept until the operator edits here or picks a source
   const cardTouched = layout !== start.layout || mediaIndex !== start.mediaIndex || uploads.length > 0;
-  const serverView = !!live?.draft.card.custom && !!live.draft.card.url && start.serverCard && cardSource === null && !cardTouched;
+  const serverView = !!live?.draft.card.custom && !!live.draft.card.url && start.serverCard && cardSource === null && !cardTouched && false;
   // The desk's shared designs (org-card-templates-contract.md) are the card's background in this editor: BIG
   // stories open on the one made for big_breaking, others on the one for breaking. None from the server: the
   // X background as before. `orgList` is null until the list has loaded.
@@ -628,7 +630,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         ...(cardTemplate ? [{ key: "own", label: "Your X background", note: shapeNote(cardTemplate), template: cardTemplate }] : []),
       ]
     : [];
-  const bgMode = !!activeTemplate && !serverView && (cardSource ?? (start.savedDesign || start.serverCard ? "design" : "background")) === "background";
+  const bgMode = !!activeTemplate && !serverView && (cardSource ?? "design") === "background";
   // The desk template the design is on, and whether the canvas shows it
   const orgTpl = layout.orgTemplate ? (orgTemplates.find((t) => t.slug === layout.orgTemplate) ?? null) : null;
   const orgMode = !!orgTpl && !bgMode && !serverView;
@@ -1566,8 +1568,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
    * desk behind turns to its New tab, so closing, now or later, lands there.
    */
   const moveOn = (fix = false) => {
-    const step = afterPost(onSwitch ? beginAdvance(queueOrder ?? desk?.queue ?? [], item.id) : undefined, fix);
-    if (!step.open) return onClose(step.returnTo);
+    const tabOf = (n: FtpNewsItem) => (storyTag(n) === "big_breaking" ? "big_breaking" : "breaking");
+    const step = afterPost(onSwitch ? beginAdvance(sameTab(queueOrder ?? desk?.queue ?? [], item, tabOf), item.id) : undefined, fix);
+    // No other free story in this tab: stay on the posted one; only "← Desk" leaves the editor
+    if (!step.open) return;
     restApproveAfterAdvance();
     setTool(step.tool);
     leftPanel.setCollapsed(false);
@@ -1972,6 +1976,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           setNotice("The browser blocked the clipboard, so nothing was saved. Select the text in the box and copy it by hand, then try again.");
           return;
         }
+        // Same as a first Copy & Mark Posted: the card downloads too
+        void downloadFixCard();
       }
       const statusNow = () => socia.fetchDraft(id).then((d) => d.status as string, () => null);
       const wasTakenBack = async (err: unknown) => {
@@ -2420,7 +2426,19 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   // Correction mode: one action in place of the posting buttons. Copy & mark posted copies the fixed text, saves the
   // fix and goes to New; the story stays posted (nothing is posted or counted again)
+  // Editing a posted story: the card can be downloaded again (the fix flow had no download before)
+  const downloadFixCard = async () => {
+    if (fixDownloading) return;
+    setFixDownloading(true);
+    try {
+      const ok = bgMode ? await downloadBackgroundCard() : (await downloadCardImage()) !== "failed";
+      if (!ok) setNotice("The card didn't download. Try again.");
+    } finally {
+      setFixDownloading(false);
+    }
+  };
   const correctionButtons = (
+    <>
     <Tooltip title="Copies the fixed text, saves the fix and goes to New. The story stays posted.">
       <span>
         <Button
@@ -2436,6 +2454,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         </Button>
       </span>
     </Tooltip>
+    </>
   );
 
   const actionButtons = (onDark: boolean) => (correcting ? correctionButtons : (
@@ -2579,7 +2598,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
           {actionButtons(true)}
         </Box>
 
-        {correcting && live && <CorrectionBanner draft={live.draft} />}
+        
 
         <VolumeStrip name={meta.short} used={postedToday} cap={cap} />
 
@@ -3047,13 +3066,6 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                     {"This card is drawn on your X background from Post Studio → Templates: today's date, the headline and the whole story."}
                   </Typography>
                 )}
-                <Alert
-                  severity="info"
-                  sx={{ mt: 2, fontSize: "0.75rem", borderRadius: "8px" }}
-                  action={canEdit ? <Button color="inherit" size="small" onClick={() => (orgStart ? pickCardDesign(orgStart.slug) : void switchToAutoCard())} disabled={!!busy} sx={{ whiteSpace: "nowrap" }}>Design here</Button> : undefined}
-                >
-                  For a template, a photo or extra text, design the card here instead of using your background.
-                </Alert>
               </>
             )}
 
@@ -3084,9 +3096,6 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                               {useBgLabel}
                             </Button>
                           )}
-                          <Button size="small" onClick={() => setCardSource("design")} disabled={!!busy} sx={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>
-                            Design here
-                          </Button>
                         </Box>
                       )}
                     </Box>
@@ -3161,7 +3170,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               </Box>
             </Box>
 
-            {/* Contextual toolbar */}
+            {/* Contextual toolbar: only while something on the card is selected (no empty hint bar) */}
+            {selection && (
             <Box {...CANVAS_ARROWS} sx={{ ...floatingSx, position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", maxWidth: "calc(100% - 24px)", overflowX: "auto", display: "flex", alignItems: "center", gap: 0.5, px: 0.75, height: 42, borderRadius: "10px", whiteSpace: "nowrap" }}>
               {(selection === "headline" || activeLayer) && (
                 <>
@@ -3296,6 +3306,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 </Typography>
               )}
             </Box>
+            )}
 
             {orgMode && !orgImage.image && (
               <Box role={orgImage.error ? "alert" : "status"} sx={{ ...floatingSx, position: "absolute", left: 12, bottom: 12, display: "flex", alignItems: "center", gap: 1, px: 1.25, height: 36, borderRadius: "8px", fontSize: "0.75rem" }}>
@@ -3418,7 +3429,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 )}
                 {live.lease.kind === "read" && (
                   <Alert severity="info" sx={{ fontSize: "0.8125rem", borderRadius: "8px" }}>
-                    {!desk?.canAct ? "Your role can view posts but not publish them." : live.draft.status === "published" ? "This story is already posted. To fix it, press Edit on its row in Posted today." : "This story can't be edited right now."}
+                    {!desk?.canAct ? "Your role can view posts but not publish them." : live.draft.status === "published" ? "This story is already posted. To fix it, click its row in the list." : "This story can't be edited right now."}
                   </Alert>
                 )}
                 {stale !== null && (
@@ -3503,8 +3514,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
             <TagPicker label="Mentions" prefix="@" options={mentionRows} max={mentionMax} onChange={(o) => pickTags("@", o)} disabled={!!live && !canEdit} />
             {/* The story as it came from FTP, under the tags */}
             <Box>
-              <Typography sx={panelTitle}>Story from FTP</Typography>
+              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+                <Typography sx={panelTitle}>Story from FTP</Typography>
+              </Box>
               <Typography sx={{ fontSize: "0.9375rem", fontWeight: 600, lineHeight: 1.45 }}>{item.headline}</Typography>
+              <Box sx={{ display: "flex", justifyContent: "flex-end", mt: 1, mb: -0.5 }}>
+                <FtpCopyButton text={ftpCopyText(live?.draft.story.sourceText, item.body)} />
+              </Box>
               {phase1 ? (
                 <Typography lang="hi" sx={{ fontSize: "0.8125rem", lineHeight: 1.7, color: "text.secondary", mt: 1, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
                   {live?.draft.story.sourceText?.trim() || item.body}
@@ -3790,5 +3806,28 @@ function Phase1Checks({ story, takenBy, notPosted, retry }: { story: DraftView["
         </Alert>
       )}
     </Box>
+  );
+}
+
+/** Copies the story as it came from FTP (headline, text, file name) */
+function FtpCopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  return (
+    <Button
+      size="small"
+      variant="outlined"
+      color="inherit"
+      onClick={() => void navigator.clipboard.writeText(text).then(() => setCopied(true), () => undefined)}
+      aria-label="Copy the story from FTP"
+      startIcon={copied ? <Check size={12} /> : <Copy size={12} />}
+      sx={{ minWidth: 0, minHeight: 24, px: 0.75, py: 0, mb: 0.5, borderRadius: "6px", borderColor: "divider", textTransform: "none", fontSize: "0.6875rem", fontWeight: 700, "& .MuiButton-startIcon": { mr: 0.5 } }}
+    >
+      {copied ? "Copied" : "Copy"}
+    </Button>
   );
 }

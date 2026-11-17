@@ -1,9 +1,9 @@
 // Unit checks for deskRules.ts. The repo has no test runner; run with Node 22+ (type stripping) and the resolver
 // that accepts extensionless TypeScript imports:
 //   node --import ./src/components/Newsroom/BreakingDesk/video/timeline/__checks__/resolve-ts.mjs --test src/components/Newsroom/BreakingDesk/deskRules.test.ts
-import { test } from "node:test";
+import { describe, it, test } from "node:test";
 import assert from "node:assert/strict";
-import { adjacentStory, advanceCandidates, afterPost, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, freeForAdvance, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
+import { pattiNumber, adjacentStory, advanceCandidates, afterPost, ftpCopyText, sameTab, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, freeForAdvance, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
 
 const now = Date.parse("2026-11-11T07:13:00Z");
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -72,8 +72,9 @@ test("prev / next walk the queue's own order without wrapping", () => {
 
 test("after Copy & Mark Posted: the next story, the one before at the end, none when it was the last", () => {
   const order = [{ id: "a" }, { id: "b" }, { id: "c" }];
+  // Posting goes up: C posted opens B; the top story falls back to the one below
   assert.equal(storyAfterPosted(order, "a")?.id, "b");
-  assert.equal(storyAfterPosted(order, "b")?.id, "c");
+  assert.equal(storyAfterPosted(order, "b")?.id, "a");
   assert.equal(storyAfterPosted(order, "c")?.id, "b");
   assert.equal(storyAfterPosted([{ id: "a" }], "a"), undefined);
   assert.equal(storyAfterPosted(order, "gone"), undefined);
@@ -133,10 +134,11 @@ test("after a post the editor opens the next free story on the FTP feed; after a
 test("after posting: the stories to try run on after the posted one, then back before it, nearest first", () => {
   const order = [{ id: "a" }, { id: "b" }, { id: "p" }, { id: "c" }, { id: "d" }];
   const none = () => false;
-  assert.deepEqual(advanceCandidates(order, "p", none).map((s) => s.id), ["c", "d", "b", "a"]);
+  assert.deepEqual(advanceCandidates(order, "p", none).map((s) => s.id), ["b", "a", "c", "d"]);
   assert.deepEqual(advanceCandidates(order, "d", none).map((s) => s.id), ["c", "p", "b", "a"]);
+  assert.deepEqual(advanceCandidates(order, "a", none).map((s) => s.id), ["b", "p", "c", "d"]);
   // Taken stories are left out; none left means back to the desk
-  assert.deepEqual(advanceCandidates(order, "p", (s) => s.id === "c").map((s) => s.id), ["d", "b", "a"]);
+  assert.deepEqual(advanceCandidates(order, "p", (s) => s.id === "b").map((s) => s.id), ["a", "c", "d"]);
   assert.deepEqual(advanceCandidates([{ id: "p" }, { id: "x" }], "p", (s) => s.id === "x"), []);
   // A story not in the list (filtered out, or a posted one fixed from Posted today): from the top, taken ones left out
   assert.deepEqual(advanceCandidates(order, "gone", none).map((s) => s.id), ["a", "b", "p", "c", "d"]);
@@ -170,4 +172,40 @@ test("after posting: the pick skips held, edited-by-others and posted stories", 
   const editing = new Set(["open"]);
   const taken = (x: S) => !freeForAdvance(x.id, x.draft, editing);
   assert.deepEqual(advanceCandidates(order, "p", taken).map((x) => x.id), ["free", "last"]);
+});
+
+test("patti number comes from the file name", () => {
+  assert.equal(pattiNumber("nat_flash_rj_breaking_7920_yn_16NOV_control_ashvini_big"), "7920");
+  assert.equal(pattiNumber("nat_flash_rj_breaking_7920_yn_16NOV_control_ashvini_big.txt"), "7920");
+  assert.equal(pattiNumber("no_number_here"), null);
+  assert.equal(pattiNumber(null), null);
+});
+
+describe("after posting stays in the same tab and in the editor", () => {
+  const s = (id: string, big: boolean) => ({ id, big });
+  const order = [s("A", true), s("B", false), s("C", true), s("D", false), s("E", true)];
+  const tab = (x: { big: boolean }) => x.big;
+  it("keeps only the open story's tab", () => {
+    assert.deepEqual(sameTab(order, order[2], tab).map((x) => x.id), ["A", "C", "E"]);
+    assert.deepEqual(sameTab(order, order[3], tab).map((x) => x.id), ["B", "D"]);
+  });
+  it("never offers a story from the other tab", () => {
+    assert.equal(sameTab(order, order[1], tab).some((x) => x.big), false);
+  });
+  it("stays on the story when nothing else is in the tab", () => {
+    const only = sameTab([s("A", true), s("B", false)], s("B", false), tab);
+    assert.deepEqual(only.map((x) => x.id), ["B"]);
+    assert.equal(afterPost(undefined, false).open, null);
+    assert.equal(afterPost(undefined, true).open, null);
+  });
+});
+
+describe("FTP copy text", () => {
+  it("copies only the body", () => {
+    assert.equal(ftpCopyText("  body line  ", "queue body"), "body line");
+  });
+  it("falls back to the queue body when the FTP text is empty", () => {
+    assert.equal(ftpCopyText("", "queue body"), "queue body");
+    assert.equal(ftpCopyText(null, undefined), "");
+  });
 });

@@ -153,9 +153,11 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
             // Taken in the last seconds (or no longer workable): on to the next free story, else back to the desk
             const to = advanceTo.current;
             const next = advancePast(id, to.queueOrder ?? to.queue ?? []);
-            if (next) to.onSwitch(next);
-            else to.onClose();
-            return;
+            if (next) {
+              to.onSwitch(next);
+              return;
+            }
+            // None left: stay on this story (read-only if someone took it); only "← Desk" leaves the editor
           }
           dropAdvanceIntent(id);
         }

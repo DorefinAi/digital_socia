@@ -64,7 +64,7 @@ export function dayChipLabel(day: string): string {
 
 /** After a story is marked posted: the next story in the queue's order, else the one before, else none (back to the desk). */
 export function storyAfterPosted<T extends { id: string }>(stories: readonly T[], postedId: string): T | undefined {
-  return adjacentStory(stories, postedId, 1) ?? adjacentStory(stories, postedId, -1);
+  return adjacentStory(stories, postedId, -1) ?? adjacentStory(stories, postedId, 1);
 }
 
 /**
@@ -78,7 +78,7 @@ export function advanceCandidates<T extends { id: string }>(stories: readonly T[
   if (at < 0) return stories.filter((s) => !taken(s));
   const after = stories.slice(at + 1);
   const before = stories.slice(0, at).reverse();
-  return [...after, ...before].filter((s) => s.id !== postedId && !taken(s));
+  return [...before, ...after].filter((s) => s.id !== postedId && !taken(s));
 }
 
 /**
@@ -90,6 +90,17 @@ export type AfterPost<T> = { open: T; tool: "ftp"; returnTo: "queue" | undefined
 export function afterPost<T>(next: T | undefined, fix: boolean): AfterPost<T> {
   const returnTo = fix ? "queue" : undefined;
   return next ? { open: next, tool: "ftp", returnTo } : { open: null, returnTo };
+}
+
+/** The queue narrowed to the open story's tab (BIG Breaking or Breaking), so the pick after posting never flips tabs */
+export function sameTab<T extends { id: string }, K>(order: readonly T[], current: T, tabOf: (story: T) => K): T[] {
+  const tab = tabOf(current);
+  return order.filter((s) => s.id === current.id || tabOf(s) === tab);
+}
+
+/** Only the body of the FTP story is copied: never the headline or the file name */
+export function ftpCopyText(sourceText: string | null | undefined, body: string | null | undefined): string {
+  return sourceText?.trim() || body?.trim() || "";
 }
 
 /** The draft fields the pick after posting reads (a live queue item's status and claim) */
@@ -138,4 +149,11 @@ export function dayPriorityCounts<T>(
   tag: (story: T) => "big_breaking" | "breaking" | null | undefined,
 ): { all: number; big_breaking: number; breaking: number } {
   return priorityCounts(stories.filter((story) => dayOf(story) === day), tag);
+}
+
+/** The patti number in an FTP file name: the first all-digit part of 3+ digits ("nat_flash_rj_breaking_7920_yn_..." -> "7920") */
+export function pattiNumber(fileName: string | null | undefined): string | null {
+  if (!fileName) return null;
+  const base = fileName.split(/[\\/]/).pop()!.replace(/\.[a-z0-9]+$/i, "");
+  return base.split(/[_\-\s]+/).find((part) => /^\d{3,}$/.test(part)) ?? null;
 }
