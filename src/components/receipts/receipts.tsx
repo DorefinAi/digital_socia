@@ -58,8 +58,8 @@ const Receipts: React.FC = () => {
               Receipts
             </Typography>
             <Box sx={{ display: "flex", gap: "16px" }}>
-              <UsefulButton label="Import" textColor="#6D6E6F" onClick={() => console.log("Import")} />
-              <UsefulButton label="Export" textColor="#6D6E6F" onClick={() => console.log("Export")} />
+              <UsefulButton label="Import" textColor="#6D6E6F" />
+              <UsefulButton label="Export" textColor="#6D6E6F" />
             </Box>
           </Box>
           <Box sx={{ backgroundColor: "background.paper", borderRadius: "12px", padding: { xs: "14px", md: "18px" }, mb: "20px" }}>
@@ -94,7 +94,7 @@ const Receipts: React.FC = () => {
                   />
                 </Box>
                 <UsefulButton label="Filter" textColor="#6D6E6F" />
-                <UsefulButton label="Assign" textColor="#FFFFFF" backgroundColor="#6D6E6F" onClick={() => console.log("Assign Receipts")} />
+                <UsefulButton label="Assign" textColor="#FFFFFF" backgroundColor="#6D6E6F" />
               </Box>
             </Box>
             <ReceiptTable receipts={filteredReceipts} />

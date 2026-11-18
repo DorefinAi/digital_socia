@@ -47,8 +47,8 @@ const Properties: React.FC = () => {
               Properties
             </Typography>
             <Box sx={{ display: "flex", gap: "16px" }}>
-              <UsefulButton label="Import" textColor="#6D6E6F" onClick={() => console.log("Import")} />
-              <UsefulButton label="Export" textColor="#6D6E6F" onClick={() => console.log("Export")} />
+              <UsefulButton label="Import" textColor="#6D6E6F" />
+              <UsefulButton label="Export" textColor="#6D6E6F" />
             </Box>
           </Box>
           <Box sx={{ backgroundColor: "background.paper", borderRadius: "12px", padding: { xs: "14px", md: "18px" }, mb: "20px" }}>

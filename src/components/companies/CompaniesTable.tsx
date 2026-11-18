@@ -59,7 +59,7 @@ const CompaniesTable: React.FC<{ data: any[] }> = ({ data }) => {
               <TableCell>{company.users}</TableCell>
               <TableCell>{company.email}</TableCell>
               <TableCell align="right">
-                <IconButton size="small" onClick={() => console.log("Actions for", company.name)}>
+                <IconButton size="small">
                   <MoreVertIcon />
                 </IconButton>
               </TableCell>

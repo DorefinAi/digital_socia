@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useMemo, useEffect, ReactNode } from "react";
+import React, { createContext, useContext, useState, useMemo, useEffect, useCallback, ReactNode } from "react";
 import { ThemeProvider, createTheme, CssBaseline } from "@mui/material";
 
 type ThemeMode = "light" | "dark";
@@ -29,11 +29,14 @@ export default function MuiProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const toggleTheme = () => {
+  const toggleTheme = useCallback(() => {
     const newMode = mode === "light" ? "dark" : "light";
     setMode(newMode);
     localStorage.setItem("themeMode", newMode);
-  };
+  }, [mode]);
+
+  // Stable unless the mode changes, so useThemeMode() screens don't re-render with every parent render
+  const modeValue = useMemo(() => ({ mode, toggleTheme }), [mode, toggleTheme]);
 
   const theme = useMemo(
     () =>
@@ -131,7 +134,7 @@ export default function MuiProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <ThemeContext.Provider value={{ mode, toggleTheme }}>
+    <ThemeContext.Provider value={modeValue}>
       <ThemeProvider theme={theme}>
         <CssBaseline />
         {children}

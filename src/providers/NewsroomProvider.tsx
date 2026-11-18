@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef, ReactNode } from "react";
 import {
   Story,
   AIContent,
@@ -225,9 +225,11 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
 
   const fetchFtpNews = useCallback(() => runFtpFetch("manual"), [runFtpFetch]);
 
-  // The FTP is checked on a timer from every page; the backend's ingest worker does this for real
+  // The FTP is checked on a timer from every page; the backend's ingest worker does this for real.
+  // Demo only: the live screens read the server's queue, so in live mode this timer would only rewrite
+  // the stored demo data and re-render every desk screen every 20 seconds for nothing.
   useEffect(() => {
-    if (!mounted) return;
+    if (!mounted || !USE_MOCKS) return;
     scheduleNext.current = () => {
       clearTimeout(fetchTimer.current);
       fetchTimer.current = setTimeout(() => runFtpFetch("auto"), FTP_POLL_SECONDS * 1000);
@@ -317,9 +319,10 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  // Send scheduled posts when they fall due (the backend's publish worker does this for real)
+  // Send scheduled posts when they fall due (the backend's publish worker does this for real).
+  // Demo only, like the FTP timer above: live scheduling runs on the server.
   useEffect(() => {
-    if (!mounted) return;
+    if (!mounted || !USE_MOCKS) return;
     const tick = () => {
       const now = Date.now();
       setData((prev) => {
@@ -392,7 +395,8 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const unreadCount = USE_MOCKS ? (data?.notifications.filter((n) => !n.read).length ?? 0) : 0;
+  const notifications = data?.notifications;
+  const unreadCount = useMemo(() => (USE_MOCKS ? (notifications?.filter((n) => !n.read).length ?? 0) : 0), [notifications]);
 
   // ─── Activity ──────────────────────────────────────────────────────────
   const addActivity = useCallback((action: ActivityAction, actor: string, target: string, details?: string) => {
@@ -417,8 +421,11 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ─── Metrics ─────────────────────────────────────────────────────────
-  const metrics = (() => {
-    if (!data) {
+  // Worked out only when the stories or AI content change, not on every timer tick
+  const stories = data?.stories;
+  const aiContent = data?.aiContent;
+  const metrics = useMemo(() => {
+    if (!stories || !aiContent) {
       return {
         storiesPending: 0,
         storiesApproved: 0,
@@ -430,68 +437,78 @@ export function NewsroomProvider({ children }: { children: ReactNode }) {
     }
     const today = new Date().toDateString();
     return {
-      storiesPending: data.stories.filter((s) => ["pending_review", "pending_approval", "assigned"].includes(s.status)).length,
-      storiesApproved: data.stories.filter((s) => s.status === "approved").length,
-      storiesRejected: data.stories.filter((s) => s.status === "rejected").length,
-      aiGeneratedPosts: data.aiContent.length,
-      pendingAIApproval: data.aiContent.filter((c) => c.status === "pending").length,
-      publishedToday: data.stories.filter((s) => s.status === "published" && new Date(s.updatedAt).toDateString() === today).length,
+      storiesPending: stories.filter((s) => ["pending_review", "pending_approval", "assigned"].includes(s.status)).length,
+      storiesApproved: stories.filter((s) => s.status === "approved").length,
+      storiesRejected: stories.filter((s) => s.status === "rejected").length,
+      aiGeneratedPosts: aiContent.length,
+      pendingAIApproval: aiContent.filter((c) => c.status === "pending").length,
+      publishedToday: stories.filter((s) => s.status === "published" && new Date(s.updatedAt).toDateString() === today).length,
     };
-  })();
+  }, [stories, aiContent]);
 
+  // One stable object per data change: an inline object here re-rendered every useNewsroom() screen
+  // (the post editor, the desk) whenever this provider rendered, even when nothing they read had changed.
+  const value = useMemo<NewsroomContextType | null>(() => {
+    if (!data) return null;
+    return {
+      stories: data.stories,
+      aiContent: data.aiContent,
+      engagement: data.engagement,
+      activity: USE_MOCKS ? data.activity : NO_ACTIVITY,
+      notifications: USE_MOCKS ? data.notifications : NO_NOTIFICATIONS,
+      reporters: data.reporters,
+      updateStoryStatus,
+      updateStory,
+      addStory,
+      updateAIContentStatus,
+      updateAIContentCaption,
+      ftpNews: data.ftpNews,
+      socialPosts: data.socialPosts,
+      ftpSyncedAt: data.ftpSyncedAt,
+      fetchFtpNews,
+      ftpFetchLog: data.ftpFetchLog ?? [],
+      nextFetchAt,
+      publishSocialPost,
+      socialDrafts: data.socialDrafts,
+      pendingPosts,
+      queuePost,
+      undoPost,
+      dismissPending,
+      saveDraft,
+      scheduleDraft,
+      rejectDraft,
+      restoreDraft,
+      deleteDraft,
+      rescheduleDraft,
+      publishDraftNow,
+      recallPost,
+      hashtagRules: data.hashtagRules,
+      handleDirectory: data.handleDirectory,
+      saveHashtagRule,
+      deleteHashtagRule,
+      saveHandle,
+      deleteHandle,
+      markNotificationRead,
+      markAllNotificationsRead,
+      unreadCount,
+      addActivity,
+      resetDemo,
+      metrics,
+    };
+  }, [
+    data, updateStoryStatus, updateStory, addStory, updateAIContentStatus, updateAIContentCaption, fetchFtpNews, nextFetchAt,
+    publishSocialPost, pendingPosts, queuePost, undoPost, dismissPending, saveDraft, scheduleDraft, rejectDraft, restoreDraft,
+    deleteDraft, rescheduleDraft, publishDraftNow, recallPost, saveHashtagRule, deleteHashtagRule, saveHandle, deleteHandle,
+    markNotificationRead, markAllNotificationsRead, unreadCount, addActivity, resetDemo, metrics,
+  ]);
+
+  // `value` is set whenever `data` is
   if (!mounted || !data) return null;
 
-  return (
-    <NewsroomContext.Provider
-      value={{
-        stories: data.stories,
-        aiContent: data.aiContent,
-        engagement: data.engagement,
-        activity: USE_MOCKS ? data.activity : NO_ACTIVITY,
-        notifications: USE_MOCKS ? data.notifications : NO_NOTIFICATIONS,
-        reporters: data.reporters,
-        updateStoryStatus,
-        updateStory,
-        addStory,
-        updateAIContentStatus,
-        updateAIContentCaption,
-        ftpNews: data.ftpNews,
-        socialPosts: data.socialPosts,
-        ftpSyncedAt: data.ftpSyncedAt,
-        fetchFtpNews,
-        ftpFetchLog: data.ftpFetchLog ?? [],
-        nextFetchAt,
-        publishSocialPost,
-        socialDrafts: data.socialDrafts,
-        pendingPosts,
-        queuePost,
-        undoPost,
-        dismissPending,
-        saveDraft,
-        scheduleDraft,
-        rejectDraft,
-        restoreDraft,
-        deleteDraft,
-        rescheduleDraft,
-        publishDraftNow,
-        recallPost,
-        hashtagRules: data.hashtagRules,
-        handleDirectory: data.handleDirectory,
-        saveHashtagRule,
-        deleteHashtagRule,
-        saveHandle,
-        deleteHandle,
-        markNotificationRead,
-        markAllNotificationsRead,
-        unreadCount,
-        addActivity,
-        resetDemo,
-        metrics,
-      }}
-    >
-      {children}
-    </NewsroomContext.Provider>
-  );
+  // False alarm: a few callbacks in the value use refs (timers), but only when they run in a handler or
+  // timer, never while rendering. The inline object this replaces held the very same callbacks.
+  // eslint-disable-next-line react-hooks/refs
+  return <NewsroomContext.Provider value={value ?? undefined}>{children}</NewsroomContext.Provider>;
 }
 
 export function useNewsroom() {
