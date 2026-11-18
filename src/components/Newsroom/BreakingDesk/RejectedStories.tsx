@@ -84,7 +84,7 @@ export default function RejectedStories({ platform }: { platform: SocialPlatform
     ? desk.rejected.data
       ? desk.rejected.data.items.map((q) => {
           const item = queueToNews(q);
-          return { id: q.id, item, imageUrl: item.media[0]?.url ?? "", preview: q.bodyText, postText: q.bodyText, newsText: null, sourcePath: q.sourcePath || null, reason: q.rejectReason ? REJECT_REASONS[q.rejectReason] : null, note: q.rejectNote ?? null };
+          return { id: q.id, item, imageUrl: item.media[0]?.url ?? "", preview: q.bodyText ?? "", postText: q.bodyText ?? "", newsText: null, sourcePath: q.sourcePath || null, reason: q.rejectReason ? REJECT_REASONS[q.rejectReason] : null, note: q.rejectNote ?? null };
         })
       : null
     : socialDrafts

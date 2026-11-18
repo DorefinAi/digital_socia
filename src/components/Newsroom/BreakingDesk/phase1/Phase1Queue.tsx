@@ -22,6 +22,7 @@ import { Badge, NeedsCheckBadges, Phase1Badges, needsCheckHint, needsCheckLabel,
 import { ageTone } from "../deskRules";
 import { placeLine, reporterWithDistrict } from "../reporterLabel";
 import { canCorrect, editedLabel, needsCheckDescription } from "../live/correction";
+import { prefetchEditor } from "../LazyPostEditor";
 
 const AGE_COLOR = { fresh: "success.main", recent: "warning.main", old: "text.disabled" } as const;
 
@@ -274,6 +275,133 @@ function postedPreview(item: FtpNewsItem, live: QueueItem | null, loaded: Publis
   };
 }
 
+// Posted row looks, hoisted so a re-render builds nothing new
+const postedTimeColSx = { display: { xs: "none", md: "block" }, pt: 0.25 } as const;
+const postedClockSx = { fontSize: "0.8125rem", fontWeight: 600, fontVariantNumeric: "tabular-nums" } as const;
+const postedNoteSx = { fontSize: "0.6875rem", color: "text.secondary" } as const;
+const headlineSx = { mt: 0.5, fontSize: "0.9375rem", fontWeight: 600, lineHeight: 1.45, overflowWrap: "anywhere" } as const;
+const copiedLineSx = { mt: 0.5, fontSize: "0.75rem", color: "text.secondary" } as const;
+const editedMarkSx = { display: "inline-block", ml: 1, px: 0.625, borderRadius: "4px", border: "1px solid", borderColor: "divider", fontSize: "0.6875rem", fontWeight: 600, lineHeight: 1.6, color: "text.secondary", verticalAlign: "1px", "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } } as const;
+const postedActionsSx = { display: "flex", alignItems: "center", gap: 0.5, justifyContent: { xs: "flex-start", md: "flex-end" } } as const;
+const copyAgainSx = { width: 36, height: 36, borderRadius: "8px" } as const;
+const undoSx = { minHeight: 34, textTransform: "none", fontWeight: 600 } as const;
+const postedRowEditableSx = { ...rowSx, cursor: "pointer" } as const;
+
+/** When a row's Undo window closes (ms), or null when it has none */
+const undoEnds = (item: FtpNewsItem): number | null => {
+  const until = isLiveItem(item) ? item.live.posted?.undoUntil : undefined;
+  const t = until ? new Date(until).getTime() : NaN;
+  return Number.isFinite(t) ? t : null;
+};
+
+interface PostedRowProps {
+  item: FtpNewsItem;
+  canUndo: boolean;
+  editable: boolean;
+  /** The copy button shows its tick */
+  copiedHere: boolean;
+  undoingHere: boolean;
+  /** Some row is opening for a fix: every Edit waits */
+  editBusy: boolean;
+  editingHere: boolean;
+  onPreview: (item: FtpNewsItem) => void;
+  onCopy: (id: string, text: string) => void;
+  onEdit: (item: FtpNewsItem) => void;
+  onUndo: (id: string, headline: string) => void;
+}
+
+/** One posted story. Memoised: the list's state (copied tick, undo, preview) redraws only the rows it touches. */
+const PostedRow = React.memo(function PostedRow({ item, canUndo, editable, copiedHere, undoingHere, editBusy, editingHere, onPreview, onCopy, onEdit, onUndo }: PostedRowProps) {
+  const live = isLiveItem(item) ? item.live : null;
+  const posted = live?.posted;
+  const edited = editedLabel(live?.corrected);
+  return (
+    <Box
+      role="listitem"
+      // A click anywhere on the row (not on its own buttons) opens the story for editing, like Edit
+      onClick={editable && !editBusy ? (e: React.MouseEvent) => !(e.target as HTMLElement).closest("button, a, [tabindex], [role='dialog']") && onEdit(item) : undefined}
+      sx={editable ? postedRowEditableSx : rowSx}
+    >
+      <Box sx={postedTimeColSx}>
+        <Typography sx={postedClockSx}>{posted ? clock(posted.at) : "-"}</Typography>
+        <Typography sx={postedNoteSx}>posted</Typography>
+      </Box>
+      <Box sx={{ minWidth: 0 }}>
+        {live && <RowMeta live={live} />}
+        <Typography lang="hi" sx={headlineSx}>
+          <PattiPrefix live={live} />
+          {item.headline || "No headline"}
+        </Typography>
+        {live?.postText && <PostText text={live.postText} />}
+        {posted && (
+          <Typography sx={copiedLineSx}>
+            {posted.by ? `Copied by ${posted.by.name}` : "Copied"} at {clock(posted.at)}, file in at {clock(item.receivedAt)}
+            {edited && (
+              // Focusable, so keyboard users get the tooltip too; screen readers hear "Edited" and then who and when
+              <>
+                <Tooltip title={edited} describeChild>
+                  <Box component="span" tabIndex={0} aria-describedby={`edited-${item.id}`} data-testid="edited-mark" sx={editedMarkSx}>
+                    Edited
+                  </Box>
+                </Tooltip>
+                <Box component="span" id={`edited-${item.id}`} sx={srOnly}>
+                  {edited}
+                </Box>
+              </>
+            )}
+          </Typography>
+        )}
+      </Box>
+      <Box sx={postedActionsSx}>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => onPreview(item)}
+          startIcon={<Eye size={14} />}
+          aria-label={`Preview what was posted: ${item.headline || "No headline"}`}
+          aria-haspopup="dialog"
+          sx={previewSx}
+        >
+          Preview
+        </Button>
+        {live?.postText && (
+          <Tooltip title={copiedHere ? "Copied" : "Copy the post again"}>
+            <IconButton size="small" onClick={() => onCopy(item.id, live.postText ?? "")} aria-label={`Copy the post again: ${item.headline}`} sx={copyAgainSx}>
+              {copiedHere ? <Check size={15} color={X_COLORS.blue} /> : <Copy size={15} />}
+            </IconButton>
+          </Tooltip>
+        )}
+        {editable && (
+          <Tooltip title="Fix the text or card. It stays posted; copy the fixed text and edit the tweet on X by hand.">
+            <span>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => onEdit(item)}
+                disabled={editBusy}
+                startIcon={editingHere ? <CircularProgress size={13} color="inherit" /> : <PenLine size={14} />}
+                aria-label={`Edit the posted story: ${item.headline || "No headline"}`}
+                sx={previewSx}
+              >
+                Edit
+              </Button>
+            </span>
+          </Tooltip>
+        )}
+        {canUndo && (
+          <Tooltip title="Back to the queue (possible for 5 minutes after posting). Delete it on X by hand if it went out.">
+            <span>
+              <Button size="small" onClick={() => onUndo(item.id, item.headline)} disabled={undoingHere} startIcon={<Undo2 size={14} />} sx={undoSx}>
+                Undo
+              </Button>
+            </span>
+          </Tooltip>
+        )}
+      </Box>
+    </Box>
+  );
+});
+
 /** Phase 1 Posted tab: posts marked with Copy & Mark Posted, newest first, with Undo inside the server's window. */
 export function Phase1PostedList({
   items,
@@ -301,132 +429,81 @@ export function Phase1PostedList({
   }, [desk?.posts.data]);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(copiedTimer.current), []);
-  // Undo buttons disappear when their window closes
+  // Undo buttons disappear when their window closes: one timer for the next window to close, so the list redraws
+  // only then (it used to redraw every 15 s, and an Undo could outlive its window by up to 15 s)
+  const nextUndoEnd = useMemo(() => {
+    let next = Infinity;
+    for (const item of items) {
+      const t = undoEnds(item);
+      if (t !== null && t > now && t < next) next = t;
+    }
+    return next;
+  }, [items, now]);
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 15_000);
-    return () => clearInterval(t);
+    if (!Number.isFinite(nextUndoEnd)) return;
+    // Capped at a minute, so a far-off time (or a laptop waking from sleep) is checked again soon
+    const t = setTimeout(() => setNow(Date.now()), Math.min(Math.max(0, nextUndoEnd - Date.now()) + 50, 60_000));
+    return () => clearTimeout(t);
+  }, [nextUndoEnd]);
+
+  // The row callbacks never change (they read the latest props through a ref), so the memoised rows redraw only
+  // when their own story or state does
+  const latest = useRef({ desk, onEdit, onNotice, editing, records });
+  useEffect(() => {
+    latest.current = { desk, onEdit, onNotice, editing, records };
+  });
+  const onCopy = useCallback((id: string, text: string) => {
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        setCopied(id);
+        clearTimeout(copiedTimer.current);
+        copiedTimer.current = setTimeout(() => setCopied((c) => (c === id ? null : c)), 1600);
+      },
+      () => latest.current.onNotice("The browser blocked the clipboard. Open the post and copy the text by hand."),
+    );
+  }, []);
+  const onEditRow = useCallback((item: FtpNewsItem) => {
+    const { onEdit: run, editing: busy } = latest.current;
+    if (!run || busy) return;
+    // Marked at once, so a second click before the redraw is ignored too
+    latest.current.editing = item.id;
+    setEditing(item.id);
+    void run(item).finally(() => setEditing(null));
+  }, []);
+  const onUndo = useCallback((id: string, headline: string) => {
+    const d = latest.current.desk;
+    if (!d) return;
+    setUndoing(id);
+    void d.undoCopied(id).then((error) => {
+      setUndoing(null);
+      latest.current.onNotice(error ?? `"${headline}" is back in the queue.`);
+    });
+  }, []);
+  const onPreview = useCallback((item: FtpNewsItem) => {
+    setPreviewing(postedPreview(item, isLiveItem(item) ? item.live : null, latest.current.records.get(item.id)));
   }, []);
 
-  const copy = async (id: string, text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(id);
-      clearTimeout(copiedTimer.current);
-      copiedTimer.current = setTimeout(() => setCopied((c) => (c === id ? null : c)), 1600);
-    } catch {
-      onNotice("The browser blocked the clipboard. Open the post and copy the text by hand.");
-    }
-  };
-  const edit = async (item: FtpNewsItem) => {
-    if (!onEdit || editing) return;
-    setEditing(item.id);
-    try {
-      await onEdit(item);
-    } finally {
-      setEditing(null);
-    }
-  };
-  const undo = async (id: string, headline: string) => {
-    if (!desk) return;
-    setUndoing(id);
-    const error = await desk.undoCopied(id);
-    setUndoing(null);
-    onNotice(error ?? `"${headline}" is back in the queue.`);
-  };
-
+  const deskCanAct = !!desk?.canAct;
   return (
-    <Box role="list" aria-label="Posted" sx={frameSx}>
+    // Hovering or focusing the list starts loading the editor's code, so Edit opens without a wait
+    <Box role="list" aria-label="Posted" sx={frameSx} onPointerEnter={onEdit ? prefetchEditor : undefined} onFocus={onEdit ? prefetchEditor : undefined}>
       {items.map((item) => {
-        const live = isLiveItem(item) ? item.live : null;
-        const posted = live?.posted;
-        const canUndo = mayUndo && !!posted?.undoUntil && new Date(posted.undoUntil).getTime() > now;
-        const editable = !!onEdit && !!desk?.canAct && canCorrect(live);
-        const edited = editedLabel(live?.corrected);
+        const ends = undoEnds(item);
         return (
-          <Box
+          <PostedRow
             key={item.id}
-            role="listitem"
-            // A click anywhere on the row (not on its own buttons) opens the story for editing, like Edit
-            onClick={editable && !editing ? (e: React.MouseEvent) => !(e.target as HTMLElement).closest("button, a, [tabindex], [role='dialog']") && void edit(item) : undefined}
-            sx={[rowSx, editable ? { cursor: "pointer" } : {}]}
-          >
-            <Box sx={{ display: { xs: "none", md: "block" }, pt: 0.25 }}>
-              <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{posted ? clock(posted.at) : "-"}</Typography>
-              <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary" }}>posted</Typography>
-            </Box>
-            <Box sx={{ minWidth: 0 }}>
-              {live && <RowMeta live={live} />}
-              <Typography lang="hi" sx={{ mt: 0.5, fontSize: "0.9375rem", fontWeight: 600, lineHeight: 1.45, overflowWrap: "anywhere" }}>
-                <PattiPrefix live={live} />
-                {item.headline || "No headline"}
-              </Typography>
-              {live?.postText && <PostText text={live.postText} />}
-              {posted && (
-                <Typography sx={{ mt: 0.5, fontSize: "0.75rem", color: "text.secondary" }}>
-                  {posted.by ? `Copied by ${posted.by.name}` : "Copied"} at {clock(posted.at)}, file in at {clock(item.receivedAt)}
-                  {edited && (
-                    // Focusable, so keyboard users get the tooltip too; screen readers hear "Edited" and then who and when
-                    <>
-                      <Tooltip title={edited} describeChild>
-                        <Box component="span" tabIndex={0} aria-describedby={`edited-${item.id}`} data-testid="edited-mark" sx={{ display: "inline-block", ml: 1, px: 0.625, borderRadius: "4px", border: "1px solid", borderColor: "divider", fontSize: "0.6875rem", fontWeight: 600, lineHeight: 1.6, color: "text.secondary", verticalAlign: "1px", "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}>
-                          Edited
-                        </Box>
-                      </Tooltip>
-                      <Box component="span" id={`edited-${item.id}`} sx={srOnly}>
-                        {edited}
-                      </Box>
-                    </>
-                  )}
-                </Typography>
-              )}
-            </Box>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, justifyContent: { xs: "flex-start", md: "flex-end" } }}>
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => setPreviewing(postedPreview(item, live, records.get(item.id)))}
-                startIcon={<Eye size={14} />}
-                aria-label={`Preview what was posted: ${item.headline || "No headline"}`}
-                aria-haspopup="dialog"
-                sx={previewSx}
-              >
-                Preview
-              </Button>
-              {live?.postText && (
-                <Tooltip title={copied === item.id ? "Copied" : "Copy the post again"}>
-                  <IconButton size="small" onClick={() => void copy(item.id, live.postText ?? "")} aria-label={`Copy the post again: ${item.headline}`} sx={{ width: 36, height: 36, borderRadius: "8px" }}>
-                    {copied === item.id ? <Check size={15} color={X_COLORS.blue} /> : <Copy size={15} />}
-                  </IconButton>
-                </Tooltip>
-              )}
-              {editable && (
-                <Tooltip title="Fix the text or card. It stays posted; copy the fixed text and edit the tweet on X by hand.">
-                  <span>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      onClick={() => void edit(item)}
-                      disabled={!!editing}
-                      startIcon={editing === item.id ? <CircularProgress size={13} color="inherit" /> : <PenLine size={14} />}
-                      aria-label={`Edit the posted story: ${item.headline || "No headline"}`}
-                      sx={previewSx}
-                    >
-                      Edit
-                    </Button>
-                  </span>
-                </Tooltip>
-              )}
-              {canUndo && (
-                <Tooltip title="Back to the queue (possible for 5 minutes after posting). Delete it on X by hand if it went out.">
-                  <span>
-                    <Button size="small" onClick={() => void undo(item.id, item.headline)} disabled={undoing === item.id} startIcon={<Undo2 size={14} />} sx={{ minHeight: 34, textTransform: "none", fontWeight: 600 }}>
-                      Undo
-                    </Button>
-                  </span>
-                </Tooltip>
-              )}
-            </Box>
-          </Box>
+            item={item}
+            canUndo={mayUndo && ends !== null && ends > now}
+            editable={!!onEdit && deskCanAct && canCorrect(isLiveItem(item) ? item.live : null)}
+            copiedHere={copied === item.id}
+            undoingHere={undoing === item.id}
+            editBusy={!!editing}
+            editingHere={editing === item.id}
+            onPreview={onPreview}
+            onCopy={onCopy}
+            onEdit={onEditRow}
+            onUndo={onUndo}
+          />
         );
       })}
       {previewing && <PostedPreviewDialog post={previewing} onClose={() => setPreviewing(null)} />}

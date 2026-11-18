@@ -2,7 +2,7 @@
 
 import { ApiError, api, sendKeepalive, setCsrfToken } from "./client";
 import { SOCIA_API_URL } from "./config";
-import { QUEUE_PAGE_MAX, type QueueDay, readQueueView } from "./queueDay";
+import { QUEUE_PAGE_MAX, type QueueDay, queuePath, readQueueView } from "./queueDay";
 import type {
   CardTemplateLayout, CopyPostedResult, Counts, DeskHandle, DraftPatch, HandleSearchItem, QueueFacets, QueueQuery, DraftView, IngestStatus, Me, OrgCardTemplate, OrgCardTemplateLayout, OrgCardTemplatePatch, PostCheck, PublishedPost, QueueResponse, QueueView, RejectReasonCode, SignInStep, StorySearchResponse, UserCardTemplate,
 } from "./types";
@@ -35,30 +35,27 @@ export async function logout() {
 }
 
 // ─── Queue ───────────────────────────────────────────────────────────────────
-/** `query` filters on the server (phase1-contract.md §1); unset fields are left out */
-export function fetchQueue(view: QueueView, limit = 100, query?: QueueQuery, before?: string, signal?: AbortSignal) {
-  const params = new URLSearchParams({ view, limit: String(limit) });
-  if (before) params.set("before", before);
-  if (query?.district) params.set("district", query.district);
-  if (query?.desk) params.set("desk", query.desk);
-  if (query?.big !== undefined) params.set("big", String(query.big));
-  if (query?.update !== undefined) params.set("update", String(query.update));
-  if (query?.needsCheck !== undefined) params.set("needsCheck", String(query.needsCheck));
-  if (query?.day) params.set("day", query.day);
-  return api<QueueResponse>("GET", `/x/queue?${params}`, undefined, { signal });
+/**
+ * `query` filters on the server (phase1-contract.md §1); unset fields are left out. `fields: "list"`: slim inbox
+ * rows (no postText, bodyText, storyBody, cardUrl, length), for the phase 1 inbox lists only. The browser
+ * revalidates with the server's ETag ("no-cache"), so an unchanged page costs a 304.
+ */
+export function fetchQueue(view: QueueView, limit = 100, query?: QueueQuery, before?: string, signal?: AbortSignal, fields?: "list") {
+  return api<QueueResponse>("GET", queuePath(view, limit, query, before, fields), undefined, { signal, cache: "no-cache" });
 }
-export { QUEUE_DAY_PAGES, QUEUE_PAGE_MAX, mergeQueueHead, type QueueDay } from "./queueDay";
+export { QUEUE_DAY_PAGES, QUEUE_PAGE_MAX, mergeQueueHead, queuePath, type QueueDay } from "./queueDay";
 
 /**
  * Every story of one IST day (`query.day`), page by page (queueDay.readQueueDay), so the desk can count the
  * whole day. Without a day it reads one page only: the undated inbox has no end worth reading.
  */
-export async function fetchQueueDay(view: QueueView, query?: QueueQuery, signal?: AbortSignal): Promise<QueueDay> {
-  return readQueueView((before, s) => fetchQueue(view, QUEUE_PAGE_MAX, query, before, s), !!query?.day, signal);
+export async function fetchQueueDay(view: QueueView, query?: QueueQuery, signal?: AbortSignal, fields?: "list"): Promise<QueueDay> {
+  return readQueueView((before, s) => fetchQueue(view, QUEUE_PAGE_MAX, query, before, s, fields), !!query?.day, signal);
 }
 /** Counts for the queue filters over the whole view (phase 1) */
-export const fetchQueueFacets = (view: "inbox" | "posted") => api<QueueFacets>("GET", `/x/queue/facets?view=${view}`);
-export const fetchCounts = () => api<Counts>("GET", "/x/counts");
+export const fetchQueueFacets = (view: "inbox" | "posted") => api<QueueFacets>("GET", `/x/queue/facets?view=${view}`, undefined, { cache: "no-cache" });
+/** ETag-revalidated like the queue ("no-cache") */
+export const fetchCounts = () => api<Counts>("GET", "/x/counts", undefined, { cache: "no-cache" });
 
 // ─── Draft ───────────────────────────────────────────────────────────────────
 export const fetchDraft = (id: string) => api<DraftView>("GET", `/drafts/${enc(id)}`);
@@ -134,7 +131,8 @@ export const liveTakeoverAnswer = (clientId: string, draftId: string, requesterI
   api<LiveAnswer>("POST", "/live/takeover/answer", { clientId, draftId, requesterId, accept });
 
 // ─── Published ───────────────────────────────────────────────────────────────
-export const fetchPosts = (limit = 50) => api<{ items: PublishedPost[] }>("GET", `/posts?limit=${limit}`);
+// Polled: revalidates with the API's ETag, so an unchanged list comes back as a body-less 304
+export const fetchPosts = (limit = 50) => api<{ items: PublishedPost[] }>("GET", `/posts?limit=${limit}`, undefined, { cache: "no-cache" });
 export const recallPost = (id: string, reason: string) => api<{ jobId: string }>("POST", `/posts/${enc(id)}/recall`, { reason });
 
 // ─── Card background (one per user per platform) ─────────────────────────────

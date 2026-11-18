@@ -38,13 +38,11 @@ import type {
   OrgCardTemplate,
 } from "@/lib/socia/types";
 import type { FtpMedia, FtpNewsItem, SocialPost } from "@/types/newsroom";
-import { draftCardHeadline, queueCardBody } from "../cardWords";
+import { draftCardHeadline } from "../cardWords";
+import { queueRowToNews, type LiveNewsItem } from "./queueNews";
 import { istToday } from "../deskRules";
 
-/** A queue or feed story on the live desk: the demo shape plus the draft it came from. */
-export interface LiveNewsItem extends FtpNewsItem {
-  live: QueueItem;
-}
+export type { LiveNewsItem };
 
 export const isLiveItem = (item: FtpNewsItem): item is LiveNewsItem =>
   "live" in item;
@@ -95,7 +93,16 @@ const LIVE_TAG = "breaking" as const;
  * Module-level and bounded; a poll brings at most a few hundred items.
  */
 const newsCache = new Map<string, { key: string; news: LiveNewsItem }>();
+// A row object already turned into a story (the held day keeps its rows between reads) needs no string compare
+const newsByRow = new WeakMap<QueueItem, LiveNewsItem>();
 export function stableQueueToNews(item: QueueItem): LiveNewsItem {
+  const seen = newsByRow.get(item);
+  if (seen) return seen;
+  const news = stableByData(item);
+  newsByRow.set(item, news);
+  return news;
+}
+function stableByData(item: QueueItem): LiveNewsItem {
   const key = JSON.stringify(item);
   const hit = newsCache.get(item.id);
   if (hit && hit.key === key) return hit.news;
@@ -120,24 +127,9 @@ export function credentialsFor(url: string): RequestCredentials {
   }
 }
 
+/** A queue row in the desk's story shape; slim inbox rows (fields=list) give "" for the text they lack */
 export function queueToNews(item: QueueItem): LiveNewsItem {
-  return {
-    id: item.id,
-    headline: item.headline,
-    // Cards drawn from this row (list thumbnails) read the story, like the editor's card; the post text is shortText
-    body: queueCardBody(item),
-    shortText: item.bodyText,
-    tag: LIVE_TAG,
-    area: item.district ?? "",
-    people: [],
-    ftpPath: item.slug,
-    // The queue lists the drawn card, not the photos; the editor loads the photos from the draft
-    media: [
-      { kind: "image", url: fileUrl(item.cardUrl), fileName: "card.png" },
-    ],
-    receivedAt: item.receivedAt,
-    live: item,
-  };
+  return queueRowToNews(item, fileUrl);
 }
 
 /** Footage the editor can draw on: copied photos and videos (files only recorded on the FTP have no link). */
@@ -240,8 +232,11 @@ interface LiveDeskValue {
   facets: { inbox: Polled<QueueFacets>; posted: Polled<QueueFacets> };
   /** Stories just marked with Copy & Mark Posted that the Posted list hasn't returned yet (shown green at once) */
   optimisticPosted: LiveNewsItem[];
-  /** Copy & Mark Posted went through: show the toast with Undo */
-  addCopied: (p: { draftId: string; postId: string; headline: string; undoUntil: string; withCard: boolean }) => void;
+  /**
+   * Copy & Mark Posted went through: show the toast with Undo. `postText`: what was copied, for the Posted row
+   * shown until the Posted list returns it (the slim inbox row has none; without it the draft is read once).
+   */
+  addCopied: (p: { draftId: string; postId: string; headline: string; undoUntil: string; withCard: boolean; postText?: string }) => void;
   /** Undo a Copy & Mark Posted from the Posted list (within the server's window). Resolves to an error sentence or null. */
   undoCopied: (draftId: string) => Promise<string | null>;
   /** Polls everything now; resolves to the number of stories that were not in the inbox before */
@@ -266,6 +261,12 @@ interface LiveDeskValue {
   restore: (draftId: string) => Promise<string | null>;
   retry: (draftId: string) => Promise<string | null>;
   recall: (postId: string, reason: string) => Promise<string | null>;
+  /**
+   * The story editor opened (true) or closed (false); a stable function. While it is open the lists it hides
+   * (Posted, Rejected, the filter counts, the shared card designs once loaded) stop polling, and they are read
+   * once again when it closes. The inbox and the counts keep polling.
+   */
+  setEditorOpen: (open: boolean) => void;
 }
 
 const LiveDeskContext = createContext<LiveDeskValue | null>(null);
@@ -284,6 +285,11 @@ const tryAction = async (fn: () => Promise<unknown>) => {
 
 /** How often the whole chosen day is read again; between reads only its first page is (every POLL_MS.queue) */
 const DAY_REREAD_MS = 60_000;
+/**
+ * The 5 s tick's first page: newer stories than this in one tick (rare) leave the head unjoinable and the whole
+ * day is read again (mergeQueueHead). Small, so the poll is cheap.
+ */
+const HEAD_LIMIT = 50;
 
 /**
  * `templatesOnly`: for Post Studio → Templates, which needs only the card templates, the actions on them and
@@ -314,6 +320,10 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
   // While an earlier day is shown, today's inbox is still watched so new arrivals can be announced
   const todayIst = istToday();
   const pastDay = phase1 && !!queueQuery.day && queueQuery.day !== todayIst;
+  // The editor covers the lists, so the ones only the lists show rest while it is open (BreakingDesk sets it).
+  // Turning them back on reads them at once, which is the catch-up when the editor closes.
+  const [editorOpen, setEditorOpen] = useState(false);
+  const listsOn = phaseKnown && !editorOpen;
 
   // Phase 1 holds the whole chosen day, so its All / BIG Breaking / Breaking counts are the day's. Every page is
   // read when the day changes, on the refresh icon, after a failed read (so Try again reads it all), and every
@@ -328,14 +338,15 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
         if (!phase1) return (lastInbox.current = { ...(await socia.fetchQueue("inbox", 200, undefined, undefined, signal)), truncated: false });
         const held = dayHeld.current;
         if (held && held.key === queryKey && !rereadDay.current && Date.now() - held.readAt < DAY_REREAD_MS) {
-          const head = await socia.fetchQueue("inbox", socia.QUEUE_PAGE_MAX, inboxQuery, undefined, signal);
+          // Slim rows (fields=list): the list needs no post text, body or card link; the editor reads the draft
+          const head = await socia.fetchQueue("inbox", HEAD_LIMIT, inboxQuery, undefined, signal, "list");
           const merged = socia.mergeQueueHead(head, held.day);
           if (merged) {
             dayHeld.current = { ...held, day: merged };
             return (lastInbox.current = merged);
           }
         }
-        const whole = await socia.fetchQueueDay("inbox", inboxQuery, signal);
+        const whole = await socia.fetchQueueDay("inbox", inboxQuery, signal, "list");
         dayHeld.current = { key: queryKey, day: whole, readAt: Date.now() };
         rereadDay.current = false;
         return (lastInbox.current = whole);
@@ -366,24 +377,24 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
     () => socia.fetchQueue("posted", 200, postedQuery),
     POLL_MS.posts,
     `posted${postedKey}`,
-    phaseKnown && phase1,
+    listsOn && phase1,
   );
   const todayInbox = usePolled(
-    (signal) => socia.fetchQueue("inbox", 200, { day: todayIst ?? undefined }, undefined, signal),
+    (signal) => socia.fetchQueue("inbox", 200, { day: todayIst ?? undefined }, undefined, signal, "list"),
     POLL_MS.queue,
     `inbox-today${todayIst}`,
     phaseKnown && pastDay,
   );
-  const inboxFacets = usePolled(() => socia.fetchQueueFacets("inbox"), POLL_MS.counts, "facets-inbox", phaseKnown && phase1);
-  const postedFacets = usePolled(() => socia.fetchQueueFacets("posted"), POLL_MS.counts, "facets-posted", phaseKnown && phase1);
+  const inboxFacets = usePolled(() => socia.fetchQueueFacets("inbox"), POLL_MS.counts, "facets-inbox", listsOn && phase1);
+  const postedFacets = usePolled(() => socia.fetchQueueFacets("posted"), POLL_MS.counts, "facets-posted", listsOn && phase1);
   const facets = useMemo(() => ({ inbox: inboxFacets, posted: postedFacets }), [inboxFacets, postedFacets]);
   const rejected = usePolled(
     () => socia.fetchQueue("rejected", 100),
     POLL_MS.counts,
     "rejected",
-    phaseKnown,
+    listsOn,
   );
-  const posts = usePolled(() => socia.fetchPosts(100), POLL_MS.posts, "posts", phaseKnown);
+  const posts = usePolled(() => socia.fetchPosts(100), POLL_MS.posts, "posts", listsOn);
   const counts = usePolled(
     () => socia.fetchCountsOrDerive(),
     POLL_MS.counts,
@@ -391,14 +402,24 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
     phaseKnown,
   );
 
-  // Changes only from the Templates page, which refreshes it; the slow poll picks up another tab's change
+  // Changes only from the Templates page, which refreshes it; the slow poll picks up another tab's change.
+  // The open editor draws with these, so they rest only once they have answered (it waits for the designs)
+  const [templatesReady, setTemplatesReady] = useState({ own: false, org: false });
   const cardTemplate = usePolled(
     () => socia.fetchCardTemplate("x"),
     POLL_MS.cardTemplate,
     "card-template",
-    phaseRead,
+    phaseRead && !(editorOpen && templatesReady.own),
   );
-  const orgCardTemplates = usePolled(() => socia.fetchOrgCardTemplates("x"), POLL_MS.cardTemplate, "org-card-templates", phaseRead);
+  const orgCardTemplates = usePolled(
+    () => socia.fetchOrgCardTemplates("x"),
+    POLL_MS.cardTemplate,
+    "org-card-templates",
+    phaseRead && !(editorOpen && templatesReady.org),
+  );
+  const ownAnswered = cardTemplate.data !== null;
+  const orgAnswered = orgCardTemplates.data !== null;
+  if (ownAnswered !== templatesReady.own || orgAnswered !== templatesReady.org) setTemplatesReady({ own: ownAnswered, org: orgAnswered });
 
   const queue = useMemo(
     () => (inbox.data?.items ?? []).map(stableQueueToNews),
@@ -412,11 +433,16 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
       ? [refreshInbox, rejected.refresh, posts.refresh, counts.refresh, postedView.refresh, inboxFacets.refresh, postedFacets.refresh]
       : [refreshInbox, sending.refresh, failed.refresh, rejected.refresh, posts.refresh, counts.refresh];
   const refreshers = useRef(pollers());
-  // The same pollers' soft refresh, for live queue events: never cancels a read already running
+  // The same pollers' soft refresh, for live queue events: never cancels a read already running. While the editor
+  // is open the resting lists are left out too; they catch up when it closes
   const nudgers = () =>
-    phase1
-      ? [inbox.nudge, rejected.nudge, posts.nudge, counts.nudge, postedView.nudge, inboxFacets.nudge, postedFacets.nudge]
-      : [inbox.nudge, sending.nudge, failed.nudge, rejected.nudge, posts.nudge, counts.nudge];
+    editorOpen
+      ? phase1
+        ? [inbox.nudge, counts.nudge]
+        : [inbox.nudge, sending.nudge, failed.nudge, counts.nudge]
+      : phase1
+        ? [inbox.nudge, rejected.nudge, posts.nudge, counts.nudge, postedView.nudge, inboxFacets.nudge, postedFacets.nudge]
+        : [inbox.nudge, sending.nudge, failed.nudge, rejected.nudge, posts.nudge, counts.nudge];
   const nudges = useRef(nudgers());
   useEffect(() => {
     refreshers.current = pollers();
@@ -438,7 +464,7 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
   }, []);
   // The refresh icon: a one-story check that rejects when the queue cannot be loaded, then the whole day again
   const refreshStrict = useCallback(async () => {
-    await socia.fetchQueue("inbox", 1, phase1 ? inboxQuery : undefined);
+    await socia.fetchQueue("inbox", 1, phase1 ? inboxQuery : undefined, undefined, undefined, phase1 ? "list" : undefined);
     rereadDay.current = true;
     await Promise.all(refreshers.current.map((r) => r()));
   }, [phase1, inboxQuery]);
@@ -580,10 +606,26 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
   );
 
   const addCopied = useCallback(
-    (c: { draftId: string; postId: string; headline: string; undoUntil: string; withCard: boolean }) => {
+    (c: { draftId: string; postId: string; headline: string; undoUntil: string; withCard: boolean; postText?: string }) => {
       const id = `copied:${c.postId}`;
       const row = inbox.data?.items.find((i) => i.id === c.draftId);
-      if (row) setOptimistic((m) => new Map(m).set(c.draftId, stableQueueToNews({ ...row, claim: null } as QueueItem)));
+      if (row) {
+        const posted: QueueItem = { ...row, claim: null, ...(c.postText !== undefined ? { postText: c.postText } : {}) };
+        setOptimistic((m) => new Map(m).set(c.draftId, stableQueueToNews(posted)));
+        // A slim inbox row has no post text or card: read them from the draft, so Copy again and the preview work
+        // before the Posted list returns the story
+        if (posted.postText === undefined || posted.cardUrl === undefined) {
+          void socia.fetchDraft(c.draftId).then(
+            (d) =>
+              setOptimistic((m) => {
+                if (!m.has(c.draftId)) return m;
+                const full: QueueItem = { ...posted, postText: posted.postText ?? d.postText, bodyText: posted.bodyText ?? d.bodyText, cardUrl: posted.cardUrl ?? d.card.url };
+                return new Map(m).set(c.draftId, stableQueueToNews(full));
+              }),
+            () => undefined,
+          );
+        }
+      }
       clearTimeout(timers.current.get(id));
       setPending((list) => [
         ...list.filter((x) => x.id !== id),
@@ -719,6 +761,7 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
       restore,
       retry,
       recall,
+      setEditorOpen,
     }),
     [
       canAct,

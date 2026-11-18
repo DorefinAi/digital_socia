@@ -10,7 +10,8 @@ import { useNewsroom } from "@/providers/NewsroomProvider";
 import { BreakingTag, FtpNewsItem, PostPayload, SocialPlatform } from "@/types/newsroom";
 import { usePermissions } from "@/lib/access/usePermissions";
 import { DAILY_CAP, draftToPayload, isLiveOn } from "@/data/socialDesk";
-import PostEditor from "./PostEditor";
+// The editor loads in its own chunk on first use; hovering or focusing the list starts the download
+import PostEditor, { prefetchEditor } from "./LazyPostEditor";
 import PostedPostsList from "./PostedPostsList";
 import { RejectDialog } from "./actionDialogs";
 import { ScheduledList } from "./DraftLists";
@@ -40,6 +41,11 @@ import { useKeyBindings } from "./keyBindings";
 import { dayChipLabel, dayPriorityCounts, isDayKey, istDay, priorityCounts } from "./deskRules";
 import VolumeStrip, { VOLUME_STRIP_HEIGHT } from "./VolumeStrip";
 import DayCalendar from "./DayCalendar";
+import ListPager from "./phase1/ListPager";
+import { clampPage, PAGE_SIZE, pageOf, pageRange } from "./phase1/paging";
+import { useMinuteClock } from "./phase1/useMinuteClock";
+import { storyMatchesSearch } from "./listSearch";
+import AllStoriesSearch from "./AllStoriesSearch";
 
 type ConsoleTab = "queue" | "scheduled" | "published" | "rejected";
 /** The templates live on their own page now: Post Studio → Templates */
@@ -155,12 +161,9 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   // Phase 1 reads them through phase1Filters: priority is the All / Big breaking / Breaking tabs (an old
   // BIG-only choice becomes Big breaking) and a remembered desk code is dropped, as that filter is gone
   const filters = useMemo(() => (p1 ? phase1Filters(savedFilters) : savedFilters), [p1, savedFilters]);
-  // The clock the "received" filters read; ticks each minute so "last hour" keeps moving
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(id);
-  }, []);
+  // The clock the "received" filters and the rows' ages read; moves on each minute boundary, so "last hour"
+  // keeps moving and the long list redraws at most once a minute
+  const now = useMinuteClock();
   const setFilters = (next: QueueFilterState) => {
     setFiltersState(next);
     saveQueueFilters(next);
@@ -307,7 +310,8 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const q = query.trim().toLowerCase();
   const matchesSearchAndFilters = useCallback(
     (n: FtpNewsItem) =>
-      (!q || [n.headline, n.shortText, n.area, n.ftpPath, storyCategory(n) ?? "", (isLiveItem(n) && n.live.postText) || ""].some((field) => field.toLowerCase().includes(q))) &&
+      // Headline, place, file and category only: inbox rows carry no post text or body (the server search does)
+      storyMatchesSearch(n, q) &&
       matchesOtherFilters(n, filters, facts, now),
     [q, filters, facts, now],
   );
@@ -386,7 +390,9 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     return [...fromServer, ...(optimisticPosted ?? []).filter((n) => !have.has(n.id))];
   }, [p1, postedData, optimisticPosted]);
   // The priority switch narrows Posted too (the server no longer does), and its "Posted today (N)" follows
-  const postedItems = postedNews.filter((n) => matchesSearchAndFilters(n) && matchesPriority(n, filters.priority));
+  const postedItems = useMemo(() => postedNews.filter((n) => matchesSearchAndFilters(n) && matchesPriority(n, filters.priority)), [postedNews, matchesSearchAndFilters, filters.priority]);
+  // The Posted tab's order, worked out once per change rather than on every render
+  const postedSorted = useMemo(() => sortStories(postedItems, filters.sort), [postedItems, filters.sort]);
   // Posted stories stay in the list in place (marked Posted in green); "Posted only" in Filters narrows to them
   const [postedOnly, setPostedOnly] = useState(false);
   const postedIds = useMemo(() => new Set(postedNews.map((n) => n.id)), [postedNews]);
@@ -420,8 +426,9 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       : desk?.inbox.data
         ? shownCounts
         : { all: undefined, big_breaking: undefined, breaking: undefined };
-  const categoriesInQueue = [...new Set(queue.map(storyCategory).filter((c): c is string => !!c))].sort((a, b) => a.localeCompare(b));
-  const districtsInQueue = [...new Set(queue.map((n) => n.area).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  // The Filters menu's choices: rebuilt only when the queue changes, not on every keystroke or clock tick
+  const categoriesInQueue = useMemo(() => [...new Set(queue.map(storyCategory).filter((c): c is string => !!c))].sort((a, b) => a.localeCompare(b)), [queue]);
+  const districtsInQueue = useMemo(() => [...new Set(queue.map((n) => n.area).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [queue]);
 
   const postsHere = socialPosts.filter((p) => p.platform === platform);
   const counts = desk?.counts.data;
@@ -434,6 +441,69 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const capUsed = desk && liveCap ? liveCap.used : publishedToday;
 
   const focused = visible[Math.min(focusIndex, visible.length - 1)];
+
+  // Phase 1 pages: 50 rows at a time over the loaded list (a day can hold hundreds, too many to draw at once).
+  // Pages are 0-based; the indexes the desk keeps (focusIndex, the editor's order) stay over the whole list.
+  const [queuePageState, setQueuePage] = useState(0);
+  const [postedPageState, setPostedPage] = useState(0);
+  // A new tab, filter, search or day starts again on page 1 (adjusted while rendering, so the old page never shows)
+  const pageResetKey = JSON.stringify([tab, filters, q, day, postedOnly]);
+  const [pagesFor, setPagesFor] = useState(pageResetKey);
+  if (pagesFor !== pageResetKey) {
+    setPagesFor(pageResetKey);
+    setQueuePage(0);
+    setPostedPage(0);
+    // The selected row stays on the page that shows, so Enter never opens a story out of sight
+    if (focusIndex >= PAGE_SIZE) setFocusIndex(0);
+  }
+  // Kept inside the list as it shrinks (the last rows of the last page posted or rejected)
+  const queuePage = p1 ? clampPage(queuePageState, visible.length) : 0;
+  const postedPage = clampPage(postedPageState, postedSorted.length);
+  const queueRange = pageRange(queuePage, visible.length);
+  const queueStart = p1 ? queueRange.start : 0;
+  const pageItems = useMemo(() => (p1 ? visible.slice(queueRange.start, queueRange.end) : visible), [p1, visible, queueRange.start, queueRange.end]);
+  const postedPageItems = useMemo(() => {
+    const r = pageRange(postedPage, postedSorted.length);
+    return postedSorted.slice(r.start, r.end);
+  }, [postedPage, postedSorted]);
+  // Rows report their index within the page; the desk keeps it over the whole list
+  const focusOnPage = useCallback((i: number) => setFocusIndex(queueStart + i), [queueStart]);
+  /** Brings the top of the list into view when it is above the screen (after a page change) */
+  const scrollListIntoView = () => {
+    if (!listRef.current) return;
+    const y = listRef.current.getBoundingClientRect().top + window.scrollY - (VOLUME_STRIP_HEIGHT + 16);
+    if (window.scrollY > y) window.scrollTo({ top: y });
+  };
+  /** The page controls: show that page and select its first row, so J/K and Enter carry on from there */
+  const showQueuePage = (page: number) => {
+    setQueuePage(page);
+    setFocusIndex(page * PAGE_SIZE);
+    requestAnimationFrame(scrollListIntoView);
+  };
+  const showPostedPage = (page: number) => {
+    setPostedPage(page);
+    requestAnimationFrame(scrollListIntoView);
+  };
+  // While the editor is open the desk behind it follows the open story (Prev/Next, the story after Copy & Mark
+  // Posted), so closing it lands on that story's page
+  const composingIndex = p1 && composing ? visible.findIndex((n) => n.id === composing.id) : -1;
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (composingIndex >= 0) setQueuePage(pageOf(composingIndex));
+  }, [composingIndex]);
+
+  // LiveDesk is told while the editor overlay is open, so it can pause the list-only polls behind it
+  const setEditorOpen = desk?.setEditorOpen;
+  const editorOpen = !!composing;
+  useEffect(() => {
+    setEditorOpen?.(editorOpen);
+  }, [editorOpen, setEditorOpen]);
+  // Leaving the desk with the editor open closes it, so LiveDesk hears false then
+  const setEditorOpenLatest = useRef(setEditorOpen);
+  useEffect(() => {
+    setEditorOpenLatest.current = setEditorOpen;
+  });
+  useEffect(() => () => setEditorOpenLatest.current?.(false), []);
 
   const quickPayload = (item: FtpNewsItem): PostPayload => {
     const cover = item.media[0];
@@ -488,11 +558,19 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
         const next = Math.max(0, Math.min(visible.length - 1, Math.min(focusIndex, visible.length - 1) + (cmd.id === "queue.next" ? 1 : -1)));
         setFocusIndex(next);
         // Phase 1: keep the selected row in view, and move keyboard focus with it when a row holds focus
-        const row = p1 ? document.getElementById(phase1RowId(visible[next].id)) : null;
-        if (row) {
-          if (target.getAttribute("role") === "option") row.focus({ preventScroll: true });
-          row.scrollIntoView({ block: "nearest" });
-        }
+        const rowFocused = target.getAttribute("role") === "option";
+        const reveal = () => {
+          const row = p1 ? document.getElementById(phase1RowId(visible[next].id)) : null;
+          if (row) {
+            if (rowFocused) row.focus({ preventScroll: true });
+            row.scrollIntoView({ block: "nearest" });
+          }
+        };
+        // Moving past the page's first or last row turns the page; the row exists once that page has drawn
+        if (p1 && pageOf(next) !== queuePage) {
+          setQueuePage(pageOf(next));
+          requestAnimationFrame(reveal);
+        } else reveal();
       } else if (cmd.id === "queue.open" && focused && canAct) {
         e.preventDefault();
         openRow(focused);
@@ -503,7 +581,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tab, composing, rejecting, visible, focusIndex, focused, canAct, canReject, p1, openRow, postedIds]);
+  }, [tab, composing, rejecting, visible, focusIndex, focused, canAct, canReject, p1, openRow, postedIds, queuePage]);
 
 
   // Phase 1: when the editor closes, focus goes back to the queue: the story's row if it is still there,
@@ -530,6 +608,12 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       const stillThere = ids.indexOf(target.id);
       const index = stillThere >= 0 && !desk?.pending.some((x) => x.copied && x.draftId === target.id) ? stillThere : Math.min(target.index, ids.length - 1);
       const id = ids.filter((x) => !desk?.pending.some((pp) => pp.copied && pp.draftId === x))[index] ?? ids[index];
+      // The row may sit on another page: show that page first; this effect runs again once it has drawn
+      const page = id && tab === "queue" ? pageOf(ids.indexOf(id)) : queuePage;
+      if (page !== queuePage) {
+        setQueuePage(page);
+        return;
+      }
       const el = id ? document.getElementById(phase1RowId(id)) : null;
       if (el) {
         setFocusIndex(ids.indexOf(id));
@@ -538,7 +622,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       returnFocus.current = null;
     });
     return () => cancelAnimationFrame(raf);
-  }, [p1, composing, visibleIds, desk?.pending]);
+  }, [p1, composing, visibleIds, desk?.pending, tab, queuePage]);
 
   /** Edit on a Posted row: hold the posted story for a fix, then open it in the editor (it stays posted). No story is open here. */
   const editPosted = async (n: FtpNewsItem) => {
@@ -783,7 +867,18 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
       {/* Queue */}
       {tab === "queue" && (
         <>
-          <Box ref={listRef} onPointerEnter={() => setPointerInList(true)} onPointerLeave={() => setPointerInList(false)} sx={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+          {desk && <AllStoriesSearch query={query} listHits={visible.length} rows={withPosted} onOpen={openRow} />}
+          <Box
+            ref={listRef}
+            onPointerEnter={() => {
+              setPointerInList(true);
+              // Reaching for a story: start loading the editor's code now, so Open feels instant
+              if (canAct) prefetchEditor();
+            }}
+            onPointerLeave={() => setPointerInList(false)}
+            onFocus={canAct ? prefetchEditor : undefined}
+            sx={{ display: "flex", flexDirection: "column", minWidth: 0 }}
+          >
           <NewStoriesPill count={arrived.length} onShow={showArrived} top={VOLUME_STRIP_HEIGHT + 10} noun={p1 ? ["post", "posts"] : undefined} />
           {desk && !desk.inbox.data ? (
             desk.inbox.error ? <LoadError error={desk.inbox.error} onRetry={() => void desk.inbox.refresh()} /> : <LoadingRows rows={3} height={120} />
@@ -834,7 +929,13 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
                     }
                   : {}),
               };
-              if (p1) return <Phase1QueueList {...props} highlightIds={highlight} now={now} postedIds={postedIds} />;
+              if (p1)
+                return (
+                  <>
+                    <Phase1QueueList {...props} items={pageItems} onFocus={focusOnPage} highlightIds={highlight} now={now} postedIds={postedIds} />
+                    <ListPager page={queuePage} total={visible.length} onPage={showQueuePage} label="Story pages" />
+                  </>
+                );
               return viewMode === "list" ? <QueueTable {...props} highlightIds={highlight} /> : <QueueCards {...props} highlightIds={highlight} />;
             })()
           )}
@@ -856,7 +957,10 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
               hint={p1Narrowed ? "Clear the search or the filters to see more." : "Today's posts land here when someone presses Copy & Mark Posted."}
             />
           ) : (
-            <Phase1PostedList items={sortStories(postedItems, filters.sort)} onNotice={setNotice} onEdit={editPosted} />
+            <>
+              <Phase1PostedList items={postedPageItems} onNotice={setNotice} onEdit={editPosted} />
+              <ListPager page={postedPage} total={postedSorted.length} onPage={showPostedPage} label="Posted pages" />
+            </>
           )}
         </>
       )}

@@ -179,14 +179,16 @@ export interface QueueItem {
   version: number;
   slug: string;
   headline: string;
-  bodyText: string;
+  /** Absent on slim inbox rows (fetchQueue `fields: "list"`); every other view sends it */
+  bodyText?: string;
   /**
    * The story's own text (stories.body, the points one per line), so list cards are drawn from the story like
    * the editor's card. Optional: an older server without it leaves cards falling back to bodyText.
    */
   storyBody?: string;
   receivedAt: string;
-  cardUrl: string | null;
+  /** Absent on slim inbox rows (fetchQueue `fields: "list"`) */
+  cardUrl?: string | null;
   claim: Claim | null;
   rejectReason: RejectReasonCode | null;
   flags: { lowConfidence: boolean; needsReview: boolean };
@@ -216,7 +218,7 @@ export interface QueueItem {
   deskNoteRemoved?: boolean;
   /** phase 1: [] when fine */
   needsCheck?: NeedsCheckCode[];
-  /** phase 1: exactly what Copy copies */
+  /** phase 1: exactly what Copy copies. Absent (with length and storyBody) on slim inbox rows (`fields: "list"`) */
   postText?: string;
   /** phase 1: X weighted length of postText */
   length?: number;

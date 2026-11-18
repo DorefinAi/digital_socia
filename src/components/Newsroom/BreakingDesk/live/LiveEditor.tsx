@@ -10,7 +10,8 @@ import * as socia from "@/lib/socia/api";
 import { HEARTBEAT_MS } from "@/lib/socia/config";
 import type { DraftView } from "@/lib/socia/types";
 import type { FtpNewsItem, SocialPlatform } from "@/types/newsroom";
-import PostEditor from "../PostEditor";
+// Loaded on first use (its own chunk); the download starts as the story starts loading, see the open effect
+import PostEditor, { prefetchEditor } from "../LazyPostEditor";
 import { draftToNews, errorCode, errorText, useLiveDesk } from "./LiveDesk";
 import { correctionOpen, fixedByOther, isCorrecting } from "./correction";
 import { abandonCorrection, correctionFailure, hasEditIntent, takeEditIntent } from "./beginCorrection";
@@ -127,6 +128,8 @@ export default function LiveEditor({ item, platform, onClose, onSwitch, onSaved,
     let cancelled = false;
     const id = item.id;
     openId.current = id;
+    // The editor's code downloads while the draft loads, not after (a no-op once it has started)
+    prefetchEditor();
     // Edit took a correction hold for this story just before opening it (left in place for a re-run effect)
     const pressed = hasEditIntent(id);
     // Opened by itself after posting: a story someone else got first is stepped over, not watched

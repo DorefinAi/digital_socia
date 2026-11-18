@@ -2,7 +2,7 @@
 // imports but types, so queueDay.test.ts runs them under plain node. The server sorts newest first by
 // (time, id) and hands back `nextCursor` (the last row's "<time>|<id>"), passed as `before` for the next page.
 
-import type { QueueResponse } from "./types";
+import type { QueueQuery, QueueResponse, QueueView } from "./types";
 
 /** The server's largest page (a bigger `limit` is refused: "querystring/limit must be <= 200") */
 export const QUEUE_PAGE_MAX = 200;
@@ -12,6 +12,23 @@ export const QUEUE_DAY_PAGES = 10;
 /** A whole day's answer. `truncated`: the page cap was reached and older stories of the day were left out. */
 export interface QueueDay extends QueueResponse {
   truncated: boolean;
+}
+
+/**
+ * GET /x/queue's path and query. `fields: "list"` asks for slim rows (inbox only: no postText, bodyText,
+ * storyBody, cardUrl or length); other views ignore it, and phase 2 never sends it. Unset filters are left out.
+ */
+export function queuePath(view: QueueView, limit: number, query?: QueueQuery, before?: string, fields?: "list"): string {
+  const params = new URLSearchParams({ view, limit: String(limit) });
+  if (before) params.set("before", before);
+  if (query?.district) params.set("district", query.district);
+  if (query?.desk) params.set("desk", query.desk);
+  if (query?.big !== undefined) params.set("big", String(query.big));
+  if (query?.update !== undefined) params.set("update", String(query.update));
+  if (query?.needsCheck !== undefined) params.set("needsCheck", String(query.needsCheck));
+  if (query?.day) params.set("day", query.day);
+  if (fields) params.set("fields", fields);
+  return `/x/queue?${params}`;
 }
 
 /** One page: newest first, or older than `before` (a nextCursor) */

@@ -48,9 +48,14 @@ export function sendKeepalive(method: string, path: string, body?: unknown): voi
   }
 }
 
-/** Per-request options: `signal` cancels the request (an aborted request rejects with the signal's reason) */
+/**
+ * Per-request options: `signal` cancels the request (an aborted request rejects with the signal's reason).
+ * `cache` is the fetch cache mode, "no-store" by default; "no-cache" for reads the server tags with an ETag
+ * (the browser asks again with If-None-Match and hands back its stored body on a 304).
+ */
 export interface RequestOptions {
   signal?: AbortSignal;
+  cache?: RequestCache;
 }
 
 async function send<T>(method: string, path: string, body?: unknown, options?: RequestOptions): Promise<T> {
@@ -66,7 +71,7 @@ async function send<T>(method: string, path: string, body?: unknown, options?: R
       method,
       headers,
       credentials: "include",
-      cache: "no-store",
+      cache: options?.cache ?? "no-store",
       body: body === undefined ? undefined : raw ? (body as Blob) : JSON.stringify(body),
       signal: options?.signal,
     });
