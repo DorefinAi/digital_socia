@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, Typography, Button, TextField, Dialog, IconButton, Slider, Switch, Tooltip, LinearProgress, Alert, Snackbar, CircularProgress, useMediaQuery } from "@mui/material";
 import { alpha, type Theme } from "@mui/material/styles";
 import {
@@ -1579,12 +1579,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     const shown = feedShown.items;
     const fromList = storyJustAbove(shown.map((n) => n.id), item.id);
     let target: FtpNewsItem | null = null;
-    let via = "list";
     if (fromList !== undefined) {
       target = fromList === null ? null : (shown.find((n) => n.id === fromList) ?? null);
     } else {
       // 2. The panel never showed this story: the same list rebuilt (its tab, newest first, posted included)
-      via = "rebuilt";
       const order = queueOrder ?? desk?.queue ?? [];
       const tabOf = (n: FtpNewsItem) => (storyTag(n) === "big_breaking" ? "big_breaking" : "breaking");
       // The tab as the desk knows the story: its queue row carries the file's BIG tag, the editor's copy doesn't
@@ -1594,7 +1592,6 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const above = storiesAbove(afterPostOrder(order, item.id, currentTab, tabOf, () => false), item.id);
       target = above.length > 1 ? above[above.length - 2]! : null;
     }
-    console.debug("[after-post]", { posted: item.id, via, list: shown.map((n) => n.id), next: target?.id ?? "stay" });
     const step = afterPost(onSwitch && target ? target : undefined, fix);
     // No other free story in this tab: stay on the posted one and say so; only "← Desk" leaves the editor
     if (!step.open) {
@@ -1683,7 +1680,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       timer.done();
       if (!cardSaved) onSaved?.("Posted, but the card didn't download. Open the story in Posted and save the card by hand.");
       live.onFinished();
-      desk?.addCopied({ draftId: id, postId: res.postId, headline: item.headline, undoUntil: res.undoUntil, withCard: cardSaved });
+      desk?.addCopied({ draftId: id, postId: res.postId, headline: item.headline, undoUntil: res.undoUntil, withCard: cardSaved, postText: res.text || copiedText });
       setPreviewOpen(false);
       // Stay in the studio on the next free story (the posted one is now in Posted)
       moveOn();
@@ -2554,6 +2551,14 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   useEffect(() => {
     storyNav.current = { previousStory, nextStory, switchStory };
   });
+  // The FTP feed's row actions, the same functions every render so the (memoised) feed isn't drawn again on each
+  // key typed here; they call this render's switchStory / editPosted, which see the editor's state as it is now
+  const feedActions = useRef({ switchStory, editPosted });
+  useLayoutEffect(() => {
+    feedActions.current = { switchStory, editPosted };
+  });
+  const pickFromFeed = useCallback((next: FtpNewsItem) => feedActions.current.switchStory(next), []);
+  const editFromFeed = useCallback((next: FtpNewsItem) => void feedActions.current.editPosted(next), []);
   const bodyLayer = layout.layers?.find((layer) => layer.id === ORG_BODY_ID);
 
   // Top bar: the story's tag and category. Live, they come from the draft (Samvadia's priority and category)
@@ -2698,8 +2703,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               <FtpFeedPanel
                 platform={platform}
                 currentId={item.id}
-                onPick={switchStory}
-                onEdit={live ? (n) => void editPosted(n) : undefined}
+                onPick={pickFromFeed}
+                onEdit={live ? editFromFeed : undefined}
                 editingId={startingFix}
               />
             )}

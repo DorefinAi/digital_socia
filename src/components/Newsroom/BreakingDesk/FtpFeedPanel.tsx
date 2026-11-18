@@ -18,6 +18,8 @@ import { canCorrect, editedLabel, needsCheckDescription } from "./live/correctio
 import { RowPresence, RowPresenceSpace } from "./live/Presence";
 import { placeLine, reporterWithDistrict } from "./reporterLabel";
 import { pattiNumber, tabTarget } from "./deskRules";
+import { PAGE_SIZE } from "./phase1/paging";
+import { feedRowsShown } from "./feedRows";
 
 /** The story last open in each BIG Breaking / Breaking tab, kept for the page's life (the panel remounts per story) */
 const lastInTab = new Map<BreakingTag, string>();
@@ -50,7 +52,222 @@ const newestFirst = (a: FtpNewsItem, b: FtpNewsItem) => new Date(b.receivedAt).g
  * Live FTP feed beside the editor: the shown day's whole queue, newest first, new arrivals behind their own pill,
  * click to switch story. Its tabs show Posted today and Rejected in place (to read; the story stays open).
  */
-export default function FtpFeedPanel({
+type FtpRowProps = {
+  n: FtpNewsItem;
+  platform: SocialPlatform;
+  list: FeedList;
+  current: boolean;
+  /** Draft / Posted / Scheduled outside the live desk (the list's statusOf) */
+  status: string | undefined;
+  /** "5 min ago", worked out by the list, so a row draws again only when its text changes */
+  ago: string;
+  openedAt: number;
+  /** Posted today and Rejected are lists to read: plain rows, not buttons that do nothing */
+  pickable: boolean;
+  /** Posted today, shown in place in the New list */
+  posted: boolean;
+  /** A posted row opens its fix on click (it stays posted) */
+  fixable: boolean;
+  /** This row's Edit is starting */
+  editing: boolean;
+  /** Some row's Edit is starting */
+  editBusy: boolean;
+  highlighted: boolean;
+  org: React.ComponentProps<typeof StoryThumb>["org"];
+  own: React.ComponentProps<typeof StoryThumb>["own"];
+  onPick: (item: FtpNewsItem) => void;
+  onEdit?: (item: FtpNewsItem) => void;
+};
+
+/**
+ * One story in the list. Memoised: the list holds a whole day (hundreds of rows), so a queue poll or a new
+ * arrival draws only the rows whose story, status or time text changed.
+ */
+const FtpRow = React.memo(function FtpRow({ n, platform, list, current, status, ago, openedAt, pickable, posted, fixable, editing, editBusy, highlighted, org, own, onPick, onEdit }: FtpRowProps) {
+  const live = isLiveItem(n) ? n.live : null;
+  const tag = storyTag(n);
+  const category = storyCategory(n);
+  const fresh = new Date(live?.createdAt ?? n.receivedAt).getTime() > openedAt;
+  const cover = n.media[0];
+  // Live: who has the story open; never when their hold runs out
+  // A posted story held by someone is being fixed, not edited for posting
+  const holder = live?.claim && !current ? (live.claim.mine ? "With you" : list === "published" ? `${live.claim.name} is fixing` : `${live.claim.name} is editing`) : null;
+  // Why the post needs a second look (no district, two districts, headline cut...), as the queue outside shows
+  const checks = live ? shownNeedsCheck(live.needsCheck) : [];
+  // Posted today: no separate Edit button (the row itself opens the fix), and a mark once it was fixed
+  const editable = false;
+  const edited = list === "published" ? editedLabel(live?.corrected) : null;
+  // "BHANWAR (Rajsamand)" and "Rajsamand · रेलमगरा", as on the desk's rows
+  const reporter = reporterWithDistrict(live?.reporter, live?.district);
+  const place = live ? placeLine(live.district, live.town) : "";
+  return (
+    <Box
+      component={pickable ? "button" : "div"}
+      type={pickable ? "button" : undefined}
+      onClick={pickable ? () => !current && (fixable ? !editBusy && onEdit?.(n) : onPick(n)) : undefined}
+      aria-current={current ? "true" : undefined}
+      sx={{
+        // Positioned so the screen-reader label stays inside the scrolling list
+        position: "relative",
+        display: "grid",
+        gridTemplateColumns: editable ? "52px minmax(0, 1fr) auto" : "52px minmax(0, 1fr)",
+        gap: 1,
+        alignItems: "center",
+        width: "100%",
+        textAlign: "left",
+        p: 1,
+        mb: 0.5,
+        border: 0,
+        borderRadius: "8px",
+        fontFamily: "inherit",
+        color: "text.primary",
+        cursor: (pickable && !current) || (editable && !editBusy) ? "pointer" : "default",
+        // Flagged stories carry their tag colour; the rest stay neutral
+        background: (t) => (posted ? postedTint(t.palette.mode, current ? 1.6 : 1) : tag ? tagTint(tag, t.palette.mode, current ? 1.6 : 1) : current ? t.palette.action.selected : "transparent"),
+        // The open story is outlined so it stays distinct from the tint
+        boxShadow: (t) => (current ? `inset 0 0 0 2px ${t.palette.text.primary}` : "none"),
+        ...(pickable ? { "&:hover": { background: (t) => (posted ? postedTint(t.palette.mode, current ? 1.6 : 1.35) : tag ? tagTint(tag, t.palette.mode, current ? 1.6 : 1.35) : current ? t.palette.action.selected : t.palette.action.hover) } } : {}),
+        "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "2px" },
+        ...(highlighted ? freshHighlightSx : {}),
+      }}
+    >
+      <Box sx={{ position: "relative", width: 52, height: 38, borderRadius: "4px", overflow: "hidden", backgroundColor: "#111" }}>
+        {platform === "X (Twitter)" ? (
+          <StoryThumb item={n} boxW={52} boxH={38} org={org} own={own} />
+        ) : cover?.url || cover?.posterUrl ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img src={cover.posterUrl ?? cover.url} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        ) : null}
+      </Box>
+      <Box sx={{ minWidth: 0 }}>
+        <Typography sx={{ fontSize: "0.75rem", fontWeight: 600, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+          {/* Live: the first line keeps clear of the corner badges (and the needs-check tag beside them) */}
+          {/* One block inside the clamp box, so the badge float wraps the first line instead of taking a line of its own */}
+          <Box component="span" sx={{ display: "block" }}>
+            {live && <RowPresenceSpace draftId={n.id} besideWidth={checks.length ? CHECK_TAG_W + 6 : 0} />}
+            {pattiNumber(live?.sourcePath) && <Box component="span" sx={{ fontWeight: 800 }}>{pattiNumber(live?.sourcePath)} · </Box>}
+            {n.headline}
+          </Box>
+        </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.4, minWidth: 0, overflow: "hidden", fontSize: "0.625rem", color: "text.secondary", whiteSpace: "nowrap" }}>
+          {/* The tint carries the tag on screen; screen readers hear it */}
+          {tag && (
+            <Box component="span" sx={srOnly}>
+              {TAG_TINT[tag].label}
+            </Box>
+          )}
+          {fresh && <Box component="span" sx={{ px: 0.5, borderRadius: "3px", backgroundColor: "success.main", color: "#fff", fontWeight: 700 }}>NEW</Box>}
+          {category && <CategoryLabel category={category} />}
+          <span>{ago}</span>
+          {holder && (
+            <Box component="span" sx={{ color: "info.main", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>
+              {holder}
+            </Box>
+          )}
+          {status && STATUS_STYLE[status] && (
+            <Box component="span" sx={{ color: STATUS_STYLE[status].color, fontWeight: 600 }}>
+              {STATUS_STYLE[status].label}
+            </Box>
+          )}
+          {edited && (
+            // Focusable, so keyboard users get the tooltip too; screen readers hear "Edited" and then who and when
+            <>
+              <Tooltip title={edited} describeChild>
+                <Box component="span" tabIndex={0} aria-describedby={`edited-${n.id}`} data-testid="edited-mark" sx={{ flexShrink: 0, px: 0.5, borderRadius: "3px", border: "1px solid", borderColor: "divider", color: "text.secondary", fontWeight: 600, "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}>
+                  Edited
+                </Box>
+              </Tooltip>
+              <Box component="span" id={`edited-${n.id}`} sx={srOnly}>
+                {edited}
+              </Box>
+            </>
+          )}
+          {/* Last on the line, so a narrow panel cuts the place, never the status or who holds it */}
+          {reporter && (
+            <Box component="span" title={`Reporter: ${reporter}`} sx={{ flexShrink: 0, fontWeight: 600 }}>
+              <Box component="span" sx={srOnly}>
+                Reporter:{" "}
+              </Box>
+              {reporter}
+            </Box>
+          )}
+          {place && (
+            <Box component="span" title={place} sx={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+              {place}
+            </Box>
+          )}
+        </Box>
+      </Box>
+      {posted && (
+        <Box component="span" sx={{ position: "absolute", right: 6, bottom: 5, px: 0.6, borderRadius: "4px", backgroundColor: "success.main", color: "#fff", fontSize: "0.5625rem", fontWeight: 800, lineHeight: 1.6, letterSpacing: "0.02em" }}>
+          {editing ? <CircularProgress size={8} color="inherit" /> : "Posted"}
+        </Box>
+      )}
+      {editable && (
+        // Sits at the row's foot, clear of the needs-check tag in the top corner
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit?.(n);
+          }}
+          disabled={editBusy}
+          aria-label={`Edit the posted story: ${n.headline || "No headline"}`}
+          startIcon={editing ? <CircularProgress size={11} color="inherit" /> : <PenLine size={12} aria-hidden />}
+          sx={{ alignSelf: "end", minWidth: 0, minHeight: 26, px: 0.75, py: 0, borderRadius: "6px", borderColor: "divider", textTransform: "none", fontSize: "0.6875rem", fontWeight: 700, whiteSpace: "nowrap", "& .MuiButton-startIcon": { mr: 0.5 }, "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}
+        >
+          Edit
+        </Button>
+      )}
+      {/* The row's top-right corner: the needs-check tag, then who else is on the story (live presence).
+          Placed over the row, so the row keeps its height */}
+      {(checks.length > 0 || live) && (
+        <Box sx={{ position: "absolute", top: 4, right: 4, display: "flex", alignItems: "center", gap: "6px" }}>
+          {checks.length > 0 && (
+            // Hover for the details. The details are also in the row's text (srOnly, below), so screen readers
+            // and keyboard users get them; describeChild keeps the tooltip from naming the mark a second time.
+            <Tooltip
+              placement="right"
+              arrow
+              describeChild
+              title={
+                <Box sx={{ py: 0.25 }}>
+                  {checks.map((r) => (
+                    <Box key={r} sx={{ fontSize: "0.75rem", lineHeight: 1.45, "& + &": { mt: 0.75 } }}>
+                      <b>{needsCheckLabel(r)}.</b> {needsCheckHint(r)}
+                    </Box>
+                  ))}
+                </Box>
+              }
+            >
+              <Box
+                component="span"
+                data-testid="needs-check-mark"
+                // In the plain Posted / Rejected rows it takes focus, so keyboard users can open the details;
+                // its text already holds them, so the tooltip doesn't describe it again
+                tabIndex={pickable ? undefined : 0}
+                aria-describedby={undefined}
+                // A small red tag, just left of the presence badges in the row's top-right corner
+                sx={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "1px", minWidth: 22, height: 17, px: "4px", borderRadius: "4px", backgroundColor: "error.main", color: "#fff", fontSize: "0.625rem", fontWeight: 700, lineHeight: 1, "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}
+              >
+                <AlertTriangle size={11} aria-hidden />
+                <span aria-hidden>{checks.length > 1 && checks.length}</span>
+                <Box component="span" sx={srOnly}>
+                  {needsCheckDescription(checks, needsCheckLabel, needsCheckHint)}
+                </Box>
+              </Box>
+            </Tooltip>
+          )}
+          {live && <RowPresence draftId={n.id} />}
+        </Box>
+      )}
+    </Box>
+  );
+});
+
+function FtpFeedPanel({
   platform,
   currentId,
   onPick,
@@ -116,6 +333,10 @@ export default function FtpFeedPanel({
     if (target && target.id !== currentId) onPick(target);
   };
   const listed = allListed.filter((n) => ((!!q || tabOf(n) === tagTab) && (!q || `${n.headline} ${isLiveItem(n) ? n.live.sourcePath ?? "" : ""}`.toLowerCase().includes(q))));
+  // Drawn 50 at a time ("Show more" adds 50), always through the open story; a new list, tab or search starts at 50
+  const pageKey = `${list}|${tagTab}|${q}`;
+  const [more, setMore] = useState({ key: pageKey, limit: PAGE_SIZE });
+  const rows = listed.slice(0, feedRowsShown(more.key === pageKey ? more.limit : PAGE_SIZE, listed.length, listed.findIndex((n) => n.id === currentId)));
   // The open tab's rows as shown (search aside), for the story after Copy & Mark Posted
   useEffect(() => {
     if (!otherList && !loading) feedShown.items = allListed.filter((n) => tabOf(n) === tagTab);
@@ -237,199 +458,50 @@ export default function FtpFeedPanel({
             <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.5 }}>{list === "queue" ? "New stories from the FTP appear here on their own." : list === "published" ? "Stories land here after Copy & Mark Posted." : "Stories rejected today are listed here."}</Typography>
           </Box>
         ) : (
-          listed.map((n) => {
-            const current = n.id === currentId;
-            const status = statusOf(n.id);
-            const live = isLiveItem(n) ? n.live : null;
-            const tag = storyTag(n);
-            const category = storyCategory(n);
-            const fresh = new Date(live?.createdAt ?? n.receivedAt).getTime() > openedAt;
-            const cover = n.media[0];
-            // Live: who has the story open; never when their hold runs out
-            // A posted story held by someone is being fixed, not edited for posting
-            const holder = live?.claim && !current ? (live.claim.mine ? "With you" : list === "published" ? `${live.claim.name} is fixing` : `${live.claim.name} is editing`) : null;
-            // Posted today and Rejected are lists to read: plain rows, not buttons that do nothing
-            const pickable = !otherList;
-            // Why the post needs a second look (no district, two districts, headline cut...), as the queue outside shows
-            const checks = live ? shownNeedsCheck(live.needsCheck) : [];
-            // Posted today: a small Edit to fix the post (the row itself stays plain), and a mark once it was fixed
-            const posted = !otherList && postedIds.has(n.id);
-            // A posted row opens its fix on click (it stays posted); no separate Edit button
-            const fixable = posted && !!onEdit && !!desk?.canAct && canCorrect(live);
-            const editable = false;
-            const edited = list === "published" ? editedLabel(live?.corrected) : null;
-            // "BHANWAR (Rajsamand)" and "Rajsamand · रेलमगरा", as on the desk's rows
-            const reporter = reporterWithDistrict(live?.reporter, live?.district);
-            const place = live ? placeLine(live.district, live.town) : "";
-            return (
-              <Box
-                key={n.id}
-                component={pickable ? "button" : "div"}
-                type={pickable ? "button" : undefined}
-                onClick={pickable ? () => !current && (fixable ? !editingId && onEdit?.(n) : onPick(n)) : undefined}
-                aria-current={current ? "true" : undefined}
-                sx={{
-                  // Positioned so the screen-reader label stays inside the scrolling list
-                  position: "relative",
-                  display: "grid",
-                  gridTemplateColumns: editable ? "52px minmax(0, 1fr) auto" : "52px minmax(0, 1fr)",
-                  gap: 1,
-                  alignItems: "center",
-                  width: "100%",
-                  textAlign: "left",
-                  p: 1,
-                  mb: 0.5,
-                  border: 0,
-                  borderRadius: "8px",
-                  fontFamily: "inherit",
-                  color: "text.primary",
-                  cursor: (pickable && !current) || (editable && !editingId) ? "pointer" : "default",
-                  // Flagged stories carry their tag colour; the rest stay neutral
-                  background: (t) => (posted ? postedTint(t.palette.mode, current ? 1.6 : 1) : tag ? tagTint(tag, t.palette.mode, current ? 1.6 : 1) : current ? t.palette.action.selected : "transparent"),
-                  // The open story is outlined so it stays distinct from the tint
-                  boxShadow: (t) => (current ? `inset 0 0 0 2px ${t.palette.text.primary}` : "none"),
-                  ...(pickable ? { "&:hover": { background: (t) => (posted ? postedTint(t.palette.mode, current ? 1.6 : 1.35) : tag ? tagTint(tag, t.palette.mode, current ? 1.6 : 1.35) : current ? t.palette.action.selected : t.palette.action.hover) } } : {}),
-                  "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "2px" },
-                  ...(highlight.has(n.id) ? freshHighlightSx : {}),
-                }}
+          <>
+            {rows.map((n) => {
+              const posted = !otherList && postedIds.has(n.id);
+              return (
+                <FtpRow
+                  key={n.id}
+                  n={n}
+                  platform={platform}
+                  list={list}
+                  current={n.id === currentId}
+                  status={statusOf(n.id)}
+                  ago={timeAgo(n.receivedAt)}
+                  openedAt={openedAt}
+                  pickable={!otherList}
+                  posted={posted}
+                  fixable={posted && !!onEdit && !!desk?.canAct && canCorrect(isLiveItem(n) ? n.live : null)}
+                  editing={editingId === n.id}
+                  editBusy={!!editingId}
+                  highlighted={highlight.has(n.id)}
+                  org={desk?.orgCardTemplates.data}
+                  own={desk?.cardTemplate.data?.template}
+                  onPick={onPick}
+                  onEdit={onEdit}
+                />
+              );
+            })}
+            {/* A day can hold hundreds of stories: the first 50, then 50 more at a time (always through the open story) */}
+            {rows.length < listed.length && (
+              <Button
+                fullWidth
+                size="small"
+                color="inherit"
+                onClick={() => setMore({ key: pageKey, limit: rows.length + PAGE_SIZE })}
+                aria-label={`Show ${Math.min(PAGE_SIZE, listed.length - rows.length)} more stories, ${rows.length} of ${listed.length} shown`}
+                sx={{ mt: 0.5, minHeight: 36, borderRadius: "8px", border: "1px dashed", borderColor: "divider", textTransform: "none", fontSize: "0.75rem", fontWeight: 700, color: "text.secondary", "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}
               >
-                <Box sx={{ position: "relative", width: 52, height: 38, borderRadius: "4px", overflow: "hidden", backgroundColor: "#111" }}>
-                  {platform === "X (Twitter)" ? (
-                    <StoryThumb item={n} boxW={52} boxH={38} org={desk?.orgCardTemplates.data} own={desk?.cardTemplate.data?.template} />
-                  ) : cover?.url || cover?.posterUrl ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={cover.posterUrl ?? cover.url} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                  ) : null}
-                </Box>
-                <Box sx={{ minWidth: 0 }}>
-                  <Typography sx={{ fontSize: "0.75rem", fontWeight: 600, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                    {/* Live: the first line keeps clear of the corner badges (and the needs-check tag beside them) */}
-                    {/* One block inside the clamp box, so the badge float wraps the first line instead of taking a line of its own */}
-                    <Box component="span" sx={{ display: "block" }}>
-                      {live && <RowPresenceSpace draftId={n.id} besideWidth={checks.length ? CHECK_TAG_W + 6 : 0} />}
-                      {pattiNumber(live?.sourcePath) && <Box component="span" sx={{ fontWeight: 800 }}>{pattiNumber(live?.sourcePath)} · </Box>}
-                      {n.headline}
-                    </Box>
-                  </Typography>
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.4, minWidth: 0, overflow: "hidden", fontSize: "0.625rem", color: "text.secondary", whiteSpace: "nowrap" }}>
-                    {/* The tint carries the tag on screen; screen readers hear it */}
-                    {tag && (
-                      <Box component="span" sx={srOnly}>
-                        {TAG_TINT[tag].label}
-                      </Box>
-                    )}
-                    {fresh && <Box component="span" sx={{ px: 0.5, borderRadius: "3px", backgroundColor: "success.main", color: "#fff", fontWeight: 700 }}>NEW</Box>}
-                    {category && <CategoryLabel category={category} />}
-                    <span>{timeAgo(n.receivedAt)}</span>
-                    {holder && (
-                      <Box component="span" sx={{ color: "info.main", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {holder}
-                      </Box>
-                    )}
-                    {status && STATUS_STYLE[status] && (
-                      <Box component="span" sx={{ color: STATUS_STYLE[status].color, fontWeight: 600 }}>
-                        {STATUS_STYLE[status].label}
-                      </Box>
-                    )}
-                    {edited && (
-                      // Focusable, so keyboard users get the tooltip too; screen readers hear "Edited" and then who and when
-                      <>
-                        <Tooltip title={edited} describeChild>
-                          <Box component="span" tabIndex={0} aria-describedby={`edited-${n.id}`} data-testid="edited-mark" sx={{ flexShrink: 0, px: 0.5, borderRadius: "3px", border: "1px solid", borderColor: "divider", color: "text.secondary", fontWeight: 600, "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}>
-                            Edited
-                          </Box>
-                        </Tooltip>
-                        <Box component="span" id={`edited-${n.id}`} sx={srOnly}>
-                          {edited}
-                        </Box>
-                      </>
-                    )}
-                    {/* Last on the line, so a narrow panel cuts the place, never the status or who holds it */}
-                    {reporter && (
-                      <Box component="span" title={`Reporter: ${reporter}`} sx={{ flexShrink: 0, fontWeight: 600 }}>
-                        <Box component="span" sx={srOnly}>
-                          Reporter:{" "}
-                        </Box>
-                        {reporter}
-                      </Box>
-                    )}
-                    {place && (
-                      <Box component="span" title={place} sx={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {place}
-                      </Box>
-                    )}
-                  </Box>
-                </Box>
-                {posted && (
-                  <Box component="span" sx={{ position: "absolute", right: 6, bottom: 5, px: 0.6, borderRadius: "4px", backgroundColor: "success.main", color: "#fff", fontSize: "0.5625rem", fontWeight: 800, lineHeight: 1.6, letterSpacing: "0.02em" }}>
-                    {editingId === n.id ? <CircularProgress size={8} color="inherit" /> : "Posted"}
-                  </Box>
-                )}
-                {editable && (
-                  // Sits at the row's foot, clear of the needs-check tag in the top corner
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    color="inherit"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onEdit?.(n);
-                    }}
-                    disabled={!!editingId}
-                    aria-label={`Edit the posted story: ${n.headline || "No headline"}`}
-                    startIcon={editingId === n.id ? <CircularProgress size={11} color="inherit" /> : <PenLine size={12} aria-hidden />}
-                    sx={{ alignSelf: "end", minWidth: 0, minHeight: 26, px: 0.75, py: 0, borderRadius: "6px", borderColor: "divider", textTransform: "none", fontSize: "0.6875rem", fontWeight: 700, whiteSpace: "nowrap", "& .MuiButton-startIcon": { mr: 0.5 }, "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}
-                  >
-                    Edit
-                  </Button>
-                )}
-                {/* The row's top-right corner: the needs-check tag, then who else is on the story (live presence).
-                    Placed over the row, so the row keeps its height */}
-                {(checks.length > 0 || live) && (
-                  <Box sx={{ position: "absolute", top: 4, right: 4, display: "flex", alignItems: "center", gap: "6px" }}>
-                    {checks.length > 0 && (
-                      // Hover for the details. The details are also in the row's text (srOnly, below), so screen readers
-                      // and keyboard users get them; describeChild keeps the tooltip from naming the mark a second time.
-                      <Tooltip
-                        placement="right"
-                        arrow
-                        describeChild
-                        title={
-                          <Box sx={{ py: 0.25 }}>
-                            {checks.map((r) => (
-                              <Box key={r} sx={{ fontSize: "0.75rem", lineHeight: 1.45, "& + &": { mt: 0.75 } }}>
-                                <b>{needsCheckLabel(r)}.</b> {needsCheckHint(r)}
-                              </Box>
-                            ))}
-                          </Box>
-                        }
-                      >
-                        <Box
-                          component="span"
-                          data-testid="needs-check-mark"
-                          // In the plain Posted / Rejected rows it takes focus, so keyboard users can open the details;
-                          // its text already holds them, so the tooltip doesn't describe it again
-                          tabIndex={pickable ? undefined : 0}
-                          aria-describedby={undefined}
-                          // A small red tag, just left of the presence badges in the row's top-right corner
-                          sx={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "1px", minWidth: 22, height: 17, px: "4px", borderRadius: "4px", backgroundColor: "error.main", color: "#fff", fontSize: "0.625rem", fontWeight: 700, lineHeight: 1, "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}
-                        >
-                          <AlertTriangle size={11} aria-hidden />
-                          <span aria-hidden>{checks.length > 1 && checks.length}</span>
-                          <Box component="span" sx={srOnly}>
-                            {needsCheckDescription(checks, needsCheckLabel, needsCheckHint)}
-                          </Box>
-                        </Box>
-                      </Tooltip>
-                    )}
-                    {live && <RowPresence draftId={n.id} />}
-                  </Box>
-                )}
-              </Box>
-            );
-          })
+                Show {Math.min(PAGE_SIZE, listed.length - rows.length)} more
+              </Button>
+            )}
+          </>
         )}
       </Box>
     </Box>
   );
 }
+
+export default React.memo(FtpFeedPanel);

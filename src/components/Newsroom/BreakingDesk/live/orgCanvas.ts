@@ -144,6 +144,32 @@ const fontFor = (fontId: string | undefined, weight: number, px: number) => {
   return `${nearestWeight(font, weight)} ${px}px ${font.family}, "Nirmala UI", sans-serif`;
 };
 
+/**
+ * Word widths by font, as measureText gives them. Fitting the words tries every half-pixel size and measures
+ * every word at each, all again on each key typed into the card's text, though only the word being typed is
+ * new. Emptied whenever a font finishes loading (a face that arrives late measures differently), and not
+ * filled while one is loading.
+ */
+const widths = new Map<string, number>();
+let widthsWatched = false;
+function wordWidth(ctx: CanvasRenderingContext2D, word: string): number {
+  const fonts = typeof document === "undefined" ? undefined : document.fonts;
+  if (!widthsWatched && fonts?.addEventListener) {
+    widthsWatched = true;
+    fonts.addEventListener("loadingdone", () => widths.clear());
+  }
+  if (fonts?.status === "loading") return ctx.measureText(word).width;
+  const key = `${ctx.font}\n${word}`;
+  let w = widths.get(key);
+  if (w === undefined) {
+    w = ctx.measureText(word).width;
+    // A long session types many words; start over rather than grow without end
+    if (widths.size >= 20000) widths.clear();
+    widths.set(key, w);
+  }
+  return w;
+}
+
 /** Lines `text` wraps to at the current font (words only, as the card's own wrapping). */
 function lineCount(ctx: CanvasRenderingContext2D, text: string, width: number): number {
   let count = 0;
@@ -153,11 +179,11 @@ function lineCount(ctx: CanvasRenderingContext2D, text: string, width: number): 
       count += 1;
       continue;
     }
-    const space = ctx.measureText(" ").width;
+    const space = wordWidth(ctx, " ");
     let line = 0;
     count += 1;
     for (const word of words) {
-      const w = ctx.measureText(word).width;
+      const w = wordWidth(ctx, word);
       if (line && line + space + w > width) {
         count += 1;
         line = w;
