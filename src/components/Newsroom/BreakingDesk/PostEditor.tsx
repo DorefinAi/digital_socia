@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Box, Typography, Button, TextField, Dialog, IconButton, Slider, Switch, Tooltip, LinearProgress, Alert, Snackbar, CircularProgress, useMediaQuery } from "@mui/material";
+import { Box, Typography, Button, TextField, Dialog, IconButton, Slider, Switch, Tooltip, Alert, Snackbar, CircularProgress, useMediaQuery } from "@mui/material";
 import { alpha, type Theme } from "@mui/material/styles";
 import {
   X as CloseIcon,
@@ -75,6 +75,8 @@ import { RejectDialog, ScheduleDialog } from "./actionDialogs";
 import { FoldedPanelStrip, PanelResizeHandle, PanelsConfig, useResizablePanels } from "./ResizablePanels";
 import { CategoryLabel, PLATFORM_META, PlatformIcon, priorityTag, rejectedNotice, srOnly, storyTag, TAG_TINT, tagTint } from "./shared";
 import { PostMock, TagOption, TagPicker, fieldSx, sectionLabel } from "./composerParts";
+import { PostTextBox } from "./PostTextBox";
+import { putText, takeTyped, type BoxText } from "./postTextSync";
 import { offeredHashtags, offeredMentions } from "./suggestionGroups";
 import VideoTimeline, { CLIP_SPEEDS, TimelineText, clock, outputLength } from "./VideoTimeline";
 import TextControls, { ALIGN_ICONS, FontSelect } from "./TextControls";
@@ -116,7 +118,7 @@ import LiveCaret from "./live/LiveCaret";
 import { HeaderPresence } from "./live/Presence";
 import { HandedOverNote, HolderLeftBanner, LiveNote, LiveUnavailableNote, TakeoverDialog, WatchBanner } from "./live/WatchMode";
 import { LIVE_PLATFORM, createRefreshGate, firstName } from "@/lib/socia/liveCore";
-import { adjacentStory, afterPost, afterPostOrder, storiesAbove, storyJustAbove, counterTone, ftpCopyText, steppedTextSize, workableOrder } from "./deskRules";
+import { adjacentStory, afterPost, afterPostOrder, storiesAbove, storyJustAbove, ftpCopyText, steppedTextSize, workableOrder } from "./deskRules";
 
 /** Someone else holds this story (their claim), so the studio steps over it */
 const heldByOther = (n: FtpNewsItem) => isLiveItem(n) && !!n.live.claim && !n.live.claim.mine;
@@ -485,7 +487,14 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const [zoom, setZoom] = useState(1);
   const [stage, setStage] = useState({ w: 0, h: 0 });
 
-  const [text, setText] = useState(start.text);
+  // The post text as the editor knows it. Typing lives in PostTextBox and reaches here a moment later (or at once
+  // before any click or shortcut), so a key press doesn't re-render this whole editor. `setText` is for text the
+  // editor puts in the box itself (story switch, undo, pickers, settling, the server): it bumps the nonce, which
+  // is how the box knows to take it (postTextSync.ts).
+  const [box, setBox] = useState<BoxText>(() => ({ text: start.text, nonce: 0 }));
+  const text = box.text;
+  const setText = useCallback((value: string) => setBox((b) => putText(b, value)), []);
+  const takeBoxTyping = useCallback((value: string, nonce: number) => setBox((b) => takeTyped(b, value, nonce)), []);
   const [hashtags, setHashtags] = useState<TagOption[]>(start.hashtags);
   const [mentions, setMentions] = useState<TagOption[]>(start.mentions);
   // Handles the server answered bad_mention for: they stay plain text in this story
@@ -1146,10 +1155,14 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // ── The post box: typing in it and the pickers keep each other in step ──
   // Typing only changes the text; the pickers' ticks (and rows for typed tags) are read from it.
   /** Leaving the box (or copying): an edited box takes the exact layout that is copied and saved */
-  const settleBox = () => {
-    if (!canEdit || pristine) return;
-    if (text !== finalText) setText(finalText);
+  // The box passes what it holds (it may be ahead of `text` when the box is left)
+  const settleBox = (value: string = text) => {
+    if (!canEdit || (start.pristine && value === start.pristine.text)) return;
+    const settled = value === text ? finalText : readBox(value).finalText;
+    if (value !== settled) setText(settled);
   };
+  /** The box's counter: the post as copied (the server's own text while untouched), counted as the platform does */
+  const countBox = (value: string) => countChars(start.pristine && value === start.pristine.text ? start.pristine.text : readBox(value).finalText, platform);
   /** A picker tick or untick rewrites the tag line: tags already there keep their order, new ones go last */
   const pickTags = (kind: "#" | "@", options: TagOption[]) => {
     const ticked = checkedValues(options);
@@ -1879,9 +1892,9 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
    * post too long to stream shows the saved draft instead (reloaded below). A story being fixed never shows the
    * old posted text: the box waits for the correction's text.
    */
-  const shownText = watchedText({ ...storyLive, watching }, text).text;
-  /** The counter counts what the box shows */
-  const boxUsed = shownText === text ? used : countChars(shownText, platform);
+  const watchView = watchedText({ ...storyLive, watching }, text);
+  /** Someone else's text in the box, counted as shown; null while the box shows the person's own typing */
+  const watchedBox = watchView.from === "own" ? null : { text: watchView.text, used: countChars(watchView.text, platform) };
 
   // Too long to stream: the box shows the saved draft, read at most every few seconds while the holder types, once
   // more at the end of each window (their last change), and once when they leave. Never for a story being fixed:
@@ -2337,7 +2350,10 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // Prev / Next in the queue's order, for J / K below (set further down, where they are worked out)
   const storyNav = useRef<{ previousStory?: FtpNewsItem; nextStory?: FtpNewsItem; switchStory: (next: FtpNewsItem) => void } | null>(null);
   // ── Keyboard: one handler for every shortcut in editorKeys.ts ──
-  useEffect(() => {
+  // A layout effect, so the handler on the window is always this render's: a shortcut typed in the post box hands
+  // the typing up with flushSync first (PostTextBox), and Ctrl+S / Ctrl+Enter must then act on that text. Layout
+  // effects run inside that flushSync, before the key reaches the window; a passive effect might not have.
+  useLayoutEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.isComposing) return;
       const cmd = editorKeyFor(e);
@@ -3512,36 +3528,35 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               </Box>
               {live?.draft.rewrite && <RewriteNotice rewrite={live.draft.rewrite} />}
               {/* Watch mode: the holder's live text, read-only, in a dashed border of their colour, with their cursor drawn over it */}
-              <Box sx={{ position: "relative" }}>
-                <TextField
-                  multiline
-                  minRows={isX ? 4 : 5}
-                  maxRows={10}
-                  fullWidth
-                  size="small"
-                  value={shownText}
-                  onChange={(e) => setText(e.target.value)}
-                  onBlur={settleBox}
-                  inputRef={setTweetBox}
-                  slotProps={{ htmlInput: { "aria-label": `${isX ? "Tweet" : platform === "Facebook" ? "Post" : "Caption"} text${watching ? `, ${holderFirst} editing live` : ""}`, readOnly: !!live && !canEdit } }}
-                  sx={watching && !storyLive.gone ? { ...fieldSx, "& .MuiOutlinedInput-notchedOutline, & .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline, & .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline": { borderStyle: "dashed", borderWidth: "2px", borderColor: holderColor } } : fieldSx}
-                />
-                {watching && !storyLive.gone && storyLive.remote && !storyLive.remoteLong && (
-                  <LiveCaret target={tweetBox} text={storyLive.remote.text} selStart={storyLive.remote.selStart} selEnd={storyLive.remote.selEnd} color={storyLive.remote.color || holderColor} name={firstName(storyLive.remote.name)} changedAt={storyLive.remote.receivedAt} />
-                )}
-              </Box>
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, mt: 0.75 }}>
-                <LinearProgress variant="determinate" value={Math.min(100, (boxUsed / limits.text) * 100)} color={counterTone(boxUsed, limits.text, isX)} sx={{ flex: 1, height: 4, borderRadius: 2 }} />
-                <Typography sx={{ fontSize: "0.75rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: `${counterTone(boxUsed, limits.text, isX)}.main` }}>
-                  {boxUsed} / {limits.text}
-                  {watching && !storyLive.gone && (
+              {/* Its own component: a key press re-renders the box and its counter, not this editor (PostTextBox.tsx) */}
+              <PostTextBox
+                value={text}
+                nonce={box.nonce}
+                onTyped={takeBoxTyping}
+                onSettle={settleBox}
+                count={countBox}
+                watched={watchedBox}
+                limit={limits.text}
+                isX={isX}
+                rows={isX ? 9 : 10}
+                inputRef={setTweetBox}
+                label={`${isX ? "Tweet" : platform === "Facebook" ? "Post" : "Caption"} text${watching ? `, ${holderFirst} editing live` : ""}`}
+                readOnly={!!live && !canEdit}
+                sx={watching && !storyLive.gone ? { ...fieldSx, "& .MuiOutlinedInput-notchedOutline, & .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline, & .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline": { borderStyle: "dashed", borderWidth: "2px", borderColor: holderColor } } : fieldSx}
+                overlay={
+                  watching && !storyLive.gone && storyLive.remote && !storyLive.remoteLong ? (
+                    <LiveCaret target={tweetBox} text={storyLive.remote.text} selStart={storyLive.remote.selStart} selEnd={storyLive.remote.selEnd} color={storyLive.remote.color || holderColor} name={firstName(storyLive.remote.name)} changedAt={storyLive.remote.receivedAt} />
+                  ) : null
+                }
+                note={
+                  watching && !storyLive.gone ? (
                     <Box component="span" sx={{ fontWeight: 400, color: "text.secondary" }}>
                       {" "}
                       · read-only while {holderFirst} edits
                     </Box>
-                  )}
-                </Typography>
-              </Box>
+                  ) : null
+                }
+              />
               <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary", mt: 0.25 }}>
                 This is the post exactly as it is copied. Hashtags and mentions on its last line are the ones ticked below.
               </Typography>
