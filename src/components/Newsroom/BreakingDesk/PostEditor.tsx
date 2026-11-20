@@ -173,6 +173,22 @@ const SELECT_BLUE = "#2F7BFF";
 /** Saving the card image failed in the browser itself (out of memory), not because of the media */
 /** Ctrl+S while fixing a posted story */
 const PRESS_DONE = "Press Copy & Mark Posted to save your fix.";
+
+/**
+ * A call retried when the line drops (no answer from the server: no error code), up to 3 tries in all, 2 s then 4 s
+ * apart. An answer from the server (409, 400, ...) is never retried.
+ */
+async function retryNetwork<T>(call: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await call();
+    } catch (err) {
+      const status = (err as { status?: unknown }).status;
+      if (attempt >= 2 || errorCode(err) || (typeof status === "number" && status < 500)) throw err;
+      await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
+    }
+  }
+}
 /** The fix's card download failed (the fix itself is saved and copied) */
 const FIX_CARD_FAILED = "The fix is saved and copied, but its card didn't download. Open the story from the list to download it again.";
 const CARD_IMAGE_FAILED = "The browser ran out of memory making the card image. Close other tabs and try again.";
@@ -1490,6 +1506,47 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     return image;
   };
 
+  /**
+   * Copy & Mark Posted's card, split in two (owner, 20 Nov 2026: slow desk PCs on a slow line): the image, made
+   * now (no server call), and its upload, run later in the background with the version the caller gives. The
+   * upload never touches the editor's state, since the editor has moved on to the next story by then.
+   */
+  type CopyCard = { image: Blob | null; upload: ((version: number) => Promise<DraftView>) | null };
+  const prepareCopyCard = async (exported?: Promise<DesignCard | null>): Promise<CopyCard> => {
+    if (!live || !canEdit || serverView) return { image: null, upload: null };
+    const id = live.draft.id;
+    if (bgMode) {
+      const current = draftRef.current ?? live.draft;
+      const drawn = await bg.whenReady(current.id);
+      const hash = keyHash(drawn.key);
+      const record = bgStore.read(current.id);
+      const blob = drawn.card.blob;
+      if (current.card.custom && record?.hash === hash && record.cardUrl === current.card.url) return { image: blob, upload: null };
+      return {
+        image: blob,
+        upload: async (version) => {
+          const d = await socia.uploadCard(id, version, blob);
+          bgStore.write(id, { hash, cardUrl: d.card.url ?? "" });
+          designStore.write(id, null);
+          return d;
+        },
+      };
+    }
+    const own = await (exported ?? exportDesignCard(true));
+    if (!own) return { image: null, upload: null };
+    const { image, sent } = own;
+    if (cardSynced) return { image, upload: null };
+    return {
+      image,
+      upload: async (version) => {
+        const d = await socia.uploadCard(id, version, image);
+        designStore.write(id, { layout: sent.layout, mediaFile: sent.mediaFile, cardUrl: d.card.url });
+        bgStore.write(id, null);
+        return d;
+      },
+    };
+  };
+
   // Phase 1: keep the design's card image encoded while the editor is idle, so Copy & mark posted finds it ready
   // (TemplateCanvas drops it on any repaint). The X background's card is encoded as it redraws already.
   // Only while the editable canvas is the one on screen (it mounts once the desk's designs are in)
@@ -1679,24 +1736,60 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     // Settled through `uploadOwnCard` below; a text save that fails first leaves it unawaited
     exported?.catch(() => undefined);
     try {
-      const image = await serial(async () => {
+      // Waited for: the text save (usually nothing, the autosave has it) and the card image (usually pre-encoded).
+      // The card upload and the mark-posted go on in the background after the desk has moved on (owner, 20 Nov
+      // 2026: on a slow PC and a slow line the operator was waiting up to 15 s on the spinner).
+      const card = await serial(async () => {
         // Waits for an autosave in flight first (one server call at a time)
         timer.lap("wait for autosave");
         // Posting: new tag-line handles join the directory now, and only now
         await timer.time("save text + handles", saveText(true));
-        return timer.time("card upload", uploadOwnCard(true, exported));
+        return timer.time("card image", prepareCopyCard(exported));
       });
-      const res = await timer.time("mark posted", serial(() => socia.copyPosted(id, versionRef.current)));
-      // Both sides assemble the post the same way; say so if they ever differ rather than leave a wrong post
-      if (res.text && res.text.trim() !== copiedText.trim()) onSaved?.("Marked posted, but the server's text differs from what was copied. Check the post on X.");
-      const cardSaved = await timer.time("card download", downloadPostedCard(image));
+      const version = versionRef.current;
+      const cardSaved = await timer.time("card download", downloadPostedCard(card.image));
       timer.done();
-      if (!cardSaved) onSaved?.("Posted, but the card didn't download. Open the story in Posted and save the card by hand.");
-      live.onFinished();
-      desk?.addCopied({ draftId: id, postId: res.postId, headline: item.headline, undoUntil: res.undoUntil, withCard: cardSaved, postText: res.text || copiedText });
+      if (!cardSaved) onSaved?.("The card didn't download. Open the story in Posted and save the card by hand.");
+      const headline = item.headline;
+      const liveNow = live;
+      // The story's hold is kept (not released on leaving) so the background mark-posted still goes through
+      liveNow.onFinished();
       setPreviewOpen(false);
-      // Stay in the studio on the next free story (the posted one is now in Posted)
       moveOn();
+      void (async () => {
+        const finish = (async () => {
+          let v = version;
+          if (card.upload) {
+            const d = await retryNetwork(() => card.upload!(v));
+            v = d.version;
+            liveNow.onDraft(d);
+          }
+          let res: Awaited<ReturnType<typeof socia.copyPosted>>;
+          try {
+            res = await retryNetwork(() => socia.copyPosted(id, v));
+          } catch (err) {
+            // A retry after a lost answer: the first try went through
+            if (errorCode(err) === "already_posted" && desk?.pending.some((p) => p.draftId === id)) return;
+            throw err;
+          }
+          if (res.text && res.text.trim() !== copiedText.trim()) onSaved?.("Marked posted, but the server's text differs from what was copied. Check the post on X.");
+          desk?.addCopied({ draftId: id, postId: res.postId, headline, undoUntil: res.undoUntil, withCard: cardSaved, postText: res.text || copiedText });
+        })();
+        try {
+          await finish;
+        } catch (err) {
+          const code = errorCode(err);
+          if (code === "already_posted") {
+            const who = (err as { data?: { postedBy?: string | { name?: string } | null } }).data;
+            const name = (typeof who?.postedBy === "string" ? who.postedBy : who?.postedBy?.name) || "someone";
+            onSaved?.(`"${headline}" was already posted by ${name}. Don't post it again.`);
+          } else {
+            const why = code === "stale_version" ? "the post changed on the server" : code ? errorText(err) : err instanceof Error ? err.message : errorText(err);
+            onSaved?.(`NOT marked posted: "${headline}" (${why}). Open it again and press Copy & Mark Posted.`);
+          }
+          void desk?.refreshAll();
+        }
+      })();
     } catch (err) {
       timer.done("failed");
       // The clipboard holds a post the server didn't mark: empty it (best effort) and block with a banner. Not when
