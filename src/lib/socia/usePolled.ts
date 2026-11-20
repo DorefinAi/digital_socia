@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { answerKey, focusRefreshDelay, sameAsShown, type ShownAnswer } from "./pollEqual";
+import { pollRegistry } from "./pollRegistry";
 
 export interface Polled<T> {
   data: T | null;
@@ -78,6 +79,9 @@ export function usePolled<T>(fetcher: (signal: AbortSignal) => Promise<T>, inter
     if (inFlight.current) again.current = true;
     else void refresh();
   }, [refresh]);
+
+  // Reachable by key from outside while enabled (pollRegistry.ts): a server push nudges it, even in a hidden tab
+  useEffect(() => (enabled ? pollRegistry.add(key, nudge) : undefined), [key, nudge, enabled]);
 
   // A new key (or leaving the page) cancels what the old key still has in flight
   useEffect(

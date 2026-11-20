@@ -13,17 +13,20 @@
 //     or the editor re-renders only for its own story.
 // A server without live presence (404), or a stream that never says hello, leaves the status "off": the desk
 // then works exactly as before. Polling stays as it is; while connected, a queue event only makes a visible
-// desk refresh sooner (at most every 2 s).
+// desk refresh sooner (at most every 2 s). A hidden tab, whose polls have stopped, refreshes its queue list and
+// counts on "queue.changed" (a new or re-saved story), on resync and on a new stream (pollRegistry.ts).
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import * as socia from "./api";
 import { ApiError } from "./client";
 import { LiveHub, type LiveStatus } from "./liveHub";
+import { nudgePolled, QUEUE_POLL_KEYS } from "./pollRegistry";
 import { usePermissions } from "@/lib/access/usePermissions";
 import {
   LIVE_PLATFORM,
   NO_PRESENCE,
   QUEUE_EVENTS,
+  backgroundRefresh,
   createOutbox,
   createRefreshGate,
   createStateSender,
@@ -257,6 +260,10 @@ export function LiveProvider({ children, enabled = true, onQueueEvent }: { child
     if (!enabled) return;
     const gate = createRefreshGate({ run: () => onQueue.current?.(), visible: () => document.visibilityState === "visible" });
     const unsubscribe = hub.subscribe((event, payload) => {
+      // A hidden tab: the gate below does nothing and the polls have stopped, so the queue list and counts read
+      // now (an event-started fetch is not throttled like a timer). The server sends queue.changed at most about
+      // once a second, and a nudge never stacks reads, so a burst of files stays a few reads.
+      if (backgroundRefresh(event, document.visibilityState === "visible")) nudgePolled(QUEUE_POLL_KEYS);
       if (event === "hello") {
         // A new client id: the server knows nothing of this tab yet. Join again, and catch up on the lists.
         gate.call();

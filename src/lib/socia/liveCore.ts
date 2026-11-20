@@ -430,7 +430,22 @@ export const QUEUE_EVENTS = [
   "post.recalled",
   "cap.changed",
   "media.attached",
+  /** The queue changed (a new draft, a re-saved file): no ids, sent at most about once a second per stream */
+  "queue.changed",
 ] as const;
+
+/** Events that refresh the queue even in a hidden tab: the queue changed, or events may have been missed */
+const BACKGROUND_EVENTS = new Set(["queue.changed", "resync", "hello"]);
+
+/**
+ * Whether a stream event should refresh the queue pollers directly because the tab is hidden. A visible tab goes
+ * through the refresh gate as before. A hidden tab's gate does nothing, and its polls have stopped too, so these
+ * events nudge the queue list and counts straight away: a fetch started by an event is not throttled the way
+ * timers are.
+ */
+export function backgroundRefresh(event: string, visible: boolean): boolean {
+  return !visible && BACKGROUND_EVENTS.has(event);
+}
 
 /**
  * Whether a queue event should refresh the desk's lists. A draft.updated that leaves the draft claimed is an
