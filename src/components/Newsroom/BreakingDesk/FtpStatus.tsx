@@ -11,7 +11,7 @@ import { usePolled } from "@/lib/socia/usePolled";
 import type { IngestStatus } from "@/lib/socia/types";
 
 /** The backend worker checks Samvadia and the FTP every 5 seconds (contract: /ingest/status). */
-const LIVE_POLL_SECONDS = 5;
+const LIVE_POLL_SECONDS = 15;
 
 async function ingestOrNull(): Promise<IngestStatus | null> {
   try {

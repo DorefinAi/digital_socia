@@ -10,7 +10,8 @@ export const SOCIA_API_URL = rawUrl.replace(/\/+$/, "");
 export const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
 
 /** Screens poll at these rates. With live presence connected (live.tsx), a queue event also refreshes the desk at once. */
-export const POLL_MS = { queue: 5000, counts: 10000, posts: 15000, cardRender: 1500, cardTemplate: 60000 } as const;
+// Counts, posts and the FTP status read less often (owner, 20 Nov 2026: slow desk PCs); the queue stays at 5 s
+export const POLL_MS = { queue: 5000, counts: 20000, posts: 30000, cardRender: 1500, cardTemplate: 60000 } as const;
 
 /** The claim lease is 5 minutes; the backend asks for a heartbeat every 60 s. */
 export const HEARTBEAT_MS = 60_000;

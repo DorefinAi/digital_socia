@@ -6,7 +6,7 @@
 
 import { flatCopy, rgbPng } from "./rgbPng";
 
-export const CARD_JPEG_QUALITY = 0.92;
+export const CARD_JPEG_QUALITY = 0.85;
 /** Sizes tried, largest first, until the card fits the byte limit (X takes up to 5 MB) */
 export const CARD_SCALES = [1, 0.8, 0.65, 0.5] as const;
 

@@ -11,7 +11,7 @@ import { ApiError } from "@/lib/socia/client";
 import { usePolled } from "@/lib/socia/usePolled";
 import type { IngestStatus } from "@/lib/socia/types";
 
-const POLL_MS = 5000;
+const POLL_MS = 15000;
 /** The worker polls every few seconds; a last poll older than this means it has stopped (same limit as the API) */
 const STOPPED_AFTER_MS = 90_000;
 const STOPPED_LINE = "Intake stopped — new files are not being read. Tell the tech team.";
