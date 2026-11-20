@@ -17,7 +17,7 @@ export interface Polled<T> {
 }
 
 /**
- * Loads `fetcher` now and again every `intervalMs` while the tab is visible, and on focus.
+ * Loads `fetcher` now and again every `intervalMs` while the tab is visible, and on focus or when the tab is shown again.
  * The desk's source of truth: live presence (src/lib/socia/live.tsx) only makes it refresh sooner when a
  * queue event arrives, and a desk without the live stream relies on it alone. Pass `enabled: false` to pause.
  *
@@ -108,11 +108,19 @@ export function usePolled<T>(fetcher: (signal: AbortSignal) => Promise<T>, inter
       }, wait);
     };
     window.addEventListener("focus", onFocus);
+    // Shown again without a click (tab switched back, window uncovered or restored): a hidden tab skips its polls and
+    // the browser slows its timers to about once a minute, so catch up now instead of waiting for the next tick.
+    // A focus in the same moment only moves the one pending refresh (onFocus clears it first).
+    const onVisible = () => {
+      if (document.visibilityState === "visible") onFocus();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       stopped = true;
       clearTimeout(timer);
       clearTimeout(focusTimer);
       window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [refresh, intervalMs, enabled]);
 
