@@ -281,6 +281,9 @@ export default function WebScraperPage() {
 
   // ─── Actions ───────────────────────────────────────────────────────────────
   const [refreshing, setRefreshing] = useState(false);
+  // The two "look again" timers after Refresh; cleared when the page closes so they don't fire after leaving it
+  const lookAgain = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useEffect(() => () => lookAgain.current.forEach(clearTimeout), []);
   const [notice, setNotice] = useState<{ text: string } | null>(null);
   const refresh = async () => {
     if (!live) {
@@ -298,8 +301,7 @@ export default function WebScraperPage() {
       await refreshTrends();
       setNotice({ text: "Checking the sources now. New items appear here in a minute or two." });
       // The run takes a while; look again shortly
-      setTimeout(() => void reloadTrends(), 8000);
-      setTimeout(() => void reloadTrends(), 30000);
+      lookAgain.current.push(setTimeout(() => void reloadTrends(), 8000), setTimeout(() => void reloadTrends(), 30000));
     } catch (err) {
       setNotice({ text: errorText(err) });
     }

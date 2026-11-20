@@ -284,6 +284,8 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   }, []);
 
   const drafts = useMemo(() => socialDrafts.filter((d) => d.platform === platform), [socialDrafts, platform]);
+  // Each row asks "saved by me / held by whom?"; one id→claim lookup instead of searching the whole queue per row
+  const claimById = useMemo(() => new Map((desk?.queue ?? []).map((n) => [n.id, n.live.claim] as const)), [desk?.queue]);
   const draftFor = useCallback((newsId: string) => drafts.find((d) => d.newsId === newsId), [drafts]);
 
   // The queue holds every story not yet live here, not waiting to post, and not scheduled, rejected or dismissed
@@ -915,7 +917,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
                 onFocus: setFocusIndex,
                 onOpen: openRow,
                 onReject: setRejecting,
-                isSaved: (newsId: string) => (desk ? !!desk.queue.find((n) => n.id === newsId)?.live.claim?.mine : draftFor(newsId)?.status === "saved"),
+                isSaved: (newsId: string) => (desk ? !!claimById.get(newsId)?.mine : draftFor(newsId)?.status === "saved"),
                 liveElsewhere: (newsId: string) => (desk ? null : otherPlatforms.filter((p) => isLiveOn(socialPosts, newsId, p)).map((p) => PLATFORM_META[p].short).join(", ") || null),
                 canAct,
                 canReject,
@@ -923,7 +925,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
                   ? {
                       savedLabel: "With you",
                       heldBy: (newsId: string) => {
-                        const claim = desk.queue.find((n) => n.id === newsId)?.live.claim;
+                        const claim = claimById.get(newsId);
                         return claim && !claim.mine ? claim.name : null;
                       },
                     }
