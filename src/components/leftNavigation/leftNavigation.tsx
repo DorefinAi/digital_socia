@@ -153,9 +153,10 @@ const LeftNavigation: React.FC = () => {
   const isCollapsed = sidebarWidth < 80;
 
   // Post Studio lists only the desks this person may open
-  const studioItems: { label: string; icon: React.ReactNode; platformKey: string; path: string; isNew?: boolean }[] = AI_CONTENT_PLATFORMS.filter((p) => can(postStudioKey(p.platformKey)) && showsPlatform(p.platformKey)).flatMap((p) => {
+  // With the X Clips flag on, Post Studio shows only X and X Clips (YouTube, Instagram and Facebook are hidden); off, as before
+  const studioItems: { label: string; icon: React.ReactNode; platformKey: string; path: string; isNew?: boolean }[] = AI_CONTENT_PLATFORMS.filter((p) => can(postStudioKey(p.platformKey)) && showsPlatform(p.platformKey) && (!XVIDEOS_ENABLED || p.platformKey === "X")).flatMap((p) => {
     const item = { label: p.label, icon: p.icon(16), platformKey: p.platformKey, path: p.path };
-    // X Videos sits just under X, behind its flag (off on the live desk)
+    // X Clips sits just under X, behind its flag (off on the live desk)
     return XVIDEOS_ENABLED && p.platformKey === "X" ? [item, { label: XVIDEOS_NAV_ITEM.label, icon: XVIDEOS_NAV_ITEM.icon(16), platformKey: XVIDEOS_NAV_ITEM.platformKey, path: XVIDEOS_NAV_ITEM.path, isNew: true }] : [item];
   });
   const canManageAccess = can("page.settings") && canAny(["roles.manage", "users.manage"]);

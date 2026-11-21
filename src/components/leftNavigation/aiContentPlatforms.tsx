@@ -40,12 +40,12 @@ export const XVideosIcon: React.FC<IconProps> = ({ size = 16, color = "currentCo
 );
 
 /**
- * Post Studio → X Videos, shown just after X (Twitter) only when NEXT_PUBLIC_XVIDEOS=true (config.XVIDEOS_ENABLED).
+ * Post Studio → X Clips, shown just after X (Twitter) only when NEXT_PUBLIC_XVIDEOS=true (config.XVIDEOS_ENABLED).
  * Kept out of AI_CONTENT_PLATFORMS so the Web Scraper's "Create draft for…" and the home-page choice never list it.
  * It follows the X desk's permission.
  */
 export const XVIDEOS_NAV_ITEM = {
-  label: "X Videos",
+  label: "X Clips",
   platformKey: "X Videos",
   path: "/ai-content/x-videos",
   icon: (s: number) => <XVideosIcon size={s} />,

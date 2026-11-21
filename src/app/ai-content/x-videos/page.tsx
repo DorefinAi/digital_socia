@@ -22,7 +22,7 @@ function NotAvailable() {
           <PauseCircle size={20} aria-hidden />
         </Box>
         <Typography component="h1" sx={{ fontWeight: 600, fontSize: "1.0625rem" }}>
-          X Videos is not available yet.
+          X Clips is not available yet.
         </Typography>
         <Typography sx={{ fontSize: "0.875rem", color: "text.secondary" }}>The video desk is still being built. Posts from breaking files are on the X desk.</Typography>
         <Button component={Link} href="/ai-content/x" variant="outlined" sx={{ mt: 1, borderColor: "divider", color: "text.primary" }}>

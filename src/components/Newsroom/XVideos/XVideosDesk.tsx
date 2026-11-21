@@ -176,7 +176,7 @@ function Desk() {
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <XIcon size={16} color="currentColor" />
             <Typography component="h1" sx={{ fontWeight: 600, fontSize: "1.125rem", letterSpacing: "-0.01em" }}>
-              Video Draft
+              Clip Draft
             </Typography>
           </Box>
           <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.25 }}>This dashboard is linked with the live clips folder. Click on Open, pick the title from the clip and click on &quot;Copy &amp; Mark Posted&quot;.</Typography>
@@ -220,7 +220,7 @@ function Desk() {
 
       {/* Tabs + filters */}
       <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, flexWrap: "wrap", borderBottom: "1px solid", borderColor: "divider" }}>
-        <Box role="tablist" aria-label="Video Draft sections" sx={{ display: "flex", gap: 0.5 }}>
+        <Box role="tablist" aria-label="Clip Draft sections" sx={{ display: "flex", gap: 0.5 }}>
           {(
             [
               ["new", `New (${newClips.length})`],
