@@ -25,6 +25,7 @@ import {
   Globe,
   ShieldCheck,
   LayoutTemplate,
+  FileText,
 } from "lucide-react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { REJECTED_NEWS_LABEL, REJECTED_NEWS_PATH, REJECTED_NEWS_PERMISSION } from "@/lib/rejectedNews";
@@ -154,11 +155,20 @@ const LeftNavigation: React.FC = () => {
 
   // Post Studio lists only the desks this person may open
   // With the X Clips flag on, Post Studio shows only X and X Clips (YouTube, Instagram and Facebook are hidden); off, as before
-  const studioItems: { label: string; icon: React.ReactNode; platformKey: string; path: string; isNew?: boolean }[] = AI_CONTENT_PLATFORMS.filter((p) => can(postStudioKey(p.platformKey)) && showsPlatform(p.platformKey) && (!XVIDEOS_ENABLED || p.platformKey === "X")).flatMap((p) => {
+  // and X (Twitter) becomes a group: Posts (the X desk) and Clips (X Clips)
+  type StudioChild = { label: string; icon: React.ReactNode; path: string; isNew?: boolean };
+  const studioItems: { label: string; icon: React.ReactNode; platformKey: string; path: string; isNew?: boolean; children?: StudioChild[] }[] = AI_CONTENT_PLATFORMS.filter((p) => can(postStudioKey(p.platformKey)) && showsPlatform(p.platformKey) && (!XVIDEOS_ENABLED || p.platformKey === "X")).map((p) => {
     const item = { label: p.label, icon: p.icon(16), platformKey: p.platformKey, path: p.path };
-    // X Clips sits just under X, behind its flag (off on the live desk)
-    return XVIDEOS_ENABLED && p.platformKey === "X" ? [item, { label: XVIDEOS_NAV_ITEM.label, icon: XVIDEOS_NAV_ITEM.icon(16), platformKey: XVIDEOS_NAV_ITEM.platformKey, path: XVIDEOS_NAV_ITEM.path, isNew: true }] : [item];
+    if (!(XVIDEOS_ENABLED && p.platformKey === "X")) return item;
+    return {
+      ...item,
+      children: [
+        { label: "Posts", icon: <FileText size={14} />, path: p.path },
+        { label: "Clips", icon: XVIDEOS_NAV_ITEM.icon(14), path: XVIDEOS_NAV_ITEM.path, isNew: XVIDEOS_NAV_ITEM.isNew },
+      ],
+    };
   });
+  const [xGroupOpen, setXGroupOpen] = useState(true);
   const canManageAccess = can("page.settings") && canAny(["roles.manage", "users.manage"]);
 
   // Rejected news is a tab on the X desk now; the side menu keeps it only for people who can't open that desk
@@ -322,6 +332,46 @@ const LeftNavigation: React.FC = () => {
                 <Collapse in={aiSubmenuOpen} timeout="auto" unmountOnExit>
                   <Box sx={{ pl: 2, display: "flex", flexDirection: "column", gap: "2px", mt: 0.25, mb: 0.25 }}>
                     {item.subItems?.map((sub) => {
+                      // A group (X with Posts and Clips): a header that folds, then its children indented
+                      if ("children" in sub && sub.children) {
+                        return (
+                          <React.Fragment key={sub.label}>
+                            <Box
+                              role="button"
+                              aria-expanded={xGroupOpen}
+                              onClick={() => setXGroupOpen((o) => !o)}
+                              sx={{ display: "flex", alignItems: "center", gap: 1, py: 0.6, px: 1.25, borderRadius: "6px", cursor: "pointer", color: sub.children.some((c) => c.path === pathname) ? "text.primary" : "text.secondary", "&:hover": { backgroundColor: theme.palette.action.hover, color: "text.primary" } }}
+                            >
+                              <Box sx={{ display: "flex", alignItems: "center", flexShrink: 0 }}>{sub.icon}</Box>
+                              <Typography sx={{ fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>{sub.label}</Typography>
+                              <Box sx={{ ml: "auto", display: "flex" }}>{xGroupOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</Box>
+                            </Box>
+                            <Collapse in={xGroupOpen} timeout="auto" unmountOnExit>
+                              <Box sx={{ pl: 2.25, ml: 1.25, borderLeft: "1px solid", borderColor: theme.palette.divider, display: "flex", flexDirection: "column", gap: "2px" }}>
+                                {sub.children.map((child) => {
+                                  const active = pathname === child.path;
+                                  return (
+                                    <Box
+                                      key={child.path}
+                                      onClick={() => {
+                                        router.push(child.path);
+                                        if (isMobile) setMobileOpen(false);
+                                      }}
+                                      sx={{ display: "flex", alignItems: "center", gap: 1, py: 0.5, px: 1.25, borderRadius: "6px", cursor: "pointer", backgroundColor: active ? (theme.palette.mode === "light" ? "#f0f0f0" : "#2a2a2a") : "transparent", color: active ? "text.primary" : "text.secondary", "&:hover": { backgroundColor: theme.palette.action.hover, color: "text.primary" } }}
+                                    >
+                                      <Box sx={{ display: "flex", alignItems: "center", flexShrink: 0 }}>{child.icon}</Box>
+                                      <Typography sx={{ fontSize: "0.75rem", fontWeight: active ? 600 : 500, whiteSpace: "nowrap" }}>{child.label}</Typography>
+                                      {child.isNew && (
+                                        <Box component="span" sx={{ ml: "auto", px: 0.5, borderRadius: "4px", backgroundColor: "text.primary", color: "background.paper", fontSize: "0.5625rem", fontWeight: 800, lineHeight: 1.6 }}>NEW</Box>
+                                      )}
+                                    </Box>
+                                  );
+                                })}
+                              </Box>
+                            </Collapse>
+                          </React.Fragment>
+                        );
+                      }
                       const isSubActive =
                         pathname === sub.path ||
                         (pathname === "/ai-content" && currentPlatform?.toLowerCase() === sub.platformKey.toLowerCase());
