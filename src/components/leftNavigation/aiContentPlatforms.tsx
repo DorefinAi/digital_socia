@@ -33,6 +33,25 @@ export interface AiContentPlatform {
   live: boolean;
 }
 
+export const XVideosIcon: React.FC<IconProps> = ({ size = 16, color = "currentColor" }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} aria-hidden>
+    <path d="M7 4.5v15l12-7.5z" />
+  </svg>
+);
+
+/**
+ * Post Studio → X Videos, shown just after X (Twitter) only when NEXT_PUBLIC_XVIDEOS=true (config.XVIDEOS_ENABLED).
+ * Kept out of AI_CONTENT_PLATFORMS so the Web Scraper's "Create draft for…" and the home-page choice never list it.
+ * It follows the X desk's permission.
+ */
+export const XVIDEOS_NAV_ITEM = {
+  label: "X Videos",
+  platformKey: "X Videos",
+  path: "/ai-content/x-videos",
+  icon: (s: number) => <XVideosIcon size={s} />,
+  isNew: true,
+} as const;
+
 /** The AI Content Review platforms, in nav order. The sidebar and the Web Scraper's "Create draft for…" both read this. */
 export const AI_CONTENT_PLATFORMS: AiContentPlatform[] = [
   { label: "YouTube", platformKey: "YouTube", path: "/ai-content/youtube", icon: (s) => <YoutubeIcon size={s} />, live: false },

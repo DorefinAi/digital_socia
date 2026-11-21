@@ -30,7 +30,8 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { REJECTED_NEWS_LABEL, REJECTED_NEWS_PATH, REJECTED_NEWS_PERMISSION } from "@/lib/rejectedNews";
 import NavigationLabel from "../Overview/NavigationLabel";
 import SociaMark from "@/components/Login/SociaMark";
-import { AI_CONTENT_PLATFORMS } from "./aiContentPlatforms";
+import { AI_CONTENT_PLATFORMS, XVIDEOS_NAV_ITEM } from "./aiContentPlatforms";
+import { XVIDEOS_ENABLED } from "@/lib/socia/config";
 import { usePermissions } from "@/lib/access/usePermissions";
 import { postStudioKey } from "@/lib/access/catalogue";
 import { useSociaSession } from "@/providers/SociaSessionProvider";
@@ -152,7 +153,11 @@ const LeftNavigation: React.FC = () => {
   const isCollapsed = sidebarWidth < 80;
 
   // Post Studio lists only the desks this person may open
-  const studioItems = AI_CONTENT_PLATFORMS.filter((p) => can(postStudioKey(p.platformKey)) && showsPlatform(p.platformKey)).map((p) => ({ label: p.label, icon: p.icon(16), platformKey: p.platformKey, path: p.path }));
+  const studioItems: { label: string; icon: React.ReactNode; platformKey: string; path: string; isNew?: boolean }[] = AI_CONTENT_PLATFORMS.filter((p) => can(postStudioKey(p.platformKey)) && showsPlatform(p.platformKey)).flatMap((p) => {
+    const item = { label: p.label, icon: p.icon(16), platformKey: p.platformKey, path: p.path };
+    // X Videos sits just under X, behind its flag (off on the live desk)
+    return XVIDEOS_ENABLED && p.platformKey === "X" ? [item, { label: XVIDEOS_NAV_ITEM.label, icon: XVIDEOS_NAV_ITEM.icon(16), platformKey: XVIDEOS_NAV_ITEM.platformKey, path: XVIDEOS_NAV_ITEM.path, isNew: true }] : [item];
+  });
   const canManageAccess = can("page.settings") && canAny(["roles.manage", "users.manage"]);
 
   // Rejected news is a tab on the X desk now; the side menu keeps it only for people who can't open that desk
@@ -345,6 +350,9 @@ const LeftNavigation: React.FC = () => {
                           <Typography sx={{ fontSize: "0.75rem", fontWeight: isSubActive ? 600 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                             {sub.label}
                           </Typography>
+                          {"isNew" in sub && sub.isNew && (
+                            <Box component="span" sx={{ ml: "auto", px: 0.5, borderRadius: "4px", backgroundColor: "text.primary", color: "background.paper", fontSize: "0.5625rem", fontWeight: 800, lineHeight: 1.6 }}>NEW</Box>
+                          )}
                         </Box>
                       );
                     })}

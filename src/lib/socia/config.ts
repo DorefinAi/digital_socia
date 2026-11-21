@@ -15,3 +15,6 @@ export const POLL_MS = { queue: 5000, counts: 20000, posts: 30000, cardRender: 1
 
 /** The claim lease is 5 minutes; the backend asks for a heartbeat every 60 s. */
 export const HEARTBEAT_MS = 60_000;
+
+/** The X Videos desk (/ai-content/x-videos): its nav item and page show only with NEXT_PUBLIC_XVIDEOS=true. Off by default, so the live desk never sees it. */
+export const XVIDEOS_ENABLED = process.env.NEXT_PUBLIC_XVIDEOS === "true";

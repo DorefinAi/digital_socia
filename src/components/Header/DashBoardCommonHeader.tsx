@@ -139,6 +139,7 @@ const DashBoardCommonHeader: React.FC = () => {
       digital: "Digital Dashboard",
       "ai-content": "Post Studio",
       "web-scraper": "Web Scraper",
+      "x-videos": "X Videos",
       profile: "Your profile",
       access: "Access",
     };

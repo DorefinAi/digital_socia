@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>X Videos mockups</title>
+<!-- Dummy screens for the X Videos desk (branch xvideos), v2: matched to the LIVE X desk (fin.sociaai.in, 21 Nov
+     2026; references in ./reference). Static HTML, no app code. Each <section class="screen"> is one 1440x900
+     screen; shots.mjs renders each to PNG. All data is made up. -->
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --page: #f8f9fa; --card: #fff; --line: rgba(0,0,0,.12); --line2: rgba(0,0,0,.06); --ink: #000; --ink2: #555; --ink3: #8a8a8a;
+    --bar: #0e0e10; --big: #ffd400; --brk: #e57373; --orange: #e8710a; --green: #2e7d32; --blue: #1d9bf0; --tile: #fff6cc;
+    --sel: rgba(0,0,0,.08); --video: #6d28d9;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #cfd3d8; font-family: Roboto, "Noto Sans Devanagari", "Nirmala UI", system-ui, sans-serif; color: var(--ink); font-size: 14px; }
+  .screen { width: 1440px; height: 900px; background: var(--page); display: flex; overflow: hidden; position: relative; margin: 0 0 40px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .sp { flex: 1; }
+  .muted { color: var(--ink3); } .ink2 { color: var(--ink2); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 4px 12px; border-radius: 8px; border: .67px solid var(--line); background: #fff; font: inherit; font-size: 13px; font-weight: 600; color: var(--ink); white-space: nowrap; }
+  .btn.pri { background: #000; color: #fff; border-color: #000; }
+  .btn.sm { height: 28px; padding: 2px 9px; font-size: 12px; }
+  .ico { width: 18px; height: 18px; border: 1.7px solid currentColor; border-radius: 50%; opacity: .75; display: inline-block; flex-shrink: 0; }
+  .sq { border-radius: 4px; }
+  .badge { display: inline-flex; align-items: center; font-size: 11px; font-weight: 800; border-radius: 4px; padding: 1px 6px; line-height: 18px; }
+  .b-big { background: var(--big); color: #111; }
+  .b-brk { background: var(--brk); color: #fff; }
+  .b-vid { background: var(--video); color: #fff; }
+  .b-live { background: #d90429; color: #fff; }
+  .warnchip { display: inline-flex; gap: 4px; align-items: center; font-size: 11px; font-weight: 600; color: var(--orange); background: #fff3e6; border: 1px solid #ffd2a6; border-radius: 6px; padding: 2px 7px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+
+  /* desk chrome (as live) */
+  .nav { width: 216px; background: #fff; border-right: 1px solid var(--line2); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+  .brand { display: flex; align-items: center; gap: 8px; padding: 0 8px 22px; }
+  .brand b { font-size: 15px; } .brand small { display: block; color: var(--ink3); font-size: 11px; }
+  .logo { width: 20px; height: 20px; border-radius: 50%; border: 3px solid #000; border-right-color: transparent; }
+  .ni { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; color: #333; font-size: 14px; }
+  .ni.sub { padding-left: 18px; font-size: 13px; }
+  .ni.on { background: #eef0f2; font-weight: 700; color: #000; }
+  .new { margin-left: auto; font-size: 9.5px; font-weight: 800; background: #000; color: #fff; border-radius: 4px; padding: 1px 5px; }
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .topbar { height: 56px; display: flex; align-items: center; padding: 0 28px; gap: 6px; color: #333; }
+  .vol { margin: 0 28px; height: 30px; background: #fff; border-radius: 6px; display: flex; align-items: center; gap: 12px; padding: 0 16px; font-size: 12px; color: #555; }
+  .vol i { flex: 1; height: 4px; border-radius: 2px; background: #a5d6a7; }
+  .content { padding: 14px 28px; display: flex; flex-direction: column; gap: 14px; }
+  .stat { flex: 1; background: #fff; border-radius: 12px; padding: 12px 16px; border: .67px solid var(--line2); }
+  .stat .k { font-size: 12.5px; color: #555; } .stat .v { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  .tabs { display: flex; gap: 4px; }
+  .tabs span { padding: 8px 10px; color: #555; font-weight: 600; font-size: 13.5px; }
+  .tabs span.on { color: #000; border-bottom: 2px solid #000; }
+  .chips { display: inline-flex; gap: 2px; border: .67px solid var(--line); border-radius: 8px; padding: 3px; background: #fff; }
+  .chips span { white-space: nowrap; padding: 4px 9px; border-radius: 6px; font-size: 12.5px; font-weight: 600; color: #444; display: inline-flex; align-items: center; gap: 5px; }
+  .chips span.on { background: #eceef0; color: #000; }
+  .search { height: 34px; width: 210px; border: .67px solid var(--line); border-radius: 8px; background: #fff; display: flex; align-items: center; gap: 8px; padding: 0 10px; color: #888; font-size: 13px; }
+
+  /* queue rows (live style + a thumbnail) */
+  .list { background: #fff; border-top: 1px solid var(--line2); }
+  .qrow { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-bottom: 1px solid var(--line2); }
+  .qrow.hot { background: var(--sel); border-left: 3px solid #000; }
+  .qrow .time { width: 62px; font-size: 12.5px; font-weight: 700; }
+  .qrow .time small { display: block; font-weight: 400; color: #888; font-size: 11px; }
+  .qrow .meta { font-size: 11.5px; color: #888; display: flex; gap: 6px; align-items: center; }
+  .qrow .meta b { color: #555; font-weight: 600; }
+  .qrow .hl { font-size: 15px; font-weight: 700; margin-top: 2px; }
+  .qrow .hl .sug { color: #8a8a8a; font-weight: 500; font-style: italic; }
+  .rej { width: 18px; height: 18px; border-radius: 50%; border: 1.8px solid #d32f2f; position: relative; }
+  .rej::after { content: ""; position: absolute; left: 7px; top: -1px; width: 1.8px; height: 17px; background: #d32f2f; transform: rotate(45deg); }
+
+  /* fake video frames */
+  .vf { position: relative; overflow: hidden; background: #222; flex-shrink: 0; }
+  .vf .sc { position: absolute; inset: 0; }
+  .s1 { background: radial-gradient(circle at 30% 40%, #8c6b4f 0, #3b2c22 45%, #15100c 100%); }
+  .s2 { background: linear-gradient(160deg, #2c4a6e 0, #182a40 55%, #0b1320 100%); }
+  .s3 { background: radial-gradient(circle at 70% 30%, #a3896a 0, #5a4a3a 40%, #1d1813 100%); }
+  .s4 { background: linear-gradient(200deg, #4f6b3a 0, #2a3a20 60%, #11180c 100%); }
+  .s5 { background: radial-gradient(circle at 50% 35%, #6e5a8c 0, #33284a 50%, #120e1c 100%); }
+  .s6 { background: linear-gradient(180deg, #7d8792 0, #3f464e 60%, #16191c 100%); }
+  .person { position: absolute; left: 50%; bottom: 16%; transform: translateX(-50%); width: 22%; height: 60%; }
+  .person::before { content: ""; position: absolute; left: 50%; top: 0; transform: translateX(-50%); width: 44%; height: 34%; border-radius: 50%; background: rgba(230,200,170,.55); }
+  .person::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 62%; border-radius: 40% 40% 0 0; background: rgba(250,250,250,.32); }
+  .logo1 { position: absolute; top: 5%; right: 3%; background: #fff; color: #c1121f; font-weight: 900; padding: .2em .45em; border-radius: 3px; font-size: .9em; }
+  .livebug { position: absolute; top: 5%; left: 3%; background: #d90429; color: #fff; font-weight: 800; padding: .15em .5em; border-radius: 3px; font-size: .9em; }
+  .super { position: absolute; left: 4%; right: 4%; bottom: 10%; background: #c1121f; color: #fff; font-weight: 700; padding: .35em .7em; border-left: .35em solid #ffd60a; }
+  .ticker { position: absolute; left: 0; right: 0; bottom: 0; height: 8%; background: #ffd60a; color: #111; font-weight: 700; display: flex; align-items: center; padding-left: .7em; white-space: nowrap; overflow: hidden; font-size: .8em; }
+  .strip { position: absolute; left: 0; right: 0; bottom: 8%; height: 9%; background: #fff; display: flex; align-items: center; justify-content: space-around; font-weight: 800; color: #333; font-size: .7em; }
+  .dur { position: absolute; right: 4px; bottom: 4px; background: rgba(0,0,0,.78); color: #fff; font-size: 10.5px; font-weight: 700; border-radius: 3px; padding: 0 4px; }
+  .playc { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 56px; height: 56px; border-radius: 50%; background: rgba(0,0,0,.5); }
+  .playc::after { content: ""; position: absolute; left: 22px; top: 17px; border-left: 17px solid #fff; border-top: 11px solid transparent; border-bottom: 11px solid transparent; }
+  .ocrbox { position: absolute; border: 2px solid #22d3ee; border-radius: 3px; }
+
+  /* editor (as live: dark bar, rail, side panel, canvas, Tweet panel) */
+  .ebar { height: 54px; background: var(--bar); color: #fff; display: flex; align-items: center; gap: 8px; padding: 0 14px; }
+  .ebar .btn { background: transparent; color: #fff; border: .67px solid rgba(255,255,255,.14); height: 36px; }
+  .ebar .cmp { border: 2px solid #fff; border-radius: 12px; height: 41px; font-weight: 800; font-size: 14px; background: #111; color: #fff; padding: 0 16px; display: inline-flex; align-items: center; gap: 8px; }
+  .evol { height: 22px; background: #fff; border-bottom: 1px solid var(--line2); display: flex; align-items: center; gap: 10px; padding: 0 12px; font-size: 11px; color: #555; }
+  .evol i { flex: 1; height: 3px; background: #a5d6a7; border-radius: 2px; }
+  .ebody { flex: 1; display: flex; min-height: 0; }
+  .rail { width: 52px; background: #fff; border-right: 1px solid var(--line2); display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 10px; }
+  .rail div { width: 44px; padding: 7px 0; border-radius: 8px; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10px; color: #555; font-weight: 600; text-align: center; line-height: 1.1; }
+  .rail div.on { background: #eceef0; color: #000; }
+  .side { width: 300px; background: #fff; border-right: 1px solid var(--line2); display: flex; flex-direction: column; min-height: 0; }
+  .side .hd { padding: 10px 12px 8px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--line2); }
+  .tile { display: flex; gap: 8px; padding: 6px 8px; margin: 4px 8px; border-radius: 8px; background: var(--tile); align-items: flex-start; }
+  .tile.sel { outline: 1.6px solid #000; }
+  .tile .t { font-size: 12.5px; font-weight: 700; line-height: 1.3; }
+  .tile .m { font-size: 10.5px; color: #888; margin-top: 2px; }
+  .canvas { flex: 1; background: #eceef1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; position: relative; min-width: 0; }
+  .ctool { background: #fff; border-radius: 10px; padding: 6px 10px; display: flex; gap: 10px; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,.08); font-size: 12px; }
+  .tweet { width: 330px; background: #fff; border-left: 1px solid var(--line2); display: flex; flex-direction: column; min-height: 0; }
+  .tweet .body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; flex: 1; overflow: hidden; }
+  .tweet .ta { border: .67px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 13.5px; line-height: 1.5; min-height: 150px; }
+  .xblue { color: var(--blue); }
+  .meter { height: 4px; border-radius: 2px; background: #e5e7eb; overflow: hidden; } .meter i { display: block; height: 100%; background: var(--green); }
+  .sect { font-size: 11px; font-weight: 700; letter-spacing: .05em; color: #555; display: flex; justify-content: space-between; }
+  .box { border: .67px solid var(--line); border-radius: 8px; }
+  .ck { display: flex; align-items: center; gap: 10px; padding: 6px 10px; font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--line2); }
+  .ck:last-child { border-bottom: 0; }
+  .cb { width: 15px; height: 15px; border: 1.6px solid #555; border-radius: 3px; flex-shrink: 0; display: grid; place-items: center; font-size: 10px; }
+  .cb.on { background: #111; border-color: #111; color: #fff; }
+  .cb.lock { background: #111; border-color: #111; color: #fff; opacity: .55; }
+  .add { padding: 6px 10px; color: #999; font-size: 12.5px; display: flex; justify-content: space-between; }
+  .foot { border-top: 1px solid var(--line2); padding: 10px 14px; display: flex; gap: 8px; align-items: center; }
+  .foot .btn { border-radius: 12px; }
+  .src { display: inline-flex; gap: 5px; align-items: center; font-size: 11px; font-weight: 600; background: #fff6cc; border: 1px solid #f0d46a; border-radius: 5px; padding: 1px 6px; color: #5c4a00; }
+  .src.scr { background: #e0f9fd; border-color: #8ee3f0; color: #0b5563; }
+  .tl { display: flex; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--line2); align-items: flex-start; font-size: 13px; line-height: 1.45; }
+  .tl .ts { font-family: Consolas, monospace; font-size: 11px; color: #1a5fb4; width: 36px; flex-shrink: 0; padding-top: 2px; }
+  .tl.now { background: #f3f6fb; }
+  .tl.pick { background: #fff6cc; box-shadow: inset 3px 0 0 #000; }
+  .star { margin-left: auto; font-size: 11px; font-weight: 700; border: .67px solid var(--line); border-radius: 6px; padding: 1px 6px; background: #fff; white-space: nowrap; }
+  mark { background: #ffe58a; border-radius: 2px; }
+  .scrub { position: relative; height: 30px; width: 100%; }
+  .scrub .tr { position: absolute; left: 0; right: 0; top: 11px; height: 8px; background: #d5d8dd; border-radius: 4px; }
+  .scrub .keep { position: absolute; top: 11px; height: 8px; background: #111; }
+  .scrub .h { position: absolute; top: 3px; width: 10px; height: 24px; border-radius: 3px; background: #ffd400; border: 1.5px solid #111; }
+  .scrub .ph { position: absolute; top: 0; width: 2px; height: 30px; background: #d32f2f; }
+  .scrub .mk { position: absolute; top: 22px; width: 7px; height: 7px; border-radius: 50%; background: #1a5fb4; }
+
+  .overlay { position: absolute; inset: 0; background: rgba(0,0,0,.4); display: grid; place-items: center; }
+  .dialog { width: 600px; background: #fff; border-radius: 14px; box-shadow: 0 24px 60px rgba(0,0,0,.3); padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; }
+  .step { display: flex; gap: 12px; align-items: center; border: .67px solid var(--line); border-radius: 10px; padding: 11px 13px; }
+  .num { width: 24px; height: 24px; border-radius: 50%; background: #111; color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 12px; flex-shrink: 0; }
+  .num.done { background: var(--green); }
+  .toast { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); background: #111; color: #fff; border-radius: 10px; padding: 10px 14px; display: flex; gap: 14px; align-items: center; box-shadow: 0 8px 24px rgba(0,0,0,.25); font-size: 13px; }
+  .note { position: absolute; background: #fffbe6; border: 1.5px solid #f0c419; color: #5c4a00; border-radius: 10px; padding: 7px 10px; font-size: 12px; font-weight: 600; max-width: 240px; box-shadow: 0 4px 12px rgba(0,0,0,.1); z-index: 5; }
+  .note b { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #f0c419; color: #000; margin-right: 6px; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ SCREEN 1: the X Videos queue (live "Post Draft" layout) ═══════════════ -->
+<section class="screen" id="s1">
+  <nav class="nav">
+    <div class="brand"><div class="logo"></div><div><b>Socia</b><small>Digital desk</small></div><span class="sp"></span><span class="muted">«</span></div>
+    <div class="ni"><span class="ico sq"></span>Digital Dashboard</div>
+    <div class="ni"><span class="ico"></span>Web Scraper</div>
+    <div class="ni"><span class="ico sq"></span>Post Studio<span class="sp"></span><span class="muted">⌄</span></div>
+    <div class="ni sub"><b style="font-size:13px">𝕏</b>&nbsp;X (Twitter)</div>
+    <div class="ni sub on"><span style="font-size:13px">▶</span>&nbsp;X Videos<span class="new">NEW</span></div>
+    <div class="ni sub"><span class="ico sq" style="width:14px;height:14px"></span>Templates</div>
+    <span class="sp"></span>
+    <div class="ni muted">⇥ Logout</div>
+  </nav>
+  <div class="main">
+    <div class="topbar">socia / <b>X Videos</b>&nbsp; <span class="muted">|</span>&nbsp; Hi <b>Vansh</b><span class="sp"></span><span class="ico"></span>&nbsp;<span class="ico"></span>&nbsp;<span class="ico"></span>&nbsp;<span class="ico"></span>&nbsp;<span style="color:#1d9bf0;font-weight:800">ϟ</span></div>
+    <div class="vol">X volume today <i></i><b style="color:#000">1 / 10000</b></div>
+    <div class="content">
+      <div class="row">
+        <div>
+          <div style="font-size:18px;font-weight:600">𝕏&nbsp; Video Draft</div>
+          <div style="font-size:12.5px;color:#555;margin-top:3px">This dashboard is linked with the live clips folder. Click on Open, pick the title from the clip and click on "Copy &amp; Mark Posted".</div>
+        </div>
+        <span class="sp"></span>
+        <span class="row" style="font-size:12.5px;color:#555"><span class="dot" style="background:var(--green)"></span>Clips folder ok · <span class="muted">⟳ Updated 1:10 pm</span></span>
+      </div>
+      <div class="row" style="gap:14px">
+        <div class="stat"><div class="k">To post</div><div class="v" style="color:#555">6</div></div>
+        <div class="stat"><div class="k">Needs check</div><div class="v" style="color:var(--orange)">1</div></div>
+        <div class="stat"><div class="k">Posted today</div><div class="v" style="color:var(--green)">14</div></div>
+      </div>
+      <div class="row">
+        <div class="tabs"><span class="on">New (6)</span><span>Rejected</span></div>
+        <span class="sp"></span>
+        <div class="chips"><span class="on">All 6</span><span><span class="dot" style="background:#d90429"></span>Live 4</span><span><span class="dot" style="background:var(--video)"></span>Clips 2</span></div>
+        <div class="search">⌕ Search</div>
+        <button class="btn"><span class="dot" style="background:var(--green)"></span>21st Nov</button>
+        <button class="btn">☰ Filters</button>
+      </div>
+      <div class="list">
+        <div class="qrow hot">
+          <div class="time"><span class="dot" style="background:var(--green)"></span> 14:32<small>just now</small></div>
+          <div class="vf" style="width:112px;height:63px;border-radius:6px;font-size:7px"><div class="sc s1"></div><div class="person"></div><div class="livebug">LIVE</div><div class="logo1">1st</div><span class="dur">2:18</span></div>
+          <div style="flex:1;min-width:0">
+            <div class="meta"><span class="badge b-live">LIVE</span><b>Jaipur</b> CM press conference · LIVE_JPR_CM_PC_1432.mp4 · 48 MB</div>
+            <div class="hl"><span class="sug">Suggested:</span> किसानों के लिए 2000 करोड़ के पैकेज का ऐलान</div>
+          </div>
+          <span class="rej"></span><button class="btn pri">✎ Open</button>
+        </div>
+        <div class="qrow">
+          <div class="time"><span class="dot" style="background:var(--green)"></span> 14:24<small>9 min ago</small></div>
+          <div class="vf" style="width:112px;height:63px;border-radius:6px;font-size:7px"><div class="sc s2"></div><div class="livebug">LIVE</div><div class="logo1">1st</div><span class="dur">1:05</span></div>
+          <div style="flex:1;min-width:0">
+            <div class="meta"><span class="badge b-live">LIVE</span><b>Kota</b> Rain · LIVE_KOTA_RAIN_1424.mp4 · 21 MB · <span style="color:#1a5fb4;font-weight:700">Rohit is editing</span></div>
+            <div class="hl">कोटा में जोरदार बारिश का दौर, कई इलाकों में जलभराव</div>
+          </div>
+          <span class="rej"></span><button class="btn pri">✎ Open</button>
+        </div>
+        <div class="qrow">
+          <div class="time"><span class="dot" style="background:var(--green)"></span> 14:10<small>23 min ago</small></div>
+          <div class="vf" style="width:112px;height:63px;border-radius:6px;font-size:7px"><div class="sc s3"></div><div class="person"></div><div class="logo1">1st</div><span class="dur">3:42</span></div>
+          <div style="flex:1;min-width:0">
+            <div class="meta"><span class="badge b-live">LIVE</span><b>Jaipur</b> Vidhan Sabha · LIVE_JPR_VIDHANSABHA_1410.mp4 · 96 MB</div>
+            <div class="hl"><span class="sug">Suggested:</span> विधानसभा में हंगामा, विपक्ष का वॉकआउट</div>
+          </div>
+          <span class="warnchip">⚠ 3:42, over X's 2:20, trim</span><span class="rej"></span><button class="btn pri">✎ Open</button>
+        </div>
+        <div class="qrow">
+          <div class="time"><span class="dot" style="background:var(--green)"></span> 14:36<small>just now</small></div>
+          <div class="vf" style="width:112px;height:63px;border-radius:6px;font-size:7px"><div class="sc s4"></div><div class="logo1">1st</div><span class="dur">0:52</span></div>
+          <div style="flex:1;min-width:0">
+            <div class="meta"><span class="badge b-vid">CLIP</span><b>Udaipur</b> LIVE_UDR_TIGER_1436.mp4 · 18 MB</div>
+            <div class="hl"><span class="sug">Reading the clip… 45%</span></div>
+          </div>
+          <span class="rej"></span><button class="btn pri">✎ Open</button>
+        </div>
+        <div class="qrow">
+          <div class="time"><span class="dot" style="background:var(--orange)"></span> 14:02<small>31 min ago</small></div>
+          <div class="vf" style="width:112px;height:63px;border-radius:6px;font-size:7px"><div class="sc s5"></div><div class="person"></div><div class="logo1">1st</div><span class="dur">1:47</span></div>
+          <div style="flex:1;min-width:0">
+            <div class="meta"><span class="badge b-live">LIVE</span><b>Tonk</b> LIVE_TONK_PILOT_1402.mp4 · 39 MB</div>
+            <div class="hl"><span class="sug">Suggested:</span> सचिन पायलट बोले, युवाओं से किया वादा पूरा करे सरकार</div>
+          </div>
+          <span class="rej"></span><button class="btn pri">✎ Open</button>
+        </div>
+        <div class="qrow">
+          <div class="time"><span class="dot" style="background:var(--orange)"></span> 13:58<small>35 min ago</small></div>
+          <div class="vf" style="width:112px;height:63px;border-radius:6px;font-size:7px"><div class="sc s6"></div><div class="livebug">LIVE</div><div class="logo1">1st</div><div class="ticker" style="font-size:5px">अजमेर रोड पर भीषण आग</div><span class="dur">0:38</span></div>
+          <div style="flex:1;min-width:0">
+            <div class="meta"><span class="badge b-vid">CLIP</span><b>Jaipur</b> LIVE_JPR_FIRE_1358.mp4 · 14 MB</div>
+            <div class="hl"><span class="sug">Suggested:</span> अजमेर रोड पर भीषण आग, दमकल की 12 गाड़ियां मौके पर</div>
+          </div>
+          <span class="rej"></span><button class="btn pri">✎ Open</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note" style="left:250px;top:830px"><b>1</b>Same rows as Post Draft, plus a clip thumbnail and its length</div>
+  <div class="note" style="left:640px;top:830px"><b>2</b>Grey "Suggested" = the system's guess from the clip; the desk confirms it in the editor</div>
+  <div class="note" style="left:1060px;top:830px"><b>3</b>A clip over X's limit is flagged in the list, like "No district, check"</div>
+</section>
+
+<!-- ═══════════════ SCREEN 2: editor, title from what is SAID ═══════════════ -->
+<section class="screen" id="s2" style="flex-direction:column">
+  <div class="ebar">
+    <button class="btn">← Desk</button><button class="btn">‹ Prev (K)</button><button class="btn">Next (J) ›</button>
+    <b style="margin-left:8px">𝕏</b><span style="font-weight:600;margin-left:6px">Jaipur: CM press conference · LIVE_JPR_CM_PC_1432.mp4</span>
+    <span class="sp"></span>
+    <button class="btn" style="border:0">◉ See on X</button><span style="font-size:12px;color:#aaa">14 posted today</span>
+    <button class="btn">⧉ Copy</button>
+    <span class="cmp">⎘ Copy &amp; Mark Posted</span>
+  </div>
+  <div class="evol">X volume today <i></i><b style="color:#000">15 / 10000</b></div>
+  <div class="ebody">
+    <div class="rail">
+      <div><span class="ico sq"></span>Clips</div>
+      <div class="on"><span class="ico"></span>Said in clip</div>
+      <div><span class="ico sq"></span>On screen</div>
+      <div><span class="ico sq"></span>Text</div>
+    </div>
+    <div class="side">
+      <div class="hd">
+        <div class="row"><b style="font-size:15px">Said in the clip</b><span class="sp"></span><span class="muted" style="font-size:11px">Hindi · auto</span></div>
+        <div style="font-size:11.5px;color:#888">Click a line to jump there. ★ puts it on line 1 of the tweet.</div>
+        <div class="row" style="flex-wrap:wrap;gap:5px"><span class="muted" style="font-size:11px;font-weight:700">HEARD</span><span class="chips" style="padding:1px"><span>भजनलाल शर्मा</span></span><span class="chips" style="padding:1px"><span>किसान</span></span><span class="chips" style="padding:1px"><span>जयपुर</span></span><span class="chips" style="padding:1px"><span>2000 करोड़</span></span></div>
+      </div>
+      <div class="tl"><span class="ts">00:04</span><span>आज हम प्रदेश के अन्नदाताओं के लिए एक बड़ा निर्णय लेकर आए हैं।</span></div>
+      <div class="tl"><span class="ts">00:19</span><span>पिछले दो साल में सरकार ने किसानों के हित में कई योजनाएं शुरू की हैं।</span></div>
+      <div class="tl pick now"><span class="ts">00:42</span><span>राज्य सरकार <mark>किसानों के लिए 2000 करोड़ रुपये के पैकेज</mark> की घोषणा करती है। <span class="star">★ On line 1</span></span></div>
+      <div class="tl"><span class="ts">01:20</span><span>एक दिसंबर से ई-मित्र पर पंजीकरण शुरू होगा, कोई शुल्क नहीं लगेगा। <span class="star">★</span></span></div>
+      <div class="tl"><span class="ts">01:48</span><span>बिजली के बिल में भी किसानों को राहत दी जाएगी। <span class="star">★</span></span></div>
+      <div class="tl"><span class="ts">02:05</span><span>मैं सभी जिला कलेक्टरों को निर्देश दे चुका हूं।</span></div>
+    </div>
+    <div class="canvas">
+      <div class="vf" style="width:760px;height:428px;border-radius:6px;font-size:15px;box-shadow:0 2px 10px rgba(0,0,0,.15)"><div class="sc s1"></div><div class="person"></div><div class="livebug">LIVE</div><div class="logo1">1st इंडिया</div><div class="super" style="bottom:17%">मुख्यमंत्री भजनलाल शर्मा की प्रेस वार्ता</div><div class="strip">TATA PLAY 1182 · airtel 361 · hathway 780 · DEN 334</div><div class="ticker">किसानों के लिए 2000 करोड़ का पैकेज · 1 दिसंबर से पंजीकरण</div></div>
+      <div class="ctool" style="width:760px;flex-direction:column;align-items:stretch;gap:4px">
+        <div class="scrub"><div class="tr"></div><div class="keep" style="left:0;right:0"></div><div class="h" style="left:-4px"></div><div class="h" style="right:-4px"></div><div class="ph" style="left:30%"></div><div class="mk" style="left:30%"></div><div class="mk" style="left:58%"></div><div class="mk" style="left:79%"></div></div>
+        <div class="row"><button class="btn sm pri">▶</button><span style="font-family:Consolas,monospace">00:42 / 02:18</span><span class="muted">keep whole clip</span><span class="sp"></span><button class="btn sm">[ Start (I)</button><button class="btn sm">End (O) ]</button><button class="btn sm">1×</button><button class="btn sm">⤢</button><button class="btn sm">Open in Video Studio</button></div>
+      </div>
+      <div class="note" style="left:30px;top:20px"><b>1</b>The clip plays where the card sits today. Yellow handles trim; blue dots are lines worth using</div>
+    </div>
+    <div class="tweet">
+      <div class="body">
+        <div class="row"><b style="font-size:15px">Tweet</b><span class="sp"></span><span style="font-size:12px;font-weight:600">✂ Fit to 280</span><span class="muted" style="font-size:12px">Revert</span></div>
+        <div class="row"><span class="src">★ Line 1 from what was said, 00:42</span></div>
+        <div class="ta">CM भजनलाल शर्मा का ऐलान, किसानों के लिए 2000 करोड़ का पैकेज | Rajasthan News<br><br><span class="xblue">#FINVideo #RajasthanWithFirstIndia #Jaipur #BhajanlalSharma @BhajanlalBjp @RajGovOfficial</span></div>
+        <div class="meter"><i style="width:68%"></i></div>
+        <div class="row" style="font-size:11.5px;color:#555"><span>This is the post exactly as it is copied. The video is attached on X.</span><span class="sp"></span><b style="color:#000">191 / 280</b></div>
+        <div class="sect"><span>CHANNEL LABEL</span><span class="muted" style="font-weight:500">sets the brand tag</span></div>
+        <div class="chips" style="align-self:flex-start"><span class="on">Rajasthan News</span><span>Jaipur News</span><span>India News</span><span>none</span></div>
+        <div class="sect"><span>HASHTAGS</span><span class="muted" style="font-weight:500">4 selected</span></div>
+        <div class="box">
+          <div class="ck"><span class="cb lock">✓</span>#FINVideo<span class="sp"></span><span class="muted" style="font-size:11px">always</span></div>
+          <div class="ck"><span class="cb on">✓</span>#RajasthanWithFirstIndia</div>
+          <div class="ck"><span class="cb on">✓</span>#Jaipur</div>
+          <div class="ck"><span class="cb on">✓</span>#BhajanlalSharma</div>
+          <div class="ck"><span class="cb"></span>#Farmers</div>
+          <div class="add">Add hashtag<span>+</span></div>
+        </div>
+        <div class="sect"><span>MENTIONS</span><span class="muted" style="font-weight:500">2 selected</span></div>
+        <div class="box">
+          <div class="ck"><span class="cb on">✓</span>@BhajanlalBjp</div>
+          <div class="ck"><span class="cb on">✓</span>@RajGovOfficial</div>
+        </div>
+      </div>
+      <div class="foot"><button class="btn" style="color:#d32f2f">⊘ Reject</button><button class="btn" style="border-color:rgba(0,0,0,.5)">▣ Save draft</button><button class="btn muted">◷ Schedule</button></div>
+    </div>
+  </div>
+  <div class="note" style="left:60px;top:560px"><b>2</b>Speech-to-text of the clip in the left panel, where the FTP feed is today</div>
+  <div class="note" style="left:860px;top:110px"><b>3</b>The Tweet panel is today's: checkbox hashtags and mentions, with #FINVideo always on →</div>
+</section>
+
+<!-- ═══════════════ SCREEN 3: editor, title from what is SHOWN ═══════════════ -->
+<section class="screen" id="s3" style="flex-direction:column">
+  <div class="ebar">
+    <button class="btn">← Desk</button><button class="btn">‹ Prev (K)</button><button class="btn">Next (J) ›</button>
+    <b style="margin-left:8px">𝕏</b><span style="font-weight:600;margin-left:6px">Jaipur: Ajmer Road fire · LIVE_JPR_FIRE_1358.mp4</span>
+    <span class="sp"></span>
+    <button class="btn" style="border:0">◉ See on X</button><span style="font-size:12px;color:#aaa">14 posted today</span>
+    <button class="btn">⧉ Copy</button>
+    <span class="cmp">⎘ Copy &amp; Mark Posted</span>
+  </div>
+  <div class="evol">X volume today <i></i><b style="color:#000">15 / 10000</b></div>
+  <div class="ebody">
+    <div class="rail">
+      <div><span class="ico sq"></span>Clips</div>
+      <div><span class="ico"></span>Said in clip</div>
+      <div class="on"><span class="ico sq"></span>On screen</div>
+      <div><span class="ico sq"></span>Text</div>
+    </div>
+    <div class="side">
+      <div class="hd">
+        <div class="row"><b style="font-size:15px">On screen</b><span class="sp"></span><span class="muted" style="font-size:11px">3 found</span></div>
+        <div style="font-size:11.5px;color:#888">Text read from the frames: supers, tickers, name straps. ★ puts it on line 1.</div>
+      </div>
+      <div style="padding:8px;display:flex;flex-direction:column;gap:8px">
+        <div class="box" style="padding:6px;outline:1.6px solid #000;background:#fff6cc">
+          <div class="vf" style="height:120px;border-radius:5px;font-size:7px"><div class="sc s6"></div><div class="super" style="font-size:8px">अजमेर रोड पर भीषण आग, दमकल की 12 गाड़ियां मौके पर</div><div class="ocrbox" style="left:3%;right:3%;bottom:7%;height:20%"></div></div>
+          <div class="row" style="margin-top:5px;align-items:flex-start"><span class="muted" style="font-family:Consolas;font-size:11px">00:12</span><b style="font-size:12.5px;flex:1">अजमेर रोड पर भीषण आग, दमकल की 12 गाड़ियां मौके पर</b></div>
+          <div class="row"><span class="sp"></span><span class="star">★ On line 1</span></div>
+        </div>
+        <div class="box" style="padding:6px">
+          <div class="vf" style="height:120px;border-radius:5px;font-size:7px"><div class="sc s6"></div><div class="ticker" style="font-size:6px">जयपुर: फैक्ट्री में लगी आग · कोई हताहत नहीं</div><div class="ocrbox" style="left:0;right:0;bottom:0;height:10%"></div></div>
+          <div class="row" style="margin-top:5px;align-items:flex-start"><span class="muted" style="font-family:Consolas;font-size:11px">00:20</span><b style="font-size:12.5px;flex:1">जयपुर: फैक्ट्री में लगी आग · कोई हताहत नहीं · पुलिस मौके पर</b><span class="star">★</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="canvas">
+      <div class="vf" style="width:760px;height:428px;border-radius:6px;font-size:15px;box-shadow:0 2px 10px rgba(0,0,0,.15)"><div class="sc s6"></div><div class="livebug">LIVE</div><div class="logo1">1st इंडिया</div><div class="super" style="bottom:17%">अजमेर रोड पर भीषण आग, दमकल की 12 गाड़ियां मौके पर</div><div class="ocrbox" style="left:3.5%;right:3.5%;bottom:16%;height:10%"></div><div class="strip">TATA PLAY 1182 · airtel 361 · hathway 780 · DEN 334</div><div class="ticker">जयपुर: फैक्ट्री में लगी आग · कोई हताहत नहीं · पुलिस मौके पर</div></div>
+      <div class="ctool" style="width:760px;flex-direction:column;align-items:stretch;gap:4px">
+        <div class="scrub"><div class="tr"></div><div class="keep" style="left:0;right:0"></div><div class="h" style="left:-4px"></div><div class="h" style="right:-4px"></div><div class="ph" style="left:32%"></div><div class="mk" style="left:32%;background:#22d3ee"></div><div class="mk" style="left:53%;background:#22d3ee"></div><div class="mk" style="left:80%;background:#22d3ee"></div></div>
+        <div class="row"><button class="btn sm pri">▶</button><span style="font-family:Consolas,monospace">00:12 / 00:38</span><span class="sp"></span><button class="btn sm">[ Start (I)</button><button class="btn sm">End (O) ]</button><button class="btn sm">1×</button><button class="btn sm">⤢</button><button class="btn sm">Open in Video Studio</button></div>
+      </div>
+      <div class="note" style="left:30px;top:20px"><b>1</b>The cyan box shows where the text was read on the frame</div>
+    </div>
+    <div class="tweet">
+      <div class="body">
+        <div class="row"><b style="font-size:15px">Tweet</b><span class="sp"></span><span style="font-size:12px;font-weight:600">✂ Fit to 280</span><span class="muted" style="font-size:12px">Revert</span></div>
+        <div class="row"><span class="src scr">▣ Line 1 from the screen, 00:12</span></div>
+        <div class="ta">Jaipur Fire: अजमेर रोड पर भीषण आग, दमकल की 12 गाड़ियां मौके पर | Jaipur News<br><br><span class="xblue">#FINVideo #RajasthanWithFirstIndia #Jaipur #JaipurFireIncident @jaipur_police</span></div>
+        <div class="meter"><i style="width:62%"></i></div>
+        <div class="row" style="font-size:11.5px;color:#555"><span>This is the post exactly as it is copied.</span><span class="sp"></span><b style="color:#000">174 / 280</b></div>
+        <div class="sect"><span>START WITH</span></div>
+        <div class="chips" style="align-self:flex-start"><span>VIDEO:</span><span>Viral Video:</span><span class="on">Jaipur Fire:</span><span>none</span></div>
+        <div class="sect"><span>HASHTAGS</span><span class="muted" style="font-weight:500">4 selected</span></div>
+        <div class="box">
+          <div class="ck"><span class="cb lock">✓</span>#FINVideo<span class="sp"></span><span class="muted" style="font-size:11px">always</span></div>
+          <div class="ck"><span class="cb on">✓</span>#RajasthanWithFirstIndia</div>
+          <div class="ck"><span class="cb on">✓</span>#Jaipur</div>
+          <div class="ck"><span class="cb on">✓</span>#JaipurFireIncident</div>
+          <div class="add" style="color:#000">#fire|<span>+</span></div>
+        </div>
+        <div class="sect"><span>MENTIONS</span><span class="muted" style="font-weight:500">1 selected</span></div>
+        <div class="box">
+          <div class="ck"><span class="cb on">✓</span>@jaipur_police</div>
+          <div class="ck"><span class="cb"></span>@DcDmJaipur</div>
+        </div>
+      </div>
+      <div class="foot"><button class="btn" style="color:#d32f2f">⊘ Reject</button><button class="btn" style="border-color:rgba(0,0,0,.5)">▣ Save draft</button><button class="btn muted">◷ Schedule</button></div>
+    </div>
+  </div>
+  <div class="note" style="left:60px;top:640px"><b>2</b>Frame grabs with the text read from them, in the left panel</div>
+  <div class="note" style="left:860px;top:168px"><b>3</b>Prefix chips match the desk's video styles: VIDEO:, Viral Video:, Jaipur Fire: →</div>
+</section>
+
+<!-- ═══════════════ SCREEN 4: Copy & Mark Posted with a video ═══════════════ -->
+<section class="screen" id="s4" style="flex-direction:column">
+  <div class="ebar">
+    <button class="btn">← Desk</button><button class="btn">‹ Prev (K)</button><button class="btn">Next (J) ›</button>
+    <b style="margin-left:8px">𝕏</b><span style="font-weight:600;margin-left:6px">Jaipur: CM press conference · LIVE_JPR_CM_PC_1432.mp4</span>
+    <span class="sp"></span><span style="font-size:12px;color:#aaa">15 posted today</span><button class="btn">⧉ Copy</button><span class="cmp">⎘ Copy &amp; Mark Posted</span>
+  </div>
+  <div class="evol">X volume today <i></i><b style="color:#000">15 / 10000</b></div>
+  <div class="ebody" style="filter:blur(1.5px)">
+    <div class="rail"></div><div class="side"></div>
+    <div class="canvas"><div class="vf" style="width:760px;height:428px;border-radius:6px"><div class="sc s1"></div><div class="person"></div></div></div>
+    <div class="tweet"></div>
+  </div>
+  <div class="overlay">
+    <div class="dialog">
+      <div class="row"><b style="font-size:17px">Ready for X</b><span class="sp"></span><span class="badge" style="background:#e8f5e9;color:var(--green)">Marked posted</span></div>
+      <div class="muted" style="margin-top:-6px;font-size:13px">Posting stays by hand, as with breaking posts. A video post needs one more step: the file.</div>
+      <div class="step"><span class="num done">✓</span><div style="flex:1"><b>Tweet copied</b><div class="muted" style="font-size:12px;margin-top:2px">CM भजनलाल शर्मा का ऐलान, किसानों के लिए 2000 करोड़ का पैकेज | Rajasthan News …</div></div><button class="btn sm">Copy again</button></div>
+      <div class="step"><span class="num done">✓</span><div style="flex:1"><b>Video saved</b><div class="muted" style="font-size:12px;margin-top:2px">Downloads\CM-kisan-package_1432.mp4 · 2:18 · 48 MB, as filed (no re-encode)</div></div><button class="btn sm">Show file</button></div>
+      <div class="step"><span class="num">3</span><div style="flex:1"><b>Post it on X</b><div class="muted" style="font-size:12px;margin-top:2px">Opens X's composer. Paste the text, attach the video.</div></div><button class="btn sm pri">Open X ↗</button></div>
+      <div class="row"><span class="sp"></span><button class="btn">Next clip (J) →</button><button class="btn pri">Done</button></div>
+    </div>
+  </div>
+  <div class="toast">Marked posted <span style="color:#9aa3b2">Undo within 4:52</span><b style="color:#ffd400">UNDO</b></div>
+  <div class="note" style="left:1060px;top:300px"><b>1</b>Same Copy &amp; Mark Posted and 5-minute undo as today. The X API upload can replace steps 2 and 3 in a later phase.</div>
+</section>
+
+</body>
+</html>
