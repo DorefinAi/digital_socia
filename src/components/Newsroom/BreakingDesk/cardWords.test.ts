@@ -20,10 +20,11 @@ test("the card's font stack starts with Mardoto for Latin and Noto Sans Devanaga
   assert.match(face.slice(0, face.indexOf("}")), /unicode-range: U\+0900-097F/);
 });
 
-test("a heading that opens with its own place, in Hindi or English, gets no place in front (as on the desk's posts)", () => {
+test("a heading that opens with its own place followed by a postposition keeps it and gets no place in front (D1 guard)", () => {
   // 13 Nov 12:19: the desk's card reads "अलवर के हल्दीना गांव में दर्दनाक हादसा", not "Alwar: अलवर के …"
   assert.equal(cardHeadlineText("अलवर के हल्दीना गांव में दर्दनाक हादसा", "Alwar", null), "अलवर के हल्दीना गांव में दर्दनाक हादसा");
-  assert.equal(cardHeadlineText("जयपुर रेंज IG राहुल प्रकाश के निर्देशन में बड़ी कार्रवाई", "Jaipur", null), "जयपुर रेंज IG राहुल प्रकाश के निर्देशन में बड़ी कार्रवाई");
+  // D1 (23 Nov 2026): with no postposition after it, the place word goes and the prefix stays, as on the desk's cards
+  assert.equal(cardHeadlineText("जयपुर रेंज IG राहुल प्रकाश के निर्देशन में बड़ी कार्रवाई", "Jaipur", null), "Jaipur: रेंज IG राहुल प्रकाश के निर्देशन में बड़ी कार्रवाई");
   // A Hindi spelling the district list gives as an alias
   assert.equal(cardHeadlineText("बाडमेर में तेज बारिश", "Barmer", null), "बाडमेर में तेज बारिश");
   // A shorter English spelling the backend also knows for the district

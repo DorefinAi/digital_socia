@@ -3,7 +3,7 @@
 //   node --import ./src/components/Newsroom/BreakingDesk/video/timeline/__checks__/resolve-ts.mjs --test src/components/Newsroom/BreakingDesk/deskRules.test.ts
 import { describe, it, test } from "node:test";
 import assert from "node:assert/strict";
-import { afterPostOrder, storiesAbove, storyJustAbove, tabTarget, pattiNumber, adjacentStory, advanceCandidates, afterPost, ftpCopyText, sameTab, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, freeForAdvance, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder } from "./deskRules";
+import { afterPostOrder, storiesAbove, storyJustAbove, tabTarget, pattiNumber, adjacentStory, advanceCandidates, afterPost, ftpCopyText, sameTab, ageTone, counterTone, dayChipLabel, dayKey, dayPriorityCounts, freeForAdvance, isDayKey, istDay, steppedTextSize, storyAfterPosted, textSizePreset, workableOrder, postedDayQuery } from "./deskRules";
 
 const now = Date.parse("2026-11-11T07:13:00Z");
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -320,4 +320,15 @@ describe("after Copy & Mark Posted: the row directly above in the list on screen
   it("case 2: posting A (the top row) stays on A", () => assert.equal(storyJustAbove(list, "A"), null));
   it("case 3: posting D opens C, even though C is posted", () => assert.equal(storyJustAbove(list, "D"), "C"));
   it("case 4: a story the list does not show: worked out another way (undefined), never a guess", () => assert.equal(storyJustAbove(list, "X"), undefined));
+});
+
+test("Posted follows the picked day: today as before, an earlier day with the posts since that day", () => {
+  assert.deepEqual(postedDayQuery({}, "2026-11-24"), {});
+  assert.deepEqual(postedDayQuery({ day: "2026-11-24" }, "2026-11-24"), {});
+  assert.deepEqual(postedDayQuery({ day: "2026-11-23" }, "2026-11-24"), { day: "2026-11-23", days: 2 });
+  assert.deepEqual(postedDayQuery<{ day?: string; days?: number; district?: string }>({ day: "2026-10-01", district: "Jaipur" }, "2026-11-24"), { day: "2026-10-01", days: 30 });
+  // The filters stay with today's request only
+  assert.deepEqual(postedDayQuery<{ day?: string; days?: number; district?: string }>({ district: "Jaipur" }, "2026-11-24"), { district: "Jaipur" });
+  // Across a month end
+  assert.deepEqual(postedDayQuery({ day: "2026-11-30" }, "2026-12-01"), { day: "2026-11-30", days: 2 });
 });

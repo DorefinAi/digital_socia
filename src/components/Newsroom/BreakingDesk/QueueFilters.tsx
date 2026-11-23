@@ -89,7 +89,8 @@ export function readQueueFilters(key: string = QUEUE_FILTERS_KEY): QueueFilterSt
     const raw = JSON.parse(localStorage.getItem(key) ?? "null") as Partial<Record<keyof QueueFilterState, unknown>> | null;
     if (!raw || typeof raw !== "object") return EMPTY_FILTERS;
     return {
-      priority: strings(raw.priority, ["big_breaking", "breaking", "normal"]) as PriorityValue[],
+      // No priority split any more (owner, 24 Nov 2026): a saved BIG Breaking / Breaking choice is dropped
+      priority: [],
       categories: strings(raw.categories),
       districts: strings(raw.districts),
       media: strings(raw.media, ["photos", "video", "none"]) as MediaValue[],
@@ -98,7 +99,7 @@ export function readQueueFilters(key: string = QUEUE_FILTERS_KEY): QueueFilterSt
       to: typeof raw.to === "string" ? raw.to : "",
       status: strings(raw.status, ["new", "mine", "held"]) as StatusValue[],
       sort: raw.sort === "oldest" ? "oldest" : "newest",
-      big: raw.big === true,
+      big: false,
       update: raw.update === true,
       desks: strings(raw.desks).slice(0, 1),
       needsCheck: raw.needsCheck === true,
@@ -240,13 +241,6 @@ export function QueueFiltersButton({ filters: f, onChange, categories, districts
             { value: "oldest", label: "Oldest first" },
           ]}
         />
-      </FilterSection>
-      <FilterSection title="Priority">
-        {(["big_breaking", "breaking", "normal"] as const).map((p) => (
-          <FilterOption key={p} on={f.priority.includes(p)} onClick={() => set({ priority: toggleValue(f.priority, p) })}>
-            {PRIORITY_LABEL[p]}
-          </FilterOption>
-        ))}
       </FilterSection>
       <FilterSection title="Category">
         {categories.length ? (

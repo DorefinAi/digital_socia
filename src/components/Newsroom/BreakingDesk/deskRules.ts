@@ -198,3 +198,17 @@ export function pattiNumber(fileName: string | null | undefined): string | null 
   const base = fileName.split(/[\\/]/).pop()!.replace(/\.[a-z0-9]+$/i, "");
   return base.split(/[_\-\s]+/).find((part) => /^\d{3,}$/.test(part)) ?? null;
 }
+
+/**
+ * What the Posted list asks the server for. Today (or no day): today's posts, as before. An earlier day picked in
+ * the date box: the stories RECEIVED that day that were marked posted from that day on (a story in at 23:50 and
+ * posted at 00:10 still counts), so the day's posted rows show green. The server keeps at most 30 days back.
+ */
+export function postedDayQuery<Q extends { day?: string; days?: number }>(query: Q, today: string | null): Q {
+  const { day, days: _days, ...rest } = query;
+  void _days;
+  if (!day || !today || day >= today) return rest as Q;
+  const back = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${day}T00:00:00Z`)) / 86_400_000);
+  // The whole day, like the inbox: the desk's filters narrow both in the browser, so the cards count the same stories
+  return { day, days: Math.min(30, Math.max(1, back + 1)) } as Q;
+}

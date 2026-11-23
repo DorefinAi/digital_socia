@@ -7,7 +7,7 @@ import { keyframes } from "@mui/material/styles";
 import ResponsiveTabs from "@/components/Layout/ResponsiveTabs";
 import { Search, LayoutGrid, List, Keyboard, RefreshCw } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
-import { BreakingTag, FtpNewsItem, PostPayload, SocialPlatform } from "@/types/newsroom";
+import { FtpNewsItem, PostPayload, SocialPlatform } from "@/types/newsroom";
 import { usePermissions } from "@/lib/access/usePermissions";
 import { DAILY_CAP, draftToPayload, isLiveOn } from "@/data/socialDesk";
 // The editor loads in its own chunk on first use; hovering or focusing the list starts the download
@@ -19,7 +19,7 @@ import UndoToast from "./UndoToast";
 import RejectedNews from "../RejectedNews";
 import { countMedia, QueueCards, QueueTable } from "./QueueViews";
 import NewStoriesPill from "./NewStoriesPill";
-import { CONTROL_HEIGHT, EmptyState, isRejectedNotice, PLATFORM_META, PlatformIcon, rejectedNotice, SegmentedControl, storyCategory, storyTag, TAG_TINT } from "./shared";
+import { CONTROL_HEIGHT, EmptyState, isRejectedNotice, PLATFORM_META, PlatformIcon, rejectedNotice, SegmentedControl, storyCategory } from "./shared";
 import { activeFilterCount, type FilterFacts, matchesOtherFilters, matchesPriority, phase1Filters, QueueFiltersButton, type QueueFilterState, readQueueFilters, saveQueueFilters, sortStories, toQueueQuery } from "./QueueFilters";
 import { Phase1PostedList, Phase1QueueList } from "./phase1/Phase1Queue";
 import SourceStatus from "./phase1/SourceStatus";
@@ -33,12 +33,13 @@ import LiveEditor from "./live/LiveEditor";
 import { abandonCorrection, beginCorrection } from "./live/beginCorrection";
 import { runEditFlow } from "./live/correction";
 import { isLiveItem, useLiveDesk } from "./live/LiveDesk";
+import { shownNeedsCheck } from "./phase1/badges";
 import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
 import { useTabBusy } from "@/lib/browserTidy";
 import { eventKey, keyLabel, keysById, QUEUE_KEYS, queueHint, queueKeyFor } from "./editorKeys";
 import { QueueShortcutsSheet } from "./EditorShortcutsSheet";
 import { useKeyBindings } from "./keyBindings";
-import { dayChipLabel, dayPriorityCounts, isDayKey, istDay, priorityCounts } from "./deskRules";
+import { dayChipLabel, isDayKey, istDay } from "./deskRules";
 import VolumeStrip, { VOLUME_STRIP_HEIGHT } from "./VolumeStrip";
 import DayCalendar from "./DayCalendar";
 import ListPager from "./phase1/ListPager";
@@ -79,22 +80,6 @@ function trendToNews(p: TrendPrefill): FtpNewsItem {
     media: [{ kind: "image", url: "", fileName: "No photo: drafted from a web trend" }],
     receivedAt: new Date().toISOString(),
   };
-}
-
-/** A priority choice: the tag's colour dot (yellow BIG Breaking, pink Breaking), its name and count */
-/** `more`: the day was read only up to the page cap, so the count is a floor ("2000+") */
-function PriorityLabel({ value, count, more = false }: { value: "all" | BreakingTag; count?: number; more?: boolean }) {
-  return (
-    <>
-      {value !== "all" && <Box component="span" aria-hidden sx={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, backgroundColor: `rgb(${TAG_TINT[value].rgb})`, boxShadow: "0 0 0 1px rgba(0,0,0,0.18)" }} />}
-      {value === "all" ? "All" : TAG_TINT[value].label}
-      {typeof count === "number" && (
-        <Box component="span" sx={{ fontVariantNumeric: "tabular-nums", opacity: 0.65 }}>
-          {more ? `${count}+` : count}
-        </Box>
-      )}
-    </>
-  );
 }
 
 // Arrow keys belong to these widgets (tabs, menus, segmented controls) when they hold focus
@@ -388,9 +373,9 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     if (!p1) return [];
     const fromServer = (postedData?.items ?? []).map(stableQueueToNews);
     const have = new Set(fromServer.map((n) => n.id));
-    // Just marked posted: shown green straight away, before the Posted list catches up
-    return [...fromServer, ...(optimisticPosted ?? []).filter((n) => !have.has(n.id))];
-  }, [p1, postedData, optimisticPosted]);
+    // Just marked posted: shown green straight away, before the Posted list catches up (an earlier day: only its own)
+    return [...fromServer, ...(optimisticPosted ?? []).filter((n) => !have.has(n.id) && (!pastDay || storyDay(n) === day))];
+  }, [p1, postedData, optimisticPosted, pastDay, storyDay, day]);
   // The priority switch narrows Posted too (the server no longer does), and its "Posted today (N)" follows
   const postedItems = useMemo(() => postedNews.filter((n) => matchesSearchAndFilters(n) && matchesPriority(n, filters.priority)), [postedNews, matchesSearchAndFilters, filters.priority]);
   // The Posted tab's order, worked out once per change rather than on every render
@@ -403,31 +388,17 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const postedKey = postedItems.map((n) => n.id).join(",");
   // Waiting and posted stories in the list's order: what the editor walks, so a fixed (posted) story knows the one above it
   const withPosted = useMemo(() => {
-    if (!p1 || pastDay) return unposted;
+    // An earlier day too: its posted stories come with it (LiveDesk asks for that day's), shown green in place
+    if (!p1) return unposted;
     return sortStories([...unposted, ...postedItems], filters.sort);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p1, pastDay, unposted, postedKey, filters.sort]);
-  const visible = useMemo(() => (p1 && !pastDay && postedOnly ? withPosted.filter((n) => postedIds.has(n.id)) : withPosted), [p1, pastDay, postedOnly, withPosted, postedIds]);
+  }, [p1, unposted, postedKey, filters.sort]);
+  const visible = useMemo(() => (p1 && postedOnly ? withPosted.filter((n) => postedIds.has(n.id)) : withPosted), [p1, postedOnly, withPosted, postedIds]);
   // Enter / Open on a row: a posted story opens for a fix, the rest open as usual. One function for the whole
   // render life (it reads the latest through a ref), so the memoised rows don't all redraw on every poll.
   const openRowLatest = useRef<(n: FtpNewsItem) => void>(() => undefined);
   const openRow = useCallback((n: FtpNewsItem) => openRowLatest.current(n), []);
   const narrowed = !!q || activeFilterCount(filters) > 0;
-  // The priority tabs mirror a single-priority choice made in Filters (phase 1 has no priority in Filters)
-  const quickPriority: "all" | BreakingTag | null = !filters.priority.length ? "all" : filters.priority.length === 1 && filters.priority[0] !== "normal" ? filters.priority[0] : null;
-  // Phase 1 queue: the date box's whole day (every page, stories waiting behind the pill too), so the numbers
-  // are the day's: the priority switch, the search and the filters narrow only the list. Posted: today's, from
-  // the facets. Phase 2: the stories the search and filters leave, as before.
-  const tabFacets = p1 && tab === "published" ? desk?.facets.posted.data : null;
-  const shownCounts = useMemo(() => (p1 ? dayPriorityCounts(queue, day, storyDay, storyTag) : priorityCounts(matching, storyTag)), [p1, queue, day, storyDay, matching]);
-  const countsCut = p1 && tab === "queue" && !!desk?.inbox.data?.truncated;
-  const tabCounts: Record<"all" | BreakingTag, number | undefined> = !p1
-    ? shownCounts
-    : tab === "published"
-      ? { all: tabFacets?.total, big_breaking: tabFacets?.big, breaking: tabFacets ? Math.max(0, tabFacets.total - tabFacets.big) : undefined }
-      : desk?.inbox.data
-        ? shownCounts
-        : { all: undefined, big_breaking: undefined, breaking: undefined };
   // The Filters menu's choices: rebuilt only when the queue changes, not on every keystroke or clock tick
   const categoriesInQueue = useMemo(() => [...new Set(queue.map(storyCategory).filter((c): c is string => !!c))].sort((a, b) => a.localeCompare(b)), [queue]);
   const districtsInQueue = useMemo(() => [...new Set(queue.map((n) => n.area).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [queue]);
@@ -648,12 +619,18 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const facetsInbox = desk?.facets.inbox.data ?? null;
   const inboxToday = facetsInbox?.today ?? null;
   const facetsPosted = desk?.facets.posted.data ?? null;
+  // An earlier day picked in the date box: the cards are that day's (its whole inbox and its posted stories, both
+  // loaded for the list), not today's. Today: the server's numbers for stories received since midnight IST.
+  const dayWaiting = pastDay ? queue.filter((n) => !postedIds.has(n.id)) : null;
+  const dayChecks = dayWaiting ? dayWaiting.filter((n) => isLiveItem(n) && shownNeedsCheck(n.live.needsCheck).length > 0).length : null;
+  const toPost = dayWaiting ? dayWaiting.length : (inboxToday?.total ?? facetsInbox?.total ?? queue.length);
+  const needsCheckN = dayChecks ?? inboxToday?.needsCheck ?? facetsInbox?.needsCheck ?? 0;
   const stats = p1
     ? [
         // Today's stories (IST) from the facets; the whole view on an older server, the loaded page as a last fallback
-        { label: "To post", value: inboxToday?.total ?? facetsInbox?.total ?? queue.length, tone: "text.secondary" },
-        { label: "Needs check", value: inboxToday?.needsCheck ?? facetsInbox?.needsCheck ?? 0, tone: (inboxToday?.needsCheck ?? facetsInbox?.needsCheck ?? 0) > 0 ? "warning.main" : "text.primary" },
-        { label: "Posted today", value: publishedToday, tone: "success.main" },
+        { label: "To post", value: toPost, tone: "text.secondary" },
+        { label: "Needs check", value: needsCheckN, tone: needsCheckN > 0 ? "warning.main" : "text.primary" },
+        pastDay ? { label: `Posted, ${dayChipLabel(day)}`, value: postedNews.length, tone: "success.main" } : { label: "Posted today", value: publishedToday, tone: "success.main" },
       ]
     : [
         { label: "To post", value: queue.length, tone: "text.secondary" },
@@ -800,12 +777,6 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
           // One line from sm up: the search keeps one width (it no longer grows on focus) and Today takes no room
           // until an earlier day is picked, so nothing drops below
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, ml: { xs: 0, sm: "auto" }, width: { xs: "100%", sm: "auto" }, minWidth: 0, pb: 0.75, flexWrap: { xs: "wrap", sm: "nowrap" } }}>
-            <SegmentedControl<"all" | BreakingTag>
-              ariaLabel="Filter by priority"
-              value={quickPriority}
-              onChange={(v) => setFilters({ ...filters, priority: v === "all" ? [] : [v] })}
-              options={(["all", "big_breaking", "breaking"] as const).map((v) => ({ value: v, label: <PriorityLabel value={v} count={tabCounts[v]} more={countsCut} /> }))}
-            />
             <TextField
               placeholder={p1 ? "Search" : "Search headline, area, category"}
               value={query}
@@ -860,7 +831,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
               categories={categoriesInQueue}
               districts={districtsInQueue}
               live={!!desk}
-              {...(p1 ? { facets: tab === "published" ? facetsPosted : facetsInbox, showStatus: false, posted: tab === "queue" && !pastDay ? { on: postedOnly, count: postedItems.length, onToggle: () => setPostedOnly((v) => !v) } : undefined } : {})}
+              {...(p1 ? { facets: tab === "published" ? facetsPosted : facetsInbox, showStatus: false, posted: tab === "queue" ? { on: postedOnly, count: postedItems.length, onToggle: () => setPostedOnly((v) => !v) } : undefined } : {})}
             />
           </Box>
         )}

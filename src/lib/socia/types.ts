@@ -83,8 +83,10 @@ export interface QueueQuery {
   /** Desk/shift code from the file name (NDR, VKS, ...) */
   desk?: string;
   needsCheck?: boolean;
-  /** Inbox only: one IST day "YYYY-MM-DD" (today or earlier; 400 bad_day otherwise). Absent: the newest stories. */
+  /** One IST day "YYYY-MM-DD" (today or earlier; 400 bad_day otherwise): stories received that day. Absent: the newest stories. */
   day?: string;
+  /** view=posted only: how many IST days back the post may have been marked, today included (1–30; server default 1) */
+  days?: number;
 }
 
 /** What the breaking file's name said (phase1-contract.md §1); null for non-breaking stories */
@@ -104,7 +106,7 @@ export interface FileTags {
 }
 
 /** Why a ready post needs a second look (phase1-contract.md §1) */
-export type NeedsCheckCode = "empty" | "no_hindi" | "very_long" | "no_district" | "desk_note" | "headline_cut" | "no_headline" | "resaved" | "update_of_posted" | "place_conflict" | "file_deleted" | "text_changed" | (string & {});
+export type NeedsCheckCode = "empty" | "no_hindi" | "very_long" | "no_district" | "desk_note" | "headline_cut" | "no_headline" | "resaved" | "update_of_posted" | "place_conflict" | "file_deleted" | "text_changed" | "no_city" | (string & {});
 
 export type CardState = "none" | "rendering" | "ready" | "failed";
 
@@ -208,6 +210,8 @@ export interface QueueItem {
   rejectNote?: string | null;
   /** phase 1: Hindi town from the place line */
   town?: string | null;
+  /** b9: the card heading's place, decided with the X post's line 1; null or absent before b9 */
+  headingPlace?: HeadingPlace | null;
   /** phase 1 */
   tags?: FileTags | null;
   /** phase 1: desk/shift code */
@@ -341,6 +345,24 @@ export interface HandlePick {
   handles: { handle: string; reason: string; title?: string }[];
   /** The reporter name read from the breaking file's name, matched to a handle or not */
   reporterToken?: string | null;
+  /** b9: line 1's and the card's place, decided once by the composer; absent on drafts composed before */
+  headingPlace?: HeadingPlace | null;
+}
+
+/**
+ * Where a breaking post's city is (backend core HeadingPlace, b9). The card heading takes its place from `card`
+ * instead of working one out from the story's district and town, so the card and the X post's line 1 agree.
+ */
+export interface HeadingPlace {
+  /** The city tags the composer put on the post ("#Bundi", "#नैनवां") */
+  tags: string[];
+  district: string | null;
+  town: string | null;
+  source: string;
+  /** lead "#Place: …", inline "#Bundi #नैनवां में …", trailing (the tag line), copy (the desk's own tag), none */
+  placement: "lead" | "inline" | "trailing" | "copy" | "none";
+  /** The card heading's place word ("नैनवां", "Jodhpur"), or null for none in front */
+  card: string | null;
 }
 
 export interface DraftMedia {
@@ -369,7 +391,7 @@ export interface DraftView {
   status: DraftStatus;
   version: number;
   bodyText: string;
-  /** Line 2 as the composer wrote it (b8): "Fit to 280" rebuilds only that. Null for a draft from before, or an older server */
+  /** Line 2 as the composer wrote it (b8): crispLine.fitPostBody rebuilt only that (the Fit to 280 button, removed 24 Nov 2026). Null for a draft from before, or an older server */
   composerOriginalLine2?: string | null;
   cardHeadline: string;
   hashtags: string[];

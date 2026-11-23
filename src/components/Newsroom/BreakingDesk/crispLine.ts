@@ -198,7 +198,7 @@ export interface FitInput {
 }
 
 /**
- * "Fit to 280" (the desk's tool for a short post: the result is never over `budget`). On a live breaking draft:
+ * Fits a post body into `budget`: the result is never over it (was the editor's "Fit to 280" button, removed 24 Nov 2026). On a live breaking draft:
  * line 1, the headline, stays; a line of tags and handles stays whole; line 2 is everything else, and
  *   - is rebuilt from the story's points only while it is still the composer's own text,
  *   - is left exactly as typed when the desk wrote it and the post fits, or cut from the desk's own words when not,
