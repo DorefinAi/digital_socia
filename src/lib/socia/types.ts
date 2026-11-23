@@ -83,8 +83,10 @@ export interface QueueQuery {
   /** Desk/shift code from the file name (NDR, VKS, ...) */
   desk?: string;
   needsCheck?: boolean;
-  /** Inbox only: one IST day "YYYY-MM-DD" (today or earlier; 400 bad_day otherwise). Absent: the newest stories. */
+  /** One IST day "YYYY-MM-DD" (today or earlier; 400 bad_day otherwise): stories received that day. Absent: the newest stories. */
   day?: string;
+  /** view=posted only: how many IST days back the post may have been marked, today included (1–30; server default 1) */
+  days?: number;
 }
 
 /** What the breaking file's name said (phase1-contract.md §1); null for non-breaking stories */

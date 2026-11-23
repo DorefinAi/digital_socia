@@ -40,7 +40,7 @@ import type {
 import type { FtpMedia, FtpNewsItem, SocialPost } from "@/types/newsroom";
 import { draftCardHeadline } from "../cardWords";
 import { queueRowToNews, type LiveNewsItem } from "./queueNews";
-import { istToday } from "../deskRules";
+import { istToday, postedDayQuery } from "../deskRules";
 
 export type { LiveNewsItem };
 
@@ -310,15 +310,11 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
   const day = queueQuery.day;
   const inboxQuery = useMemo<QueueQuery>(() => (day ? { day } : {}), [day]);
   const queryKey = phase1 ? JSON.stringify(inboxQuery) : "";
-  // The day picks the inbox only; Posted is always today's
-  const postedQuery = useMemo(() => {
-    const { day: _day, ...rest } = queueQuery;
-    void _day;
-    return rest;
-  }, [queueQuery]);
-  const postedKey = phase1 ? JSON.stringify(postedQuery) : "";
   // While an earlier day is shown, today's inbox is still watched so new arrivals can be announced
   const todayIst = istToday();
+  // Posted follows the day too: an earlier day shows that day's posted stories (green), not today's
+  const postedQuery = useMemo(() => postedDayQuery(queueQuery, todayIst), [queueQuery, todayIst]);
+  const postedKey = phase1 ? JSON.stringify(postedQuery) : "";
   const pastDay = phase1 && !!queueQuery.day && queueQuery.day !== todayIst;
   // The editor covers the lists, so the ones only the lists show rest while it is open (BreakingDesk sets it).
   // Turning them back on reads them at once, which is the catch-up when the editor closes.
@@ -374,7 +370,8 @@ export function LiveDeskProvider({ children, templatesOnly = false }: { children
     phaseKnown && !phase1,
   );
   const postedView = usePolled(
-    () => socia.fetchQueue("posted", 200, postedQuery),
+    // An earlier day reads every page (a busy day has 400+ posted stories); today's newest 200 as before
+    (signal) => (postedQuery.day ? socia.fetchQueueDay("posted", postedQuery, signal) : socia.fetchQueue("posted", 200, postedQuery, undefined, signal)),
     POLL_MS.posts,
     `posted${postedKey}`,
     listsOn && phase1,

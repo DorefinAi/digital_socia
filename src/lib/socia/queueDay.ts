@@ -27,6 +27,7 @@ export function queuePath(view: QueueView, limit: number, query?: QueueQuery, be
   if (query?.update !== undefined) params.set("update", String(query.update));
   if (query?.needsCheck !== undefined) params.set("needsCheck", String(query.needsCheck));
   if (query?.day) params.set("day", query.day);
+  if (query?.days) params.set("days", String(query.days));
   if (fields) params.set("fields", fields);
   return `/x/queue?${params}`;
 }

@@ -33,6 +33,7 @@ import LiveEditor from "./live/LiveEditor";
 import { abandonCorrection, beginCorrection } from "./live/beginCorrection";
 import { runEditFlow } from "./live/correction";
 import { isLiveItem, useLiveDesk } from "./live/LiveDesk";
+import { shownNeedsCheck } from "./phase1/badges";
 import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
 import { useTabBusy } from "@/lib/browserTidy";
 import { eventKey, keyLabel, keysById, QUEUE_KEYS, queueHint, queueKeyFor } from "./editorKeys";
@@ -372,9 +373,9 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
     if (!p1) return [];
     const fromServer = (postedData?.items ?? []).map(stableQueueToNews);
     const have = new Set(fromServer.map((n) => n.id));
-    // Just marked posted: shown green straight away, before the Posted list catches up
-    return [...fromServer, ...(optimisticPosted ?? []).filter((n) => !have.has(n.id))];
-  }, [p1, postedData, optimisticPosted]);
+    // Just marked posted: shown green straight away, before the Posted list catches up (an earlier day: only its own)
+    return [...fromServer, ...(optimisticPosted ?? []).filter((n) => !have.has(n.id) && (!pastDay || storyDay(n) === day))];
+  }, [p1, postedData, optimisticPosted, pastDay, storyDay, day]);
   // The priority switch narrows Posted too (the server no longer does), and its "Posted today (N)" follows
   const postedItems = useMemo(() => postedNews.filter((n) => matchesSearchAndFilters(n) && matchesPriority(n, filters.priority)), [postedNews, matchesSearchAndFilters, filters.priority]);
   // The Posted tab's order, worked out once per change rather than on every render
@@ -387,11 +388,12 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const postedKey = postedItems.map((n) => n.id).join(",");
   // Waiting and posted stories in the list's order: what the editor walks, so a fixed (posted) story knows the one above it
   const withPosted = useMemo(() => {
-    if (!p1 || pastDay) return unposted;
+    // An earlier day too: its posted stories come with it (LiveDesk asks for that day's), shown green in place
+    if (!p1) return unposted;
     return sortStories([...unposted, ...postedItems], filters.sort);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p1, pastDay, unposted, postedKey, filters.sort]);
-  const visible = useMemo(() => (p1 && !pastDay && postedOnly ? withPosted.filter((n) => postedIds.has(n.id)) : withPosted), [p1, pastDay, postedOnly, withPosted, postedIds]);
+  }, [p1, unposted, postedKey, filters.sort]);
+  const visible = useMemo(() => (p1 && postedOnly ? withPosted.filter((n) => postedIds.has(n.id)) : withPosted), [p1, postedOnly, withPosted, postedIds]);
   // Enter / Open on a row: a posted story opens for a fix, the rest open as usual. One function for the whole
   // render life (it reads the latest through a ref), so the memoised rows don't all redraw on every poll.
   const openRowLatest = useRef<(n: FtpNewsItem) => void>(() => undefined);
@@ -617,12 +619,18 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
   const facetsInbox = desk?.facets.inbox.data ?? null;
   const inboxToday = facetsInbox?.today ?? null;
   const facetsPosted = desk?.facets.posted.data ?? null;
+  // An earlier day picked in the date box: the cards are that day's (its whole inbox and its posted stories, both
+  // loaded for the list), not today's. Today: the server's numbers for stories received since midnight IST.
+  const dayWaiting = pastDay ? queue.filter((n) => !postedIds.has(n.id)) : null;
+  const dayChecks = dayWaiting ? dayWaiting.filter((n) => isLiveItem(n) && shownNeedsCheck(n.live.needsCheck).length > 0).length : null;
+  const toPost = dayWaiting ? dayWaiting.length : (inboxToday?.total ?? facetsInbox?.total ?? queue.length);
+  const needsCheckN = dayChecks ?? inboxToday?.needsCheck ?? facetsInbox?.needsCheck ?? 0;
   const stats = p1
     ? [
         // Today's stories (IST) from the facets; the whole view on an older server, the loaded page as a last fallback
-        { label: "To post", value: inboxToday?.total ?? facetsInbox?.total ?? queue.length, tone: "text.secondary" },
-        { label: "Needs check", value: inboxToday?.needsCheck ?? facetsInbox?.needsCheck ?? 0, tone: (inboxToday?.needsCheck ?? facetsInbox?.needsCheck ?? 0) > 0 ? "warning.main" : "text.primary" },
-        { label: "Posted today", value: publishedToday, tone: "success.main" },
+        { label: "To post", value: toPost, tone: "text.secondary" },
+        { label: "Needs check", value: needsCheckN, tone: needsCheckN > 0 ? "warning.main" : "text.primary" },
+        pastDay ? { label: `Posted, ${dayChipLabel(day)}`, value: postedNews.length, tone: "success.main" } : { label: "Posted today", value: publishedToday, tone: "success.main" },
       ]
     : [
         { label: "To post", value: queue.length, tone: "text.secondary" },
@@ -823,7 +831,7 @@ export default function BreakingDesk({ platform }: { platform: SocialPlatform })
               categories={categoriesInQueue}
               districts={districtsInQueue}
               live={!!desk}
-              {...(p1 ? { facets: tab === "published" ? facetsPosted : facetsInbox, showStatus: false, posted: tab === "queue" && !pastDay ? { on: postedOnly, count: postedItems.length, onToggle: () => setPostedOnly((v) => !v) } : undefined } : {})}
+              {...(p1 ? { facets: tab === "published" ? facetsPosted : facetsInbox, showStatus: false, posted: tab === "queue" ? { on: postedOnly, count: postedItems.length, onToggle: () => setPostedOnly((v) => !v) } : undefined } : {})}
             />
           </Box>
         )}
