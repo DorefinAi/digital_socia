@@ -68,3 +68,41 @@ export function useTagSearch(draft: string, prefix: "#" | "@", search: TagSearch
   // Only the results for the term on screen: nothing stale while the next request is on its way
   return term && result.term === term ? result.items : [];
 }
+
+/** An @ / # word being typed in the post box, ending at the caret */
+export type CaretTag = { prefix: "#" | "@"; start: number; end: number; query: string };
+
+/**
+ * The @ / # word the caret is at the end of: it starts the text or follows a space/newline, and has at least one
+ * character after the sign. null otherwise (a space typed after it closes the list).
+ */
+export function tokenAtCaret(text: string, caret: number | null | undefined): CaretTag | null {
+  if (typeof caret !== "number" || caret < 2 || caret > text.length) return null;
+  let i = caret;
+  while (i > 0 && !/\s/.test(text[i - 1])) i -= 1;
+  const word = text.slice(i, caret);
+  const sign = word[0];
+  if (sign !== "@" && sign !== "#") return null;
+  const query = word.slice(1);
+  if (!query || /[@#]/.test(query)) return null;
+  // The whole word is replaced, not only up to the caret: "#ra|j" picked as #Rajasthan is not "#Rajasthan j"
+  let end = caret;
+  while (end < text.length && !/\s/.test(text[end])) end += 1;
+  return { prefix: sign, start: i, end, query };
+}
+
+/**
+ * The text with only the typed tag swapped for the chosen value plus a space, and where the caret goes: after that
+ * space, so the list does not open again on the word just picked
+ */
+export function replaceToken(text: string, tag: CaretTag, value: string): { text: string; caret: number } {
+  const after = text.slice(tag.end);
+  const insert = /^\s/.test(after) ? value : `${value} `;
+  return { text: text.slice(0, tag.start) + insert + after, caret: tag.start + value.length + 1 };
+}
+
+/** Drops hashtags/handles already in the post (any case) */
+export function notInText(items: HandleSearchItem[], text: string): HandleSearchItem[] {
+  const used = new Set((text.normalize("NFC").match(/[@#][^\s@#]+/g) ?? []).map((t) => t.toLowerCase()));
+  return items.filter((i) => !used.has(i.value.toLowerCase()));
+}

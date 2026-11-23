@@ -9,6 +9,8 @@ import { fontsReady, istDate, paintCardText } from "./backgroundCard";
 import { templateImage } from "./orgCanvas";
 import { keyHash } from "./useBackgroundCard";
 import { CARD_DRAW_VERSION } from "./cardFit";
+import { defaultOrgTemplate } from "./orgDefault";
+export { defaultOrgTemplate, nextOrgTemplate } from "./orgDefault";
 
 // ─── The design picked for a draft (PostEditor's choiceStore, same browser) ──────────────────────────
 const CHOICE_PREFIX = "socia_card_choice_";
@@ -72,17 +74,8 @@ export function subscribeCardChoice(listener: () => void) {
 export function thumbTemplate(org: OrgCardTemplate[], own: UserCardTemplate | null, tag: BreakingTag | null, choice: string | null): { key: string; template: DrawableCardTemplate } | null {
   if (!org.length) return null;
   if (choice === "own" && own) return { key: "own", template: own };
-  const t = org.find((o) => o.slug === choice) ?? defaultOrgTemplate(org, tag) ?? org[0];
+  const t = org.find((o) => o.slug === choice) ?? defaultOrgTemplate(org) ?? org[0];
   return { key: t.slug, template: t };
-}
-
-/**
- * The desk design a story starts on: the one made default for its tag (Big breaking: बड़ी ख़बर), and for any
- * other story the Breaking default (BREAKING NEWS), else the first design. Null without org templates.
- */
-export function defaultOrgTemplate(org: OrgCardTemplate[], tag: BreakingTag | null): OrgCardTemplate | null {
-  const forTag = (t: BreakingTag) => org.find((o) => (o.defaultFor as string[]).includes(t));
-  return (tag ? forTag(tag) : undefined) ?? forTag("breaking") ?? org[0] ?? null;
 }
 
 // ─── Drawn thumbnails: object URLs in an LRU ─────────────────────────────────────────────────────────
@@ -316,3 +309,4 @@ function draw(key: string, job: ThumbJob, img: HTMLImageElement) {
     0.86,
   );
 }
+

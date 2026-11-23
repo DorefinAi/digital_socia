@@ -5,7 +5,7 @@ import { Box, Button, CircularProgress, Tab, Tabs, Tooltip, Typography } from "@
 import { AlertTriangle, PenLine } from "lucide-react";
 import { needsCheckHint, needsCheckLabel, shownNeedsCheck } from "./phase1/badges";
 import { useNewsroom } from "@/providers/NewsroomProvider";
-import { BreakingTag, FtpNewsItem, SocialPlatform } from "@/types/newsroom";
+import { FtpNewsItem, SocialPlatform } from "@/types/newsroom";
 import { isLiveOn } from "@/data/socialDesk";
 import { LoadError, LoadingRows } from "@/components/Newsroom/SociaDesk/liveShared";
 import { CategoryLabel, srOnly, storyCategory, storyTag, TAG_TINT, tagTint, postedTint, timeAgo } from "./shared";
@@ -17,12 +17,10 @@ import StoryThumb, { THUMB_ROOT_ATTR } from "./live/StoryThumb";
 import { canCorrect, editedLabel, needsCheckDescription } from "./live/correction";
 import { RowPresence, RowPresenceSpace } from "./live/Presence";
 import { placeLine, reporterWithDistrict } from "./reporterLabel";
-import { pattiNumber, tabTarget } from "./deskRules";
+import { pattiNumber } from "./deskRules";
 import { PAGE_SIZE } from "./phase1/paging";
 import { feedRowsShown } from "./feedRows";
 
-/** The story last open in each BIG Breaking / Breaking tab, kept for the page's life (the panel remounts per story) */
-const lastInTab = new Map<BreakingTag, string>();
 
 /**
  * The rows this list last showed in its open tab, top to bottom (posted ones included, search ignored). The editor
@@ -305,41 +303,18 @@ function FtpFeedPanel({
   if (!otherList && shownState === null && !loading) setShown(new Set(sorted.map((n) => n.id)));
   const waiting = shown ? sorted.filter((n) => !shown.has(n.id) && !postedIds.has(n.id) && n.id !== currentId) : [];
   const allListed = shown ? sorted.filter((n) => shown.has(n.id) || postedIds.has(n.id) || n.id === currentId) : sorted;
-  // BIG Breaking / Breaking tabs (BIG Breaking first) and a small headline search; the open story always stays listed
-  const tabOf = (n: FtpNewsItem): BreakingTag => (storyTag(n) === "big_breaking" ? "big_breaking" : "breaking");
-  // The tab follows the open story (Prev/Next, the next story after posting), so it is always listed in its own tab
-  const currentItem = sorted.find((n) => n.id === currentId);
-  const currentTab = currentItem ? tabOf(currentItem) : null;
-  const [tagTab, setTagTab] = useState<BreakingTag>(currentTab ?? "big_breaking");
-  const [tabFor, setTabFor] = useState<string | null>(currentTab ? currentId : null);
-  if (currentTab && tabFor !== currentId) {
-    setTabFor(currentId);
-    setTagTab(currentTab);
-  }
-  // The story last open in each tab, so switching back returns to it
-  useEffect(() => {
-    if (currentTab) lastInTab.set(currentTab, currentId);
-  }, [currentTab, currentId]);
+  // One list for every story (owner, 24 Nov 2026: no BIG Breaking / Breaking split) and a small headline search;
+  // the open story always stays listed
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
-  /**
-   * Switching tab opens the story last open in that tab, else its top story that isn't posted (saved first by the
-   * editor's switch). It only views: a posted story is never opened for a fix this way. Nothing to open: the tab shows.
-   */
-  const chooseTab = (tag: BreakingTag) => {
-    setTagTab(tag);
-    if (otherList || tag === tagTab) return;
-    const target = tabTarget(allListed, tag, tabOf, lastInTab.get(tag), (n) => postedIds.has(n.id));
-    if (target && target.id !== currentId) onPick(target);
-  };
-  const listed = allListed.filter((n) => ((!!q || tabOf(n) === tagTab) && (!q || `${n.headline} ${isLiveItem(n) ? n.live.sourcePath ?? "" : ""}`.toLowerCase().includes(q))));
-  // Drawn 50 at a time ("Show more" adds 50), always through the open story; a new list, tab or search starts at 50
-  const pageKey = `${list}|${tagTab}|${q}`;
+  const listed = q ? allListed.filter((n) => `${n.headline} ${isLiveItem(n) ? n.live.sourcePath ?? "" : ""}`.toLowerCase().includes(q)) : allListed;
+  // Drawn 50 at a time ("Show more" adds 50), always through the open story; a new list or search starts at 50
+  const pageKey = `${list}|${q}`;
   const [more, setMore] = useState({ key: pageKey, limit: PAGE_SIZE });
   const rows = listed.slice(0, feedRowsShown(more.key === pageKey ? more.limit : PAGE_SIZE, listed.length, listed.findIndex((n) => n.id === currentId)));
-  // The open tab's rows as shown (search aside), for the story after Copy & Mark Posted
+  // The rows as shown (search aside), for the story after Copy & Mark Posted
   useEffect(() => {
-    if (!otherList && !loading) feedShown.items = allListed.filter((n) => tabOf(n) === tagTab);
+    if (!otherList && !loading) feedShown.items = allListed;
   });
   const [highlight, setHighlight] = useState<ReadonlySet<string>>(() => new Set());
   useEffect(() => {
@@ -399,25 +374,6 @@ function FtpFeedPanel({
           <Search size={12} aria-hidden />
           <Box component="input" type="search" value={query} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setQuery(e.target.value)} placeholder="Search" aria-label="Search stories" sx={{ flex: 1, minWidth: 0, border: 0, outline: 0, background: "transparent", color: "text.primary", font: "inherit", fontSize: "0.75rem", p: 0 }} />
         </Box>
-      </Box>
-      <Box role="tablist" aria-label="Story priority" sx={{ display: "flex", gap: 0.75 }}>
-        {(Object.keys(TAG_TINT) as BreakingTag[]).map((tag) => {
-          const on = tagTab === tag;
-          return (
-            <Box
-              key={tag}
-              component="button"
-              type="button"
-              role="tab"
-              aria-selected={on}
-              onClick={() => chooseTab(tag)}
-              sx={{ display: "flex", alignItems: "center", gap: 0.6, px: 1, py: 0.4, borderRadius: "6px", border: "1px solid", borderColor: on ? "text.primary" : "divider", background: (t) => (on ? tagTint(tag, t.palette.mode, 1.6) : "transparent"), color: on ? "text.primary" : "text.secondary", fontFamily: "inherit", fontSize: "0.6875rem", fontWeight: 700, whiteSpace: "nowrap", cursor: "pointer", "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: "1px" } }}
-            >
-              <Box sx={{ width: 14, height: 8, borderRadius: "2px", background: (t) => tagTint(tag, t.palette.mode, 1.6) }} />
-              {TAG_TINT[tag].label}
-            </Box>
-          );
-        })}
       </Box>
       <Box
         ref={listRef}

@@ -13,7 +13,6 @@ import {
   Eye,
   Send,
   Film,
-  Scissors,
   RotateCcw,
   Plus,
   Minus,
@@ -52,6 +51,7 @@ import {
   PenLine,
   ClipboardCopy,
   Download,
+  ArrowLeftRight,
 } from "lucide-react";
 import { useNewsroom } from "@/providers/NewsroomProvider";
 import { Playhead, usePlayhead, usePlayheadTime } from "@/hooks/usePlayhead";
@@ -70,10 +70,10 @@ import TemplateCanvas, {
   defaultLayout,
 } from "./TemplateCanvas";
 import { PLATFORM_LIMITS, TagSuggestion, composePostText, countChars, findUrl, shortenToFit, suggestHashtags, suggestMentions } from "./socialText";
-import { BREAKING_POST_MAX, fitPostBody } from "./crispLine";
+import { BREAKING_POST_MAX } from "./crispLine";
 import { RejectDialog, ScheduleDialog } from "./actionDialogs";
 import { FoldedPanelStrip, PanelResizeHandle, PanelsConfig, useResizablePanels } from "./ResizablePanels";
-import { CategoryLabel, PLATFORM_META, PlatformIcon, priorityTag, rejectedNotice, srOnly, storyTag, TAG_TINT, tagTint } from "./shared";
+import { CategoryLabel, PLATFORM_META, PlatformIcon, priorityTag, rejectedNotice, srOnly, TAG_TINT, tagTint } from "./shared";
 import { PostMock, TagOption, TagPicker, fieldSx, sectionLabel } from "./composerParts";
 import { PostTextBox } from "./PostTextBox";
 import { putText, takeTyped, type BoxText } from "./postTextSync";
@@ -101,7 +101,7 @@ import { keyHash, useBackgroundCard } from "./live/useBackgroundCard";
 import { cardExt } from "./live/cardImage";
 import { stepTimer } from "./live/stepTimer";
 import OrgTemplatePicker, { type CardChoice } from "./live/OrgTemplatePicker";
-import { cardChoiceChanged, defaultOrgTemplate } from "./live/storyThumbs";
+import { cardChoiceChanged, defaultOrgTemplate, nextOrgTemplate } from "./live/storyThumbs";
 import { PostedLinkDialog } from "./actionDialogs";
 import { CANVAS_ARROWS, EDITOR_KEYS, NUDGE, editorKeyFor, editorShortcut, editorShortcutSuffix, isCanvasArrowTarget, isCanvasKeyTarget, isEditorTypingTarget, isTextEntryTarget, keysById, swallowNextContextMenu, withEditorShortcut } from "./editorKeys";
 import { ariaKeyShortcuts, useKeyBindings } from "./keyBindings";
@@ -643,10 +643,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const orgPoll = live && isX ? desk?.orgCardTemplates : undefined;
   const orgList = orgPoll?.data ?? null;
   const orgTemplates = orgList ?? [];
-  // Phase 1 breaking files: BIG in the file name is Big Breaking, every other one Breaking (as shared.storyTag)
-  const liveStory = live?.draft.story;
-  const tagNow = liveStory ? (liveStory.tags ? (liveStory.tags.big ? "big_breaking" : "breaking") : priorityTag(liveStory.priority)) : storyTag(item);
-  const orgDefault = defaultOrgTemplate(orgTemplates, tagNow);
+  const orgDefault = defaultOrgTemplate(orgTemplates);
   const ownPicked = bgPick === "own" && !!cardTemplate;
   /** The design a story opens on: the one picked for it in this browser, else the one for its tag */
   const orgStart = orgTemplates.find((t) => t.slug === bgPick) ?? orgDefault;
@@ -763,6 +760,13 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     // A new design is ready: the open story moves onto it (only when the story can be changed here)
     onUploaded: (t: OrgCardTemplate) => canEdit && pickCardDesign(t.slug, t),
   };
+  // The one-click card template switch under the post panel's fold button: the next desk design in the list
+  // (BREAKING NEWS → बड़ी ख़बर → …), the same move as picking it in the Template tab
+  const nextTemplate = nextOrgTemplate(orgTemplates, activeKey);
+  const canSwitchTemplate = !!nextTemplate && canEdit && !busy && !serverView;
+  const switchCardTemplate = () => {
+    if (canSwitchTemplate && nextTemplate) pickCardDesign(nextTemplate.slug);
+  };
   /** The operator's own X background: picked like a design when there are desk templates */
   const useOwnBackground = () => (orgTemplates.length ? pickCardDesign("own") : setCardSource("background"));
   // A click on the drawn card opens the headline for typing (the drawing itself can't take text)
@@ -821,7 +825,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const finalText = postBox.finalText;
   const used = countChars(finalText, platform);
   // Copy & Mark Posted (the desk posts by hand, and the account posts long): a live X post may run past 280, up to
-  // the composer's limit (b8 decisions §0.2). "Fit to 280" makes it fit. Posting through X's API keeps X's 280.
+  // the composer's limit (b8 decisions §0.2); the desk shortens it by hand. Posting through X's API keeps X's 280.
   const postLimit = copyMode && live && isX ? BREAKING_POST_MAX : limits.text;
   const overLimit = used > postLimit;
   // The live desk also keeps to what the server takes as tags
@@ -1209,23 +1213,6 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       const on = templateOn(text, storyMove, postFormat, splitOpts);
       if (on) setText(on);
     }
-  };
-
-  /** Shortens the body only; the tag line stays exactly as it is */
-  const makeCrisp = () => {
-    const tagBudget = shown.tail ? countChars(shown.tail, platform) + 2 : 0;
-    const budget = limits.text - tagBudget;
-    // A live breaking draft: headline whole, line 2 by the b8 rule (crispLine.fitPostBody); anything else as before
-    const body = fitPostBody({
-      liveBreaking: live?.draft.story.layout === "breaking",
-      platform,
-      body: shown.body,
-      composerLine2: live?.draft.composerOriginalLine2 ?? null,
-      original: item.shortText,
-      storyPoints: (item.body ?? "").split("\n"),
-      budget,
-    });
-    setText(withBody(text, body, splitOpts));
   };
 
   const buildPayload = (): PostPayload => {
@@ -1671,14 +1658,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     if (fromList !== undefined) {
       target = fromList === null ? null : (shown.find((n) => n.id === fromList) ?? null);
     } else {
-      // 2. The panel never showed this story: the same list rebuilt (its tab, newest first, posted included)
+      // 2. The panel never showed this story: the same list rebuilt (one list for every story, newest first, posted
+      // included: no BIG Breaking / Breaking split since 24 Nov 2026)
       const order = queueOrder ?? desk?.queue ?? [];
-      const tabOf = (n: FtpNewsItem) => (storyTag(n) === "big_breaking" ? "big_breaking" : "breaking");
-      // The tab as the desk knows the story: its queue row carries the file's BIG tag, the editor's copy doesn't
-      const tags = live?.draft.story.tags;
-      const row = order.find((n) => n.id === item.id);
-      const currentTab = row ? tabOf(row) : tags ? (tags.big ? "big_breaking" : "breaking") : tabOf(item);
-      const above = storiesAbove(afterPostOrder(order, item.id, currentTab, tabOf, () => false), item.id);
+      const oneList = () => "all";
+      const above = storiesAbove(afterPostOrder(order, item.id, "all", oneList, () => false), item.id);
       target = above.length > 1 ? above[above.length - 2]! : null;
     }
     const step = afterPost(onSwitch && target ? target : undefined, fix);
@@ -3637,9 +3621,6 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                         </Box>
                       </Tooltip>
                     )}
-                    <Button size="small" onClick={makeCrisp} startIcon={<Scissors size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem" }}>
-                      Fit to 280
-                    </Button>
                     <Button size="small" onClick={() => setText(withBody(text, item.shortText, splitOpts))} sx={{ minHeight: 30, fontSize: "0.75rem", color: "text.secondary" }}>
                       Revert to original
                     </Button>
@@ -3784,6 +3765,34 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
               <PanelResizeHandle panel={leftPanel} offset={EDITOR_PANELS.leftFixed + leftPanel.width} label="tool panel" controls="post-editor-tool-panel" />
               {!rightPanel.collapsed && <PanelResizeHandle panel={rightPanel} offset={rightPanel.width} label="post panel" controls="post-editor-post-panel" />}
               <FoldedPanelStrip panel={rightPanel} label="post panel" title={isX ? "Tweet" : platform === "Facebook" ? "Post text" : "Caption"} controls="post-editor-post-panel" />
+              {nextTemplate && (
+                <Tooltip placement="left" title={`Card template: ${orgTpl?.label ?? "your X background"}. Click to switch to ${nextTemplate.label}`}>
+                  {/* A span so the tooltip still shows while the button is off (not your story, saving…) */}
+                  <Box component="span" sx={{ position: "absolute", top: rightPanel.collapsed ? 10 : 40, right: (rightPanel.collapsed ? EDITOR_PANELS.rightFolded : rightPanel.width) + 6, zIndex: 4 }}>
+                    <IconButton
+                      aria-label={`Switch the card template to ${nextTemplate.label}`}
+                      onClick={switchCardTemplate}
+                      disabled={!canSwitchTemplate}
+                      sx={{
+                        width: 24,
+                        height: 24,
+                        p: 0,
+                        border: "1px solid",
+                        borderColor: "divider",
+                        borderRadius: "6px",
+                        color: "text.secondary",
+                        backgroundColor: "background.paper",
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.12)",
+                        "&:hover": { backgroundColor: "background.paper", color: "text.primary", borderColor: "text.secondary" },
+                        "&.Mui-disabled": { backgroundColor: "background.paper", opacity: 0.5 },
+                        "&.Mui-focusVisible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: 1 },
+                      }}
+                    >
+                      <ArrowLeftRight size={14} />
+                    </IconButton>
+                  </Box>
+                </Tooltip>
+              )}
             </>
           )}
         </Box>
