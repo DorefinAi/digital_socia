@@ -7,13 +7,26 @@ import {
   type Aspect, type Asset, type AssetKind, type MediaClip, type Project, type TextClip,
 } from "./model";
 
-export type StudioPlatform = "Facebook" | "YouTube" | "Shorts" | "Reels";
+export type StudioPlatform = "Facebook" | "YouTube" | "Shorts" | "Reels" | "X";
 
 export const PLATFORM_ASPECT: Record<StudioPlatform, Aspect> = {
   YouTube: "16:9",
   Facebook: "16:9",
   Shorts: "9:16",
   Reels: "9:16",
+  X: "16:9",
+};
+
+/**
+ * Whether a fresh cut burns the headline in as a lower third. X clips are TV cuts that already carry the
+ * channel's own headline bar, and the headline goes in the post text, so X starts with the footage alone.
+ */
+export const PLATFORM_HEADLINE_OVERLAY: Record<StudioPlatform, boolean> = {
+  YouTube: true,
+  Facebook: true,
+  Shorts: true,
+  Reels: true,
+  X: false,
 };
 
 /** The parts of an FTP story / draft view the studio reads */
@@ -22,7 +35,11 @@ export interface StoryMediaSource {
   headline: string;
   /** Optional second line of text (YouTube: the description), shown under a title card for the opening seconds */
   description?: string;
-  media: { kind: "image" | "video" | "audio"; url: string; fileName: string }[];
+  /**
+   * `startAt`: seconds to skip at the head of the main video. TV cuts open on one black frame (the bulletin's
+   * fade-in), which would be the studio's first preview frame and the posted video's first frame.
+   */
+  media: { kind: "image" | "video" | "audio"; url: string; fileName: string; startAt?: number }[];
 }
 
 /** What a probe learned about a file (seconds, pixels); missing when it could not be read */
@@ -155,7 +172,16 @@ export function projectFromStory(
 
   const mainVideo = assets.find((a) => a.kind === "video");
   if (mainVideo) {
-    videoTrack.clips = [mediaClipFor(mainVideo, 0)];
+    const clip = mediaClipFor(mainVideo, 0);
+    const skip = story.media.find((m) => m.url === mainVideo.url)?.startAt ?? 0;
+    if (skip > 0 && mainVideo.duration > skip + 1) {
+      clip.in = skip;
+      clip.duration = mainVideo.duration - skip;
+    } else if (skip > 0 && !mainVideo.duration) {
+      // Length not probed yet: still skip the head, on the placeholder length the timeline can trim
+      clip.in = skip;
+    }
+    videoTrack.clips = [clip];
   } else {
     let at = 0;
     for (const a of assets.filter((x) => x.kind === "image")) {
@@ -168,7 +194,7 @@ export function projectFromStory(
 
   const length = videoTrack.clips.reduce((end, c) => Math.max(end, c.start + c.duration), 0);
   const headline = story.headline.trim();
-  if (headline) textTrack.clips = [headlineClip(headline, aspect, 0, length || IMAGE_SECONDS)];
+  if (headline && PLATFORM_HEADLINE_OVERLAY[platform]) textTrack.clips = [headlineClip(headline, aspect, 0, length || IMAGE_SECONDS)];
   const description = story.description?.trim();
   if (description) project.tracks.splice(project.tracks.indexOf(textTrack) + 1, 0, { ...textTrack, id: newId("trk"), name: "Text 2", clips: [descriptionClip(description, aspect, Math.min(length || IMAGE_SECONDS, 8))] });
   return project;

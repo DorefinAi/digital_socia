@@ -8,7 +8,7 @@ import { Box, Button, IconButton, Tooltip, Typography } from "@mui/material";
 import { Clapperboard, Maximize2, Pause, Play } from "lucide-react";
 import type { XvClip, XvScreenText } from "@/data/xVideosData";
 import type { ClipPlayer } from "./useClipPlayer";
-import { LiveBug, MissingNote, ScreenTextOverlay, XV_COLORS, backdropFor } from "./ClipFrame";
+import { LiveBug, MissingNote, ScreenTextOverlay, XV_COLORS, backdropFor, isVertical } from "./ClipFrame";
 import { fmtClock } from "./xvTitle";
 
 const RATES = [1, 1.5, 2, 0.5];
@@ -38,6 +38,7 @@ export default function ClipStage({ clip, player, trim, onTrim, markers, markerC
   const { time, duration, playing, missing, rate, attach, toggle, seek, setRate, videoProps } = player;
   const kept = trim.end - trim.start;
   const whole = trim.start <= 0.05 && trim.end >= duration - 0.05;
+  const vertical = isVertical(clip);
   const grabs = clip.screenText.filter((g) => (showBoxes && grabShowing(g, time)) || g.id === pickedGrab || (missing && grabShowing(g, time)));
 
   const fullscreen = () => {
@@ -51,7 +52,11 @@ export default function ClipStage({ clip, player, trim, onTrim, markers, markerC
     <Box sx={{ width: "100%", maxWidth: 820, display: "flex", flexDirection: "column", gap: 1.25 }}>
       <Box
         ref={stageRef}
-        sx={{ position: "relative", width: "100%", aspectRatio: "16 / 9", borderRadius: "6px", overflow: "hidden", background: backdropFor(clip.id), boxShadow: "0 2px 10px rgba(0,0,0,0.15)", "&:fullscreen": { borderRadius: 0 } }}
+        sx={{
+          position: "relative",
+          // A vertical short keeps its own shape, as tall as the window allows, instead of a thin strip in a 16:9 box
+          ...(vertical ? { alignSelf: "center", height: "min(68dvh, 640px)", maxWidth: "100%", aspectRatio: `${clip.width} / ${clip.height}` } : { width: "100%", aspectRatio: "16 / 9" }),
+          borderRadius: "6px", overflow: "hidden", background: backdropFor(clip.id), boxShadow: "0 2px 10px rgba(0,0,0,0.15)", "&:fullscreen": { borderRadius: 0, ...(vertical ? { height: "100dvh", maxWidth: "none" } : {}) } }}
       >
         {!missing && (
           <Box
@@ -59,6 +64,7 @@ export default function ClipStage({ clip, player, trim, onTrim, markers, markerC
             key={clip.src}
             ref={attach}
             src={clip.src}
+            poster={clip.poster}
             preload="metadata"
             playsInline
             onClick={toggle}

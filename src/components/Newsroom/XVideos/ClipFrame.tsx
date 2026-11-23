@@ -1,7 +1,7 @@
 "use client";
 
-// A frame of a clip: the real video (a thumbnail, a frame grab at a time, or the player's stage) over a dark
-// placeholder. When the file is not in public/xvideos-demo/ yet, the placeholder stays, with the file name, so the
+// A frame of a clip over a dark placeholder: a still JPG when the clip has one (thumbnails and frame grabs: an <img>
+// is far lighter than a <video> per row), else the video's own frame at a time. When the file is not in public/xvideos-demo/ yet, the placeholder stays, with the file name, so the
 // desk still reads. The overlays (LIVE bug, the text read from the frame, the cyan box) are drawn by the caller.
 
 import React, { useState } from "react";
@@ -23,6 +23,9 @@ export function backdropFor(id: string): string {
   return BACKDROPS[h % BACKDROPS.length];
 }
 
+/** A clip taller than it is wide (the 1080x1920 digital shorts) */
+export const isVertical = (clip: { width?: number; height?: number }) => !!clip.width && !!clip.height && clip.height > clip.width;
+
 export const XV_COLORS = {
   live: "#D90429",
   clip: "#6D28D9",
@@ -40,6 +43,10 @@ interface ClipFrameProps {
   fileName: string;
   /** Show the frame at this second (thumbnails and grabs) */
   at?: number;
+  /** A still to show instead of the video's frame (fitted whole, so a vertical clip is not stretched or cropped) */
+  image?: string;
+  /** Alt text for `image`; without it the still is decorative */
+  alt?: string;
   /** Shows the file name on the placeholder when the file is missing */
   showMissing?: boolean;
   children?: React.ReactNode;
@@ -47,11 +54,26 @@ interface ClipFrameProps {
 }
 
 /** A still frame: the video's frame at `at` when the file is there, the backdrop otherwise */
-export function ClipFrame({ id, src, fileName, at = 1, showMissing = false, children, sx }: ClipFrameProps) {
-  const [missing, setMissing] = useState(false);
+export function ClipFrame({ id, src, fileName, at = 1, image, alt, showMissing = false, children, sx }: ClipFrameProps) {
+  // The file that failed, so a new image or video on the same frame gets its own try
+  const shown = image ?? src;
+  const [failed, setFailed] = useState<string | null>(null);
+  const missing = failed === shown;
   return (
     <Box sx={{ position: "relative", overflow: "hidden", background: backdropFor(id), aspectRatio: "16 / 9", ...sx }}>
-      {!missing && (
+      {!missing && image && (
+        <Box
+          component="img"
+          src={image}
+          alt={alt ?? ""}
+          aria-hidden={alt ? undefined : true}
+          loading="lazy"
+          decoding="async"
+          onError={() => setFailed(shown)}
+          sx={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", backgroundColor: "#000", display: "block" }}
+        />
+      )}
+      {!missing && !image && (
         <Box
           component="video"
           src={`${src}#t=${at}`}
@@ -60,7 +82,7 @@ export function ClipFrame({ id, src, fileName, at = 1, showMissing = false, chil
           playsInline
           aria-hidden
           tabIndex={-1}
-          onError={() => setMissing(true)}
+          onError={() => setFailed(shown)}
           sx={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" }}
         />
       )}
@@ -85,15 +107,6 @@ export function LiveBug({ size = "0.6875rem" }: { size?: string }) {
   return (
     <Box component="span" aria-hidden sx={{ position: "absolute", top: "6%", left: "3%", px: "0.5em", py: "0.1em", borderRadius: "3px", backgroundColor: XV_COLORS.live, color: "#fff", fontWeight: 800, fontSize: size, lineHeight: 1.4 }}>
       LIVE
-    </Box>
-  );
-}
-
-/** The kind badge: LIVE (red) or CLIP (purple) */
-export function KindBadge({ kind }: { kind: "live" | "clip" }) {
-  return (
-    <Box component="span" sx={{ display: "inline-flex", alignItems: "center", px: 0.75, borderRadius: "4px", fontSize: "0.6875rem", fontWeight: 800, lineHeight: "18px", color: "#fff", backgroundColor: kind === "live" ? XV_COLORS.live : XV_COLORS.clip, flexShrink: 0 }}>
-      {kind === "live" ? "LIVE" : "CLIP"}
     </Box>
   );
 }

@@ -67,8 +67,8 @@ export function initialDraft(clip: XvClip): XvDraft {
 
 export const draftOf = (state: DeskState, clip: XvClip): XvDraft => state.drafts[clip.id] ?? initialDraft(clip);
 
-/** The brand tag the draft's title sets, or null */
-export const draftBrand = (d: XvDraft) => brandTagFor(labelOf(d.title));
+/** The brand tag for the draft: from its title's label and where the clip's story is from, or null */
+export const draftBrand = (d: XvDraft, clip: Pick<XvClip, "region">) => brandTagFor(labelOf(d.title), clip.region ?? null);
 
 export function deskReducer(state: DeskState, action: DeskAction): DeskState {
   switch (action.type) {

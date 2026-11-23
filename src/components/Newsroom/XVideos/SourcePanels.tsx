@@ -4,12 +4,12 @@
 // the text read from them), and the other clips in the list. A click jumps the player there; ★ puts the line on
 // line 1 of the tweet.
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Box, Button, Typography } from "@mui/material";
-import { Star } from "lucide-react";
+import { LayoutGrid, Star } from "lucide-react";
 import type { XvClip, XvScreenText, XvTranscriptLine } from "@/data/xVideosData";
-import { ClipFrame, KindBadge, ScreenTextOverlay, XV_COLORS } from "./ClipFrame";
-import { fmtClock, fmtDuration } from "./xvTitle";
+import { ClipFrame, ScreenTextOverlay, XV_COLORS, isVertical } from "./ClipFrame";
+import { fmtClock } from "./xvTitle";
 
 const headSx = { px: 1.5, pt: 1.25, pb: 1, display: "flex", flexDirection: "column", gap: 1, borderBottom: "1px solid", borderColor: "divider" } as const;
 const hintSx = { fontSize: "0.75rem", color: "text.secondary", lineHeight: 1.4 } as const;
@@ -144,13 +144,81 @@ interface ScreenProps {
   onUse: (g: XvScreenText) => void;
 }
 
-export function ScreenTextPanel({ clip, time, usedId, onSeek, onUse }: ScreenProps) {
+const FRAME_WHERE = { first: "Start", mid: "Middle", last: "End" } as const;
+
+/**
+ * The stills taken from a clip whose on-screen text is not read yet (text recognition is the backend phase): a
+ * click jumps there. On a TV cut the text to read is the red headline bar and the BREAKING NEWS box, both of which
+ * rotate through 3-4 lines of the story; a vertical digital short has word captions instead.
+ */
+function FrameGrabs({ clip, time, onSeek }: { clip: XvClip; time: number; onSeek: (t: number) => void }) {
+  const [sheet, setSheet] = useState(false);
+  const frames = clip.frames ?? [];
+  const vertical = isVertical(clip);
+  const reads = vertical ? "word captions" : "headline bar / breaking box";
   return (
     <>
-      <PanelHead title="On screen" aside={`${clip.screenText.length} found`} hint="Text read from the frames: supers, tickers, name straps. ★ puts it on line 1." />
-      <Box role="list" aria-label="Text read from the screen" sx={{ flex: 1, minHeight: 0, overflowY: "auto", p: 1, display: "flex", flexDirection: "column", gap: 1 }}>
+      {frames.map((f) => {
+        const showing = Math.abs(time - f.at) < 1;
+        return (
+          <Box key={f.where} role="listitem" sx={{ p: 0.75, borderRadius: "8px", border: "1px solid", borderColor: "divider", backgroundColor: "background.paper" }}>
+            <Box component="button" type="button" onClick={() => onSeek(f.at)} aria-label={`Jump to ${fmtClock(f.at)}`} sx={{ display: "block", width: "100%", p: 0, border: 0, background: "none", cursor: "pointer", "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: 2 } }}>
+              <ClipFrame id={clip.id} src={clip.src} fileName={clip.fileName} image={f.src} sx={{ borderRadius: "5px" }} />
+            </Box>
+            <Box sx={{ display: "flex", gap: 1, alignItems: "baseline", mt: 0.75 }}>
+              <Box component="span" sx={{ flexShrink: 0, fontFamily: "var(--font-mono), Consolas, monospace", fontSize: "0.6875rem", color: showing ? XV_COLORS.said : "text.secondary", fontWeight: showing ? 700 : 400 }}>
+                {fmtClock(f.at)}
+              </Box>
+              <Typography sx={{ flex: 1, minWidth: 0, fontSize: "0.75rem", lineHeight: 1.45 }}>
+                <Box component="span" sx={{ fontWeight: 700 }}>
+                  {FRAME_WHERE[f.where]}
+                </Box>
+                <Box component="span" sx={{ color: "text.secondary" }}>
+                  {" "}
+                  · {reads} (text not read yet)
+                </Box>
+              </Typography>
+            </Box>
+          </Box>
+        );
+      })}
+      {clip.contactSheet && (
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
+          <Button size="small" variant="outlined" onClick={() => setSheet((s) => !s)} aria-expanded={sheet} startIcon={<LayoutGrid size={14} aria-hidden />} sx={{ alignSelf: "flex-start", minHeight: 32, borderRadius: "8px", textTransform: "none", fontWeight: 600, fontSize: "0.75rem", color: "text.primary", borderColor: "divider" }}>
+            {sheet ? "Hide all frames" : "See all frames"}
+          </Button>
+          {sheet && <SheetImage src={clip.contactSheet} alt={`12 frames from ${clip.fileName}, evenly spaced, in a 4 by 3 grid`} />}
+        </Box>
+      )}
+    </>
+  );
+}
+
+function SheetImage({ src, alt }: { src: string; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <Empty text="The frames sheet is not in public/xvideos-demo/real-frames/ on this machine." />;
+  return <Box component="img" src={src} alt={alt} loading="lazy" onError={() => setFailed(true)} sx={{ display: "block", width: "100%", height: "auto", borderRadius: "6px", border: "1px solid", borderColor: "divider" }} />;
+}
+
+export function ScreenTextPanel({ clip, time, usedId, onSeek, onUse }: ScreenProps) {
+  const unread = clip.screenText.length === 0 && (clip.frames?.length ?? 0) > 0;
+  return (
+    <>
+      <PanelHead
+        title="On screen"
+        aside={unread ? `${clip.frames?.length} frames, text not read yet` : `${clip.screenText.length} found`}
+        hint={
+          unread
+            ? isVertical(clip)
+              ? "Stills from the start, middle and end. The word captions on them will be read here, then ★ puts one on line 1."
+              : "Stills from the start, middle and end. The red headline bar and the BREAKING NEWS box rotate through 3–4 lines of the story; once read, each line shows here and ★ puts it on line 1."
+            : "Text read from the frames: supers, tickers, name straps. ★ puts it on line 1."
+        }
+      />
+      <Box role="list" aria-label={unread ? "Frames from the clip" : "Text read from the screen"} sx={{ flex: 1, minHeight: 0, overflowY: "auto", p: 1, display: "flex", flexDirection: "column", gap: 1 }}>
         {clip.readingProgress !== undefined && <Empty text={`Reading the clip… ${clip.readingProgress}%. Supers and tickers will show here.`} />}
-        {clip.readingProgress === undefined && clip.screenText.length === 0 && <Empty text="No text was read from the frames of this clip." />}
+        {unread && <FrameGrabs clip={clip} time={time} onSeek={onSeek} />}
+        {clip.readingProgress === undefined && clip.screenText.length === 0 && !unread && <Empty text="No text was read from the frames of this clip." />}
         {clip.screenText.map((g) => {
           const used = usedId === g.id;
           const showing = time >= g.at && time < g.at + 6;
@@ -194,13 +262,9 @@ export function ClipsPanel({ clips, currentId, onPick }: { clips: XvClip[]; curr
             aria-current={c.id === currentId ? "true" : undefined}
             sx={{ width: "100%", display: "flex", gap: 1, p: 1, border: 0, borderBottom: "1px solid", borderColor: "divider", background: c.id === currentId ? "rgba(0,0,0,0.06)" : "none", textAlign: "left", font: "inherit", color: "inherit", cursor: "pointer", "&:hover": { backgroundColor: "action.hover" }, "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: -2 } }}
           >
-            <ClipFrame id={c.id} src={c.src} fileName={c.fileName} sx={{ width: 72, borderRadius: "4px", flexShrink: 0 }} />
+            <ClipFrame id={c.id} src={c.src} fileName={c.fileName} image={c.poster} sx={{ width: 72, borderRadius: "4px", flexShrink: 0 }} />
             <Box sx={{ minWidth: 0 }}>
-              <Box sx={{ display: "flex", gap: 0.5, alignItems: "center", fontSize: "0.6875rem", color: "text.secondary" }}>
-                <KindBadge kind={c.kind} />
-                {c.district} · {fmtDuration(c.duration)}
-              </Box>
-              <Typography lang="hi" sx={{ mt: 0.25, fontSize: "0.75rem", fontWeight: 600, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+              <Typography lang="hi" sx={{ fontSize: "0.75rem", fontWeight: 600, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
                 {c.headline ?? c.suggestedHeadline ?? c.fileName}
               </Typography>
             </Box>

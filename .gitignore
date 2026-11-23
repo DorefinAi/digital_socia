@@ -40,3 +40,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# X Clips demo: copies of the real First India clips on this machine (never commit)
+/public/xvideos-demo/real
+/public/xvideos-demo/real-frames
+
+# Screenshots of the live X account (real staff names; never commit)
+/docs/xvideos/reference

@@ -52,10 +52,24 @@ The video desk keeps the live X desk's frame so the desk needs nothing new to le
 
 **Out of this UI pass** (the backend phase): reading the real clips folder, speech-to-text, on-screen text recognition, saving drafts to the server, and X API video upload.
 
+## What the real posts look like (21 Nov sample)
+
+26 video posts @1stIndiaNews put on X between 13:36 and 16:15 IST on 21 Nov 2026 (pulled to a local folder outside the repo; `docs/xvideos/build-real-clips.py` turns it into `src/data/xClipsReal.json`, which the demo desk now runs on). The videos and frames are local copies in the gitignored `public/xvideos-demo/real/` and `public/xvideos-demo/real-frames/`.
+
+- **Caption:** `<title>` + blank line + `<hashtags> <mentions> <t.co link>`.
+- **Title:** mostly `<Hindi/Hinglish headline> | <Place> News` ("… | Tonk News", "… | Haryana News"); 4 use `<headline> | <City> | Rajasthan News`; a few end on a topic segment (`| Khelo Rajasthan Youth Games | Rajasthan`) or have no place (2). English proper nouns are mixed in (PM Narendra Modi, SMS Hospital). Some start with a topic prefix: `Accident:`, `Bansur Cylinder Blast:`, `Panchayat Election Result:`, `JDA Action`.
+- **Hashtags:** `#FINVideo` on 26/26. The brand tag usually comes first, then `#FINVideo`: `#RajasthanWithFirstIndia #FINVideo` for Rajasthan stories (18; 2 more have the two swapped), `#FirstIndiaNews #FINVideo` for stories from outside Rajasthan (6: Haryana, Punjab, Patna/Bihar, ISRO). Then `#RajasthanNews` (13) and topic, people and place tags. Then the @mentions (@ashokgehlot51, @INCRajasthan, @RajGovOfficial, @narendramodi, @Jaipur_Airport, @CP_Jodhpur…).
+- **Video:** 25/26 are 1280x720 cuts of the TV broadcast (median 93 s, 28 s to 11 min, 5–96 MB); 1 is a 1080x1920 vertical digital short (2124064378488229888, ISRO) with word captions and no TV template.
+- **On screen:** the red headline bar and the BREAKING NEWS box each rotate through 3–4 lines of the story. The posted title is a rewrite that merges those lines with context, not a copy of one of them.
+- **Length:** 2 captions are longer than 280 characters even counted plainly (319 and 330, the two Bansur posts), so the account can post long text. The desk still holds the post to 280; see question 6.
+
+What the desk does with this now: the helpers in `xvTitle.ts` put the brand tag first and #FINVideo second, pick #FirstIndiaNews for stories from outside Rajasthan, and read both label styles. The label chips are "<Place> News", "<City> | Rajasthan News", "Rajasthan News" and "none". Each demo clip links to its real post on X, so the team can compare the suggestion with what went out.
+
 ## Open questions for the owner
 
 1. The clips folder: what is its exact path and how are its folders laid out? Is it the same share as the breaking files? (The mockups use a made-up `LIVE_CLIPS` path.)
-2. What X length limit does @1stIndiaNews have: 2:20, or longer as a verified organisation? The trim rule depends on it.
+2. ~~What X length limit does @1stIndiaNews have: 2:20, or longer as a verified organisation?~~ **Closed: longer than 2:20.** On 21 Nov the account posted clips of 3:16, 3:37, 4:03, 4:39, 6:07, 6:20 and 11:01. The desk's limit is one constant, `X_VIDEO_MAX_SECONDS` in `xvTitle.ts`, set to 10 min for now (the 11-min clip still asks for a trim). Confirm the account's exact limit before the backend phase.
 3. Is the trim needed on the desk itself, or is "Open in Video Studio" enough?
 4. Is one title per clip enough, or can one clip make two posts?
 5. Who may post videos: the same X desk role, or a new `video` permission?
+6. The account posted captions over 280 characters (319 and 330 on 21 Nov). Should the desk allow long posts for videos, or keep them to 280 so they read in full on the timeline?

@@ -297,7 +297,7 @@ function StudioShell({ platform, draftId, story, aspect, title, onClose, onUseVi
   return (
     <Box
       ref={rootRef}
-      sx={{ position: "fixed", inset: 0, zIndex: 1250, height: "100dvh", display: "grid", gridTemplateRows: "auto minmax(0, 1fr) minmax(190px, 32%)", bgcolor: S.stage, color: S.text, overflow: "hidden" }}
+      sx={{ position: "fixed", inset: 0, zIndex: 1250, height: "100dvh", display: "grid", gridTemplateRows: "auto minmax(0, 1fr) minmax(190px, 32%)", gridTemplateColumns: "minmax(0, 1fr)", bgcolor: S.stage, color: S.text, overflow: "hidden" }}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes("Files") || e.dataTransfer.types.includes(ASSET_DRAG_TYPE)) return;
         e.preventDefault();

@@ -14,7 +14,7 @@ import XPostPreview from "../BreakingDesk/phase1/XPostPreview";
 import { isTextEntryTarget } from "../BreakingDesk/video/keymap";
 import { StudioModal } from "../BreakingDesk/video/panels/StudioLauncher";
 import { XIcon } from "@/components/leftNavigation/aiContentPlatforms";
-import { ClipFrame, XV_COLORS } from "./ClipFrame";
+import { ClipFrame, XV_COLORS, isVertical } from "./ClipFrame";
 import ClipStage from "./ClipStage";
 import { draftBrand, initialDraft, prefixesFor, type UndoEntry, type XvDraft } from "./deskState";
 import { ReadyForXDialog, RejectClipDialog, UndoBar } from "./PostFlow";
@@ -78,6 +78,9 @@ export default function VideoEditor(props: EditorProps) {
   );
 }
 
+
+/** TV cuts open on one black frame (the bulletin fade-in); the studio starts the cut just after it (25 of the 26 real clips) */
+const TV_LEAD_IN = 0.1;
 function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatch, onGo, onClose, onPost, onReject, tookOver, onTakeOver }: EditorProps & { tookOver: boolean; onTakeOver: () => void }) {
   const [tab, setTab] = useState<SideTab>(() => (clip.transcript.length || !clip.screenText.length ? "said" : "screen"));
   const [notice, setNotice] = useState<string | null>(null);
@@ -90,7 +93,7 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
 
   const player = useClipPlayer(clip.src, clip.duration, draft.trim);
   const prefixes = useMemo(() => prefixesFor(clip), [clip]);
-  const brand = draftBrand(draft);
+  const brand = draftBrand(draft, clip);
   const tagBlock = assembleTagBlock(
     draft.hashtags.filter((t) => t.on).map((t) => t.value),
     draft.mentions.filter((t) => t.on).map((t) => t.value),
@@ -182,7 +185,8 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
     return () => window.removeEventListener("keydown", onKey);
   }, [anyDialog, nextId, prevId, onGo, onClose, player, draft.trim, setTrim, tab, clip, playingLine, pickGrab, pickTranscript]);
 
-  const markers = tab === "screen" ? clip.screenText.map((g) => ({ at: g.at, label: g.text })) : clip.transcript.filter((l) => l.worth).map((l) => ({ at: l.at, label: l.text }));
+  const frameMarkers = (clip.frames ?? []).map((f) => ({ at: f.at, label: `Frame at ${f.at.toFixed(0)} s` }));
+  const markers = tab === "screen" ? (clip.screenText.length ? clip.screenText.map((g) => ({ at: g.at, label: g.text })) : frameMarkers) : clip.transcript.filter((l) => l.worth).map((l) => ({ at: l.at, label: l.text }));
   const trimmed = draft.trim.start > 0.05 || draft.trim.end < clip.duration - 0.05 ? draft.trim : null;
 
   return (
@@ -219,7 +223,6 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
           <Button onClick={() => setPreview(true)} sx={{ ...chromeBtnSx, border: 0, display: { xs: "none", sm: "inline-flex" } }}>
             <Eye size={15} /> See on X
           </Button>
-          <Typography sx={{ display: { xs: "none", lg: "block" }, fontSize: "0.75rem", color: "#AAA", whiteSpace: "nowrap" }}>{postedToday} posted today</Typography>
           <Tooltip title="Copy the post (not marked posted)">
             <Button onClick={() => void copyOnly()} aria-label="Copy the post" sx={chromeBtnSx}>
               <Copy size={14} />
@@ -371,7 +374,7 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
               <CloseIcon size={16} />
             </IconButton>
           </Box>
-          <XPostPreview text={text} used={length} media={<ClipFrame id={clip.id} src={clip.src} fileName={clip.fileName} showMissing />} />
+          <XPostPreview text={text} used={length} media={<ClipFrame id={clip.id} src={clip.src} fileName={clip.fileName} image={clip.poster} showMissing sx={isVertical(clip) ? { aspectRatio: "4 / 5" } : undefined} />} />
         </Box>
       </Dialog>
 
@@ -407,9 +410,10 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
 
       <StudioModal
         open={studio}
-        platform="Facebook"
+        platform="X"
+        aspect={isVertical(clip) ? "9:16" : "16:9"}
         draftId={`xvideos-${clip.id}`}
-        story={{ id: clip.id, headline: draft.title || clip.fileName, media: [{ kind: "video", url: clip.src, fileName: clip.fileName }] }}
+        story={{ id: clip.id, headline: draft.title || clip.fileName, media: [{ kind: "video", url: clip.src, fileName: clip.fileName, startAt: isVertical(clip) ? 0 : TV_LEAD_IN }] }}
         title={draft.title || clip.fileName}
         onClose={() => setStudio(false)}
       />

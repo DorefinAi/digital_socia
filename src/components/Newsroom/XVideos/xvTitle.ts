@@ -1,10 +1,11 @@
-// Pure helpers for the X Videos desk: the title line ("<Hindi headline> | <Place> News"), the "Start with" prefix,
-// the hashtag and handle block (#FINVideo always first, then the channel's brand tag), and the checks against X's
-// video limits. No React here, so `node --test` runs them (xvTitle.test.ts). Imports stay relative for that reason.
+// Pure helpers for the X Videos desk: the title line ("<Hindi headline> | <Place> News" or
+// "<headline> | <City> | Rajasthan News"), the "Start with" prefix, the hashtag and handle block (brand tag first,
+// then #FINVideo, the other tags, then the handles: how @1stIndiaNews posts them in the 21 Nov sample), and the
+// checks against X's video limits. No React here, so `node --test` runs them (xvTitle.test.ts). Imports stay relative for that reason.
 
 import { X_LIMIT, countChars, cutAtWeight } from "../BreakingDesk/socialText";
 
-/** Every video post carries this tag, first */
+/** Every video post carries this tag, right after the brand tag */
 export const FIN_VIDEO_TAG = "#FINVideo";
 export const RAJASTHAN_BRAND_TAG = "#RajasthanWithFirstIndia";
 export const INDIA_BRAND_TAG = "#FirstIndiaNews";
@@ -12,8 +13,15 @@ export const INDIA_BRAND_TAG = "#FirstIndiaNews";
 /** The desk's standard video prefixes; a clip can add its own ("Jaipur Fire:") */
 export const STANDARD_PREFIXES = ["VIDEO:", "Viral Video:"] as const;
 
-/** X's limits for a video post (ordinary account): 2 min 20 s, 512 MB, MP4 or MOV */
-export const X_VIDEO_LIMITS = { seconds: 140, bytes: 512 * 1024 * 1024, formats: ["mp4", "mov"] } as const;
+/**
+ * The longest clip the desk lets go up without a trim. An ordinary X account stops at 2:20, but @1stIndiaNews posted
+ * clips of 3:16, 4:39, 6:07 and 6:20 on 21 Nov, so its limit is longer. 10 min is a working figure until the owner
+ * confirms the account's real limit (docs/xvideos/UI-SCOPE.md, open question 2); the 11-min clip still trips it.
+ */
+export const X_VIDEO_MAX_SECONDS = 10 * 60;
+
+/** X's limits for a video post: the length above, 512 MB, MP4 or MOV */
+export const X_VIDEO_LIMITS = { seconds: X_VIDEO_MAX_SECONDS, bytes: 512 * 1024 * 1024, formats: ["mp4", "mov"] } as const;
 
 /** "2:18" for 138 s; "1:02:05" past an hour */
 export function fmtDuration(seconds: number): string {
@@ -36,12 +44,13 @@ export function fmtSize(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / (1024 * 1024)))} MB`;
 }
 
-// " | Rajasthan News" (or "| Jaipur News", "|India News") at the end of a line
-const LABEL_TAIL = /\s*\|\s*([^|]*?\bNews)\s*$/u;
+// " | Jaipur News", " | Rajasthan News" or the two-part " | Jodhpur | Rajasthan News" at the end of a line
+const LABEL_TAIL = /\s*\|\s*((?:[^|]{1,40}?\s*\|\s*)?Rajasthan News|[^|]*?\bNews)\s*$/u;
 
-/** The channel label a title ends with ("Rajasthan News"), or null */
+/** The channel label a title ends with ("Tonk News", "Jodhpur | Rajasthan News"), spaced as the desk writes it, or null */
 export function labelOf(line: string): string | null {
-  return line.match(LABEL_TAIL)?.[1]?.trim() || null;
+  const raw = line.match(LABEL_TAIL)?.[1]?.trim();
+  return raw ? raw.replace(/\s*\|\s*/g, " | ") : null;
 }
 
 /** The title without its " | … News" ending */
@@ -77,13 +86,31 @@ export function buildTitle(headline: string, label: string | null, prefix: strin
   return applyLabel(applyPrefix(headline.replace(/\s+/g, " ").trim(), prefix, all), label);
 }
 
+/** Where a story is from, for the brand tag: Rajasthan, or outside it (Haryana, Bihar, ISRO…) */
+export type XvRegion = "rajasthan" | "india";
+
 /**
- * The brand tag a channel label sets, as the composer does: "India News" is national (#FirstIndiaNews); any other
- * label ("Rajasthan News", "Jaipur News"…) is the Rajasthan channel; no label, no brand tag.
+ * The brand tag for a post. A label naming Rajasthan ("Rajasthan News", "Jodhpur | Rajasthan News") is the Rajasthan
+ * channel and "India News" the national one; any other label ("Tonk News", "Bihar News") or none follows where the
+ * story is from: #RajasthanWithFirstIndia inside Rajasthan, #FirstIndiaNews outside it. With no region, any label
+ * is the Rajasthan channel and no label means no brand tag.
  */
-export function brandTagFor(label: string | null): string | null {
-  if (!label) return null;
-  return /^india\s+news$/i.test(label.trim()) ? INDIA_BRAND_TAG : RAJASTHAN_BRAND_TAG;
+export function brandTagFor(label: string | null, region: XvRegion | null = null): string | null {
+  const l = label?.trim() ?? "";
+  if (/\bRajasthan News$/i.test(l)) return RAJASTHAN_BRAND_TAG;
+  if (/^india\s+news$/i.test(l)) return INDIA_BRAND_TAG;
+  if (region) return region === "india" ? INDIA_BRAND_TAG : RAJASTHAN_BRAND_TAG;
+  return l ? RAJASTHAN_BRAND_TAG : null;
+}
+
+/**
+ * The channel label chips for a clip from `place`: "<Place> News", "<City> | Rajasthan News" (Rajasthan cities only),
+ * "Rajasthan News", then the label the clip came with. The panel adds "none".
+ */
+export function channelLabelsFor(place: string, region: XvRegion | null, own: string | null = null): string[] {
+  const p = place.trim();
+  const city = p && region !== "india" && !/^rajasthan$/i.test(p) ? `${p} | Rajasthan News` : "";
+  return Array.from(new Set([p ? `${p} News` : "", city, "Rajasthan News", own ?? ""].filter(Boolean)));
 }
 
 const BRAND_TAGS = [RAJASTHAN_BRAND_TAG, INDIA_BRAND_TAG].map((t) => t.toLowerCase());
@@ -95,8 +122,8 @@ export function cleanTag(raw: string, prefix: "#" | "@"): string {
 }
 
 /**
- * The tag line under the title: #FINVideo first, then the brand tag, then the other hashtags in order, then the
- * handles. Each tag once (any case); a second brand tag that disagrees with the label is dropped.
+ * The tag line under the title, as @1stIndiaNews writes it: the brand tag first, then #FINVideo, then the other
+ * hashtags in order, then the handles. Each tag once (any case); a second brand tag that disagrees is dropped.
  */
 export function assembleTagBlock(hashtags: readonly string[], mentions: readonly string[], brand: string | null): string {
   const seen = new Set<string>();
@@ -107,8 +134,8 @@ export function assembleTagBlock(hashtags: readonly string[], mentions: readonly
     seen.add(k);
     out.push(t);
   };
-  add(FIN_VIDEO_TAG);
   if (brand) add(brand);
+  add(FIN_VIDEO_TAG);
   for (const h of hashtags) {
     if (BRAND_TAGS.includes(h.toLowerCase()) && brand && h.toLowerCase() !== brand.toLowerCase()) continue;
     add(h);
@@ -159,7 +186,7 @@ export function checkClip(clip: { fileName: string; duration: number; size: numb
   return out;
 }
 
-/** One issue in the desk's words: "3:42, over X's 2:20, trim" */
+/** One issue in the desk's words: "11:01, over X's 10:00, trim" */
 export function issueLabel(issue: ClipIssue): string {
   if (issue.code === "too_long") return `${fmtDuration(issue.seconds)}, over X's ${fmtDuration(issue.limit)}, trim`;
   if (issue.code === "too_big") return `${fmtSize(issue.bytes)}, over X's ${fmtSize(issue.limit)}`;

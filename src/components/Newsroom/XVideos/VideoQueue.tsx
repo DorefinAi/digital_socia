@@ -1,8 +1,8 @@
 "use client";
 
-// The Video Draft list: Post Draft's rows (time dot, age, badge, district, file, bold headline, reject, Open) with
-// a clip thumbnail and its length. A grey "Suggested:" headline is the system's guess from the clip; "Reading the
-// clip… 45%" shows while it is read; a clip over X's limit carries an orange chip beside Reject.
+// The Video Draft list: Post Draft's rows (time dot, age, bold headline, reject, Open) with a clip thumbnail and its
+// length. The headline is the system's guess from the clip until the desk saves one; "Reading the clip… 45%" shows
+// while it is read; a clip over X's limit carries an orange chip beside Reject.
 
 import React from "react";
 import { Box, Button, IconButton, LinearProgress, Tooltip, Typography } from "@mui/material";
@@ -11,8 +11,8 @@ import type { XvClip } from "@/data/xVideosData";
 import { ageTone } from "../BreakingDesk/deskRules";
 import { srOnly, timeAgo } from "../BreakingDesk/shared";
 import { XRichText } from "../BreakingDesk/phase1/XPostPreview";
-import { ClipFrame, KindBadge, LiveBug, XV_COLORS } from "./ClipFrame";
-import { checkClip, fmtDuration, fmtSize, issueLabel } from "./xvTitle";
+import { ClipFrame, LiveBug, XV_COLORS } from "./ClipFrame";
+import { checkClip, fmtDuration, issueLabel } from "./xvTitle";
 
 const AGE_COLOR = { fresh: "success.main", recent: "warning.main", old: "text.disabled" } as const;
 const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -41,7 +41,7 @@ const openSx = { minHeight: { xs: 40, md: 34 }, borderRadius: "8px", textTransfo
 const rejectSx = { width: { xs: 40, md: 34 }, height: { xs: 40, md: 34 }, borderRadius: "8px", color: "error.main", "&:hover": { backgroundColor: "rgba(211, 47, 47, 0.08)" } } as const;
 const plainBtnSx = { minHeight: 34, borderRadius: "8px", textTransform: "none", fontWeight: 600, fontSize: "0.8125rem", whiteSpace: "nowrap", borderColor: "divider", color: "text.primary" } as const;
 
-/** The orange chip a clip X won't take as it is carries ("3:42, over X's 2:20, trim") */
+/** The orange chip a clip X won't take as it is carries ("11:01, over X's 10:00, trim") */
 export function LimitChip({ clip, trim }: { clip: XvClip; trim?: { start: number; end: number } }) {
   const issues = checkClip(clip, trim);
   if (!issues.length) return null;
@@ -60,7 +60,7 @@ export function LimitChip({ clip, trim }: { clip: XvClip; trim?: { start: number
 /** The clip's thumbnail with its LIVE bug and length */
 function Thumb({ clip }: { clip: XvClip }) {
   return (
-    <ClipFrame id={clip.id} src={clip.src} fileName={clip.fileName} sx={{ width: 112, borderRadius: "6px", flexShrink: 0 }}>
+    <ClipFrame id={clip.id} src={clip.src} fileName={clip.fileName} image={clip.poster} sx={{ width: 112, borderRadius: "6px", flexShrink: 0 }}>
       {clip.kind === "live" && <LiveBug size="0.5rem" />}
       <Box component="span" sx={{ position: "absolute", right: 4, bottom: 4, px: 0.5, borderRadius: "3px", backgroundColor: "rgba(0,0,0,0.78)", color: "#fff", fontSize: "0.6875rem", fontWeight: 700, lineHeight: 1.5, fontVariantNumeric: "tabular-nums" }}>
         <Box component="span" sx={srOnly}>Length </Box>
@@ -75,14 +75,6 @@ function Meta({ clip, extra }: { clip: XvClip; extra?: React.ReactNode }) {
     <Box sx={metaSx}>
       <Box component="span" sx={{ display: { md: "none" }, fontWeight: 700, color: "text.primary", fontVariantNumeric: "tabular-nums" }}>
         {clock(clip.receivedAt)}
-      </Box>
-      <KindBadge kind={clip.kind} />
-      <Box component="span" sx={{ fontWeight: 600, color: "text.primary" }}>
-        {clip.district}
-      </Box>
-      {clip.topic && <span>{clip.topic}</span>}
-      <Box component="span" sx={{ overflowWrap: "anywhere" }}>
-        {clip.fileName} · {fmtSize(clip.size)}
       </Box>
       {extra}
     </Box>
@@ -121,9 +113,6 @@ function Headline({ clip, savedTitle }: { clip: XvClip; savedTitle?: string }) {
   }
   return (
     <Typography lang="hi" sx={headlineSx}>
-      <Box component="span" sx={{ color: "text.secondary", fontStyle: "italic", fontWeight: 500, mr: 0.5 }}>
-        Suggested:
-      </Box>
       {clip.suggestedHeadline ?? "No headline yet"}
     </Typography>
   );

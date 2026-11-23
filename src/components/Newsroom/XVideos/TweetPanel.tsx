@@ -6,13 +6,14 @@
 
 import React from "react";
 import { Alert, Box, Button, Checkbox, Tooltip, Typography } from "@mui/material";
-import { Ban, CalendarClock, Monitor, Save, Scissors, Star } from "lucide-react";
+import { ArrowUpRight, Ban, CalendarClock, Monitor, Save, Scissors, Star } from "lucide-react";
 import type { XvClip } from "@/data/xVideosData";
 import { X_LIMIT } from "../BreakingDesk/socialText";
 import { XV_COLORS } from "./ClipFrame";
 import { draftBrand, prefixesFor, type TagRow, type XvDraft } from "./deskState";
 import TagAdder from "./TagAdder";
-import { FIN_VIDEO_TAG, X_VIDEO_LIMITS, applyLabel, applyPrefix, checkClip, fmtClock, fmtDuration, issueLabel, labelOf, prefixOf } from "./xvTitle";
+import { srOnly } from "../BreakingDesk/shared";
+import { FIN_VIDEO_TAG, X_VIDEO_LIMITS, applyLabel, channelLabelsFor, applyPrefix, checkClip, fmtClock, fmtDuration, issueLabel, labelOf, prefixOf } from "./xvTitle";
 
 const sectSx = { display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: "0.6875rem", fontWeight: 700, letterSpacing: "0.05em", color: "text.secondary" } as const;
 const boxSx = { border: "1px solid", borderColor: "divider", borderRadius: "8px" } as const;
@@ -61,10 +62,10 @@ interface TweetPanelProps {
 
 export default function TweetPanel({ clip, draft, text, length, onPatch, onFit, onRevert, onReject, onSave, onSchedule }: TweetPanelProps) {
   const label = labelOf(draft.title);
-  const brand = draftBrand(draft);
+  const brand = draftBrand(draft, clip);
   const prefixes = prefixesFor(clip);
   const prefix = prefixOf(draft.title, prefixes);
-  const labels = Array.from(new Set(["Rajasthan News", `${clip.district} News`, "India News", ...(clip.channelLabel ? [clip.channelLabel] : [])]));
+  const labels = channelLabelsFor(clip.district, clip.region ?? null, clip.channelLabel);
   const issues = checkClip(clip, draft.trim);
   const tagLine = text.slice(draft.title.trim().length).trim();
   const over = length > X_LIMIT;
@@ -205,6 +206,8 @@ export default function TweetPanel({ clip, draft, text, length, onPatch, onFit, 
           ))}
           <TagAdder prefix="@" label="Add handle" onAdd={(v) => addTag("mentions", v)} />
         </Box>
+
+        {clip.realPost && <RealPost post={clip.realPost} />}
       </Box>
 
       <Box sx={{ borderTop: "1px solid", borderColor: "divider", px: 1.5, py: 1.25, display: "flex", gap: 0.75, flexWrap: "wrap" }}>
@@ -240,4 +243,36 @@ function SourceChip({ draft }: { draft: XvDraft }) {
     );
   if (s.kind === "typed") return <Box sx={{ ...base, backgroundColor: "transparent", borderColor: "divider", color: "text.secondary" }}>Line 1 typed by the desk</Box>;
   return <Box sx={{ ...base, backgroundColor: "transparent", borderColor: "divider", color: "text.secondary" }}>Line 1 is the suggested headline</Box>;
+}
+
+/** What @1stIndiaNews actually posted for this clip, to compare with the suggestion (reference data, read only) */
+function RealPost({ post }: { post: NonNullable<XvClip["realPost"]> }) {
+  return (
+    <Box component="section" aria-labelledby="xv-real-post" sx={{ ...boxSx, mt: 0.5, px: 1.5, py: 1.25, backgroundColor: "#F6F7F9", display: "flex", flexDirection: "column", gap: 0.75 }}>
+      <Box sx={{ display: "flex", alignItems: "baseline", gap: 1, flexWrap: "wrap" }}>
+        <Typography id="xv-real-post" component="h3" sx={{ fontSize: "0.8125rem", fontWeight: 700 }}>
+          Real post on X
+        </Typography>
+        <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
+          {post.postedIst.slice(11)} IST, {post.views.toLocaleString("en-IN")} views, {post.likes} likes
+        </Typography>
+      </Box>
+      <Typography lang="hi" sx={{ fontSize: "0.8125rem", lineHeight: 1.55, whiteSpace: "pre-line", overflowWrap: "anywhere", color: "text.primary" }}>
+        {post.caption.replace(/\n\s*\n/g, "\n")}
+      </Typography>
+      <Box
+        component="a"
+        href={post.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        sx={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 0.25, fontSize: "0.75rem", fontWeight: 600, color: "#1A5FB4", "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: 2, borderRadius: "2px" } }}
+      >
+        Open the post on X <ArrowUpRight size={13} aria-hidden />
+        <Box component="span" sx={srOnly}>
+          (opens in a new tab)
+        </Box>
+      </Box>
+      <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary" }}>Reference only: what the desk posted, to compare with the suggestion above.</Typography>
+    </Box>
+  );
 }
