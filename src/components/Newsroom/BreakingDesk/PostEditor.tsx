@@ -94,6 +94,7 @@ import { apiFileUrl, credentialsFor, errorCode, errorText, isLiveItem, useLiveDe
 import { draftCardHeadline } from "./cardWords";
 import { usePhase } from "@/lib/socia/usePhase";
 import { assemblePost } from "./phase1/Phase1Editor";
+import { hasTemplate, templateOff, templateOn, type TemplateMove } from "./templateToggle";
 import { type PostBox, type PostFormat, SERVER_HASHTAGS_MAX, SERVER_MENTIONS_MAX, checkedValues, pickerRows, readPostBox, splitPost, syncOptions, tagKey, withBody } from "./postBox";
 import { needsCheckHint, needsCheckLabel, shownNeedsCheck } from "./phase1/badges";
 import { keyHash, useBackgroundCard } from "./live/useBackgroundCard";
@@ -396,6 +397,8 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   // server assembles it (copy-posted answers with that text); the demo desk keeps its mentions-then-hashtags layout.
   const postFormat: PostFormat = live ? assemblePost : (body, tags, handles) => composePostText(body, handles, tags);
   const splitOpts = { strict: !!live };
+  // The template switch (templateToggle.ts): what turning it off moved, for this story, so turning it on puts it back
+  const [templateMove, setTemplateMove] = useState<{ id: string; move: TemplateMove } | null>(null);
   /**
    * A live story opens on the server's own assembled text, so opening saves nothing: until the box is edited
    * the server's split (`pristine.save`) is what counts, even for a draft whose body already ends in tags.
@@ -1190,6 +1193,22 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     setText(postFormat(shown.body, kind === "#" ? next : shown.hashtags, kind === "@" ? next : shown.mentions));
     if (kind === "#") setHashtags(pickerRows(options));
     else setMentions(pickerRows(options));
+  };
+
+  // Template ON: line 1 opens with the place run. OFF: no tags in front, the place on the tag line (templateToggle.ts)
+  const templateOnNow = hasTemplate(text, splitOpts);
+  const storyMove = templateMove?.id === item.id ? templateMove.move : null;
+  const canToggleTemplate = canEdit && (templateOnNow || !!storyMove);
+  const toggleTemplate = () => {
+    if (templateOnNow) {
+      const off = templateOff(text, postFormat, splitOpts);
+      if (!off) return;
+      setTemplateMove({ id: item.id, move: off.move });
+      setText(off.text);
+    } else if (storyMove) {
+      const on = templateOn(text, storyMove, postFormat, splitOpts);
+      if (on) setText(on);
+    }
   };
 
   /** Shortens the body only; the tag line stays exactly as it is */
@@ -3609,7 +3628,15 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
                 {watching ? (
                   <LiveNote at={storyLive.remote?.receivedAt ?? null} final={!!storyLive.gone} saved={storyLive.remoteLong && !storyLive.correcting} long={storyLive.remoteLong && storyLive.correcting} />
                 ) : (
-                  <Box sx={{ display: "flex", gap: 0.25 }}>
+                  <Box sx={{ display: "flex", gap: 0.25, alignItems: "center" }}>
+                    {isX && (
+                      <Tooltip title={templateOnNow ? "Template on: the place tag opens the headline. Turn off for news with no template: the place moves to the tag line." : storyMove ? "Template off: turn on to put the place tag back in front of the headline." : "This post has no place tag in front of the headline."}>
+                        <Box component="label" sx={{ display: "flex", alignItems: "center", fontSize: "0.75rem", color: "text.secondary", mr: 0.5, cursor: canToggleTemplate ? "pointer" : "default" }}>
+                          <Switch size="small" checked={templateOnNow} onChange={toggleTemplate} disabled={!canToggleTemplate} slotProps={{ input: { "aria-label": "Template" } }} />
+                          Template
+                        </Box>
+                      </Tooltip>
+                    )}
                     <Button size="small" onClick={makeCrisp} startIcon={<Scissors size={13} />} sx={{ minHeight: 30, fontSize: "0.75rem" }}>
                       Fit to 280
                     </Button>
