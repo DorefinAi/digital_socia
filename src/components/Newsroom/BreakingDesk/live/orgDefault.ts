@@ -3,13 +3,21 @@
 import type { OrgCardTemplate } from "../../../../lib/socia/types";
 
 /**
- * The desk design a story starts on: the same for every story (owner, 24 Nov 2026: no BIG Breaking / Breaking
- * split, the template is not decided by the story's tag): the Breaking default (BREAKING NEWS), else the first
- * design. The desk switches it per story (the Template tab, or the switch button by the post panel). Null without
- * org templates.
+ * The desk design a story starts on, the same for every story (owner, 24 Nov 2026): the regular BREAKING NEWS
+ * card, the square one (1080 × 1080, slug "breaking-square"), whatever the designs' "default for" settings say
+ * (on the live desk they had बड़ी ख़बर as the Breaking default). Then any square design, then the Breaking
+ * default, then the first. The desk switches it per story (the Template tab, or the switch button by the post
+ * panel). Null without org templates.
  */
+export const REGULAR_TEMPLATE_SLUG = "breaking-square";
 export function defaultOrgTemplate(org: OrgCardTemplate[]): OrgCardTemplate | null {
-  return org.find((o) => (o.defaultFor as string[]).includes("breaking")) ?? org[0] ?? null;
+  return (
+    org.find((o) => o.slug === REGULAR_TEMPLATE_SLUG) ??
+    org.find((o) => !!o.width && o.width === o.height) ??
+    org.find((o) => (o.defaultFor as string[]).includes("breaking")) ??
+    org[0] ??
+    null
+  );
 }
 
 /**
