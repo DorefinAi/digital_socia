@@ -1,15 +1,17 @@
 "use client";
 
 // The X Videos editor, full window like the X desk's: the dark top bar (← Desk, Prev (K), Next (J), See on X,
-// Copy, Copy & Mark Posted), the left rail and panel (Clips / Said in clip / On screen), the clip playing in the
-// centre with its trim bar, and the Tweet panel on the right. Keys: J/K next/prev clip, Space or L play, I/O set the
-// trim, U puts the line playing on line 1, Esc back to the desk; none of them fire while typing.
+// Copy, Copy & Mark Posted), the left rail and panel (Clips / Said in clip), the clip playing in the centre, and the
+// Tweet panel on the right. The side panels resize and fold exactly as in the X post maker (its ResizablePanels).
+// Keys: J/K next/prev clip, Space or L play, U puts the line playing on line 1, Esc back to the desk; none of them
+// fire while typing.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Box, Button, Dialog, IconButton, Menu, MenuItem, Snackbar, Tooltip, Typography } from "@mui/material";
-import { ArrowLeft, Check, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Eye, Film, Mic, MonitorPlay, X as CloseIcon } from "lucide-react";
-import type { XvClip, XvScreenText, XvTranscriptLine } from "@/data/xVideosData";
+import { Alert, Box, Button, Dialog, IconButton, Menu, MenuItem, Snackbar, Tooltip, Typography, useMediaQuery, type Theme } from "@mui/material";
+import { ArrowLeft, Check, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Eye, Film, Mic, PanelLeftClose, PanelLeftOpen, X as CloseIcon } from "lucide-react";
+import type { XvClip, XvTranscriptLine } from "@/data/xVideosData";
 import VolumeStrip from "../BreakingDesk/VolumeStrip";
+import { FoldedPanelStrip, PanelResizeHandle, type PanelsConfig, useResizablePanels } from "../BreakingDesk/ResizablePanels";
 import XPostPreview from "../BreakingDesk/phase1/XPostPreview";
 import { isTextEntryTarget } from "../BreakingDesk/video/keymap";
 import { StudioModal } from "../BreakingDesk/video/panels/StudioLauncher";
@@ -18,21 +20,32 @@ import { ClipFrame, XV_COLORS, isVertical } from "./ClipFrame";
 import ClipStage from "./ClipStage";
 import { draftBrand, initialDraft, prefixesFor, type UndoEntry, type XvDraft } from "./deskState";
 import { ReadyForXDialog, RejectClipDialog, UndoBar } from "./PostFlow";
-import { ClipsPanel, ScreenTextPanel, TranscriptPanel } from "./SourcePanels";
+import { ClipsPanel, TranscriptPanel } from "./SourcePanels";
 import TweetPanel from "./TweetPanel";
 import { useClipPlayer } from "./useClipPlayer";
 import { X_LIMIT } from "../BreakingDesk/socialText";
-import { applyLabel, applyPrefix, assembleTagBlock, composeTweet, fitTitle, labelOf, lineAt, prefixOf, tweetLength } from "./xvTitle";
+import { applyLabel, applyPrefix, assembleTagBlock, composeTweet, labelOf, lineAt, prefixOf, tweetLength } from "./xvTitle";
+
+/** Same shape as the X post maker's panels; its own key so the two desks keep their own widths */
+const EDITOR_PANELS: PanelsConfig = {
+  storageKey: "xClips.editorPanels.v1",
+  leftFixed: 60,
+  rightFolded: 36,
+  minMiddle: 420,
+  left: { initial: 292, min: 240, max: 480 },
+  right: { initial: 340, min: 300, max: 560 },
+};
+// A folded panel stays mounted (its scroll stays put) but takes no space and no focus, as in the post maker
+const foldedPanelSx = { visibility: "hidden", overflow: "hidden", p: 0, borderLeft: 0, borderRight: 0 } as const;
 
 const BAR = { bg: XV_COLORS.bar, text: "rgba(255,255,255,0.7)", border: "rgba(255,255,255,0.14)" };
 const chromeBtnSx = { color: "#fff", borderRadius: "8px", minHeight: 36, minWidth: 0, px: 1.25, fontSize: "0.8125rem", fontWeight: 600, textTransform: "none", whiteSpace: "nowrap", border: `1px solid ${BAR.border}`, gap: 0.5, flexShrink: 0, "&:hover": { backgroundColor: "rgba(255,255,255,0.1)" }, "&.Mui-disabled": { color: "rgba(255,255,255,0.35)" } } as const;
 const cmpSx = { ...chromeBtnSx, border: "2px solid #fff", borderRadius: "12px", minHeight: 41, px: 2, fontWeight: 800, fontSize: "0.875rem", backgroundColor: "#111", "&.Mui-disabled": { color: "rgba(255,255,255,0.4)", borderColor: "rgba(255,255,255,0.3)" } } as const;
 
-type SideTab = "clips" | "said" | "screen";
+type SideTab = "clips" | "said";
 const SIDE_TABS: { id: SideTab; label: string; icon: React.ReactNode }[] = [
   { id: "clips", label: "Clips", icon: <Film size={18} /> },
   { id: "said", label: "Said in clip", icon: <Mic size={18} /> },
-  { id: "screen", label: "On screen", icon: <MonitorPlay size={18} /> },
 ];
 
 /** The sentence without the Hindi full stop, for line 1 */
@@ -82,16 +95,20 @@ export default function VideoEditor(props: EditorProps) {
 /** TV cuts open on one black frame (the bulletin fade-in); the studio starts the cut just after it (25 of the 26 real clips) */
 const TV_LEAD_IN = 0.1;
 function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatch, onGo, onClose, onPost, onReject, tookOver, onTakeOver }: EditorProps & { tookOver: boolean; onTakeOver: () => void }) {
-  const [tab, setTab] = useState<SideTab>(() => (clip.transcript.length || !clip.screenText.length ? "said" : "screen"));
+  // Opens on the folder's clip list; the speech is one click away
+  const [tab, setTab] = useState<SideTab>("clips");
   const [notice, setNotice] = useState<string | null>(null);
   const [ready, setReady] = useState<{ copied: boolean; text: string } | null>(null);
   const [rejecting, setRejecting] = useState(false);
   const [preview, setPreview] = useState(false);
   const [studio, setStudio] = useState(false);
   const [scheduleAt, setScheduleAt] = useState<HTMLElement | null>(null);
-  const [pickedGrab, setPickedGrab] = useState<string | null>(null);
 
   const player = useClipPlayer(clip.src, clip.duration, draft.trim);
+  const { measure: measureWorkspace, columns: workspaceColumns, left: leftPanel, right: rightPanel } = useResizablePanels(EDITOR_PANELS);
+  const wide = useMediaQuery((t: Theme) => t.breakpoints.up("lg"));
+  const leftFolded = leftPanel.collapsed;
+  const rightFolded = wide && rightPanel.collapsed;
   const prefixes = useMemo(() => prefixesFor(clip), [clip]);
   const brand = draftBrand(draft, clip);
   const tagBlock = assembleTagBlock(
@@ -126,13 +143,6 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
     [draft.title, clip.channelLabel, prefixes, onPatch],
   );
   const pickTranscript = useCallback((line: XvTranscriptLine) => applyLine(line.text, { kind: "said", at: line.at }), [applyLine]);
-  const pickGrab = useCallback(
-    (g: XvScreenText) => {
-      setPickedGrab(g.id);
-      applyLine(g.text, { kind: "screen", at: g.at });
-    },
-    [applyLine],
-  );
 
   const copy = useCallback(async (t: string): Promise<boolean> => {
     try {
@@ -153,7 +163,6 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
     player.pause();
   };
 
-  const setTrim = useCallback((trim: { start: number; end: number }) => onPatch({ trim: { start: Math.max(0, trim.start), end: Math.min(player.duration, trim.end) } }), [onPatch, player.duration]);
 
   // Keyboard, off while typing and while a dialog is up
   useEffect(() => {
@@ -170,24 +179,16 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
       if (k === "j" && nextId) onGo(nextId);
       else if (k === "k" && prevId) onGo(prevId);
       else if (k === "l" || (e.key === " " && !onControl)) player.toggle();
-      else if (k === "i") setTrim({ start: Math.min(player.time, draft.trim.end - 1), end: draft.trim.end });
-      else if (k === "o") setTrim({ start: draft.trim.start, end: Math.max(player.time, draft.trim.start + 1) });
       else if (k === "u") {
-        if (tab === "screen") {
-          const g = [...clip.screenText].reverse().find((s) => s.at <= player.time + 0.05);
-          if (g) pickGrab(g);
-        } else if (playingLine >= 0) pickTranscript(clip.transcript[playingLine]);
+        if (playingLine >= 0) pickTranscript(clip.transcript[playingLine]);
       } else if (e.key === "Escape") onClose();
       else return;
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [anyDialog, nextId, prevId, onGo, onClose, player, draft.trim, setTrim, tab, clip, playingLine, pickGrab, pickTranscript]);
+  }, [anyDialog, nextId, prevId, onGo, onClose, player, clip, playingLine, pickTranscript]);
 
-  const frameMarkers = (clip.frames ?? []).map((f) => ({ at: f.at, label: `Frame at ${f.at.toFixed(0)} s` }));
-  const markers = tab === "screen" ? (clip.screenText.length ? clip.screenText.map((g) => ({ at: g.at, label: g.text })) : frameMarkers) : clip.transcript.filter((l) => l.worth).map((l) => ({ at: l.at, label: l.text }));
-  const trimmed = draft.trim.start > 0.05 || draft.trim.end < clip.duration - 0.05 ? draft.trim : null;
 
   return (
     <>
@@ -244,11 +245,17 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
         </Box>
         <VolumeStrip name="X" used={postedToday} cap={10000} />
 
-        {/* Body */}
-        <Box sx={{ flex: 1, minHeight: 0, display: { xs: "flex", lg: "grid" }, flexDirection: "column", gridTemplateColumns: "352px minmax(0, 1fr) 340px", overflowY: { xs: "auto", lg: "hidden" } }}>
-          {/* Rail + source panel */}
-          <Box component="section" aria-label="From the clip" sx={{ order: { xs: 3, lg: 0 }, flexShrink: 0, display: "flex", flexDirection: { xs: "column", lg: "row" }, minHeight: 0, borderRight: { lg: "1px solid" }, borderTop: { xs: "1px solid", lg: 0 }, borderColor: "divider", backgroundColor: "background.paper" }}>
-            <Box role="tablist" aria-label="Source" aria-orientation="vertical" sx={{ display: "flex", flexDirection: { xs: "row", lg: "column" }, alignItems: "center", gap: 0.75, p: { xs: 0.75, lg: "10px 4px" }, width: { lg: 52 }, flexShrink: 0, borderRight: { lg: "1px solid" }, borderBottom: { xs: "1px solid", lg: 0 }, borderColor: "divider" }}>
+        {/* Workspace */}
+        <Box ref={measureWorkspace} sx={{ position: "relative", flex: 1, minHeight: 0, display: { xs: "flex", lg: "grid" }, flexDirection: "column", gridTemplateColumns: workspaceColumns, overflowY: { xs: "auto", lg: "hidden" } }}>
+          {/* Rail */}
+          <Box sx={{ order: { xs: 3, lg: 0 }, flexShrink: 0, display: "flex", flexDirection: { xs: "row", lg: "column" }, alignItems: "center", gap: 0.75, p: { xs: 0.75, lg: "10px 4px" }, backgroundColor: "background.paper", borderRight: { lg: "1px solid" }, borderTop: { xs: "1px solid", lg: 0 }, borderColor: "divider" }}>
+            {/* Folds the panel beside the rail away; a plain button outside the tab list, as in the post maker */}
+            <Tooltip title={leftFolded ? "Show the clip panel" : "Hide the clip panel"}>
+              <IconButton aria-label={leftFolded ? "Show the clip panel" : "Hide the clip panel"} aria-expanded={!leftFolded} aria-controls="xv-editor-clip-panel" onClick={() => leftPanel.setCollapsed(!leftPanel.collapsed)} sx={{ color: "text.primary", flexShrink: 0 }}>
+                {leftFolded ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+              </IconButton>
+            </Tooltip>
+            <Box role="tablist" aria-label="Source" aria-orientation="vertical" sx={{ display: "flex", flexDirection: { xs: "row", lg: "column" }, alignItems: "center", gap: 0.75 }}>
               {SIDE_TABS.map((t) => (
                 <Box
                   key={t.id}
@@ -256,7 +263,12 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
                   type="button"
                   role="tab"
                   aria-selected={tab === t.id}
-                  onClick={() => setTab(t.id)}
+                  aria-controls="xv-editor-clip-panel"
+                  // A tab opens the panel when it is folded, as the post maker's tools do
+                  onClick={() => {
+                    setTab(t.id);
+                    if (leftPanel.collapsed) leftPanel.setCollapsed(false);
+                  }}
                   sx={{ width: { xs: "auto", lg: 44 }, px: { xs: 1.25, lg: 0 }, py: 0.875, display: "flex", flexDirection: { xs: "row", lg: "column" }, alignItems: "center", gap: 0.5, border: 0, borderRadius: "8px", font: "inherit", fontSize: "0.625rem", fontWeight: 600, lineHeight: 1.1, textAlign: "center", cursor: "pointer", backgroundColor: tab === t.id ? "#ECEEF0" : "transparent", color: tab === t.id ? "text.primary" : "text.secondary", "&:hover": { color: "text.primary" }, "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main" } }}
                 >
                   {t.icon}
@@ -264,22 +276,12 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
                 </Box>
               ))}
             </Box>
-            <Box role="tabpanel" sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0, height: { xs: 440, lg: "auto" } }}>
-              {tab === "said" && <TranscriptPanel clip={clip} playing={playingLine} usedAt={draft.source.kind === "said" ? draft.source.at : null} onSeek={player.seek} onUse={pickTranscript} />}
-              {tab === "screen" && (
-                <ScreenTextPanel
-                  clip={clip}
-                  time={player.time}
-                  usedId={draft.source.kind === "screen" ? (clip.screenText.find((g) => draft.source.kind === "screen" && g.at === draft.source.at)?.id ?? null) : null}
-                  onSeek={(t) => {
-                    player.seek(t);
-                    setPickedGrab(clip.screenText.find((g) => g.at === t)?.id ?? null);
-                  }}
-                  onUse={pickGrab}
-                />
-              )}
-              {tab === "clips" && <ClipsPanel clips={navClips} currentId={clip.id} onPick={onGo} />}
-            </Box>
+          </Box>
+
+          {/* Clip panel */}
+          <Box id="xv-editor-clip-panel" role="tabpanel" component="section" aria-label="From the clip" sx={{ order: { xs: 4, lg: 0 }, flexShrink: 0, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", height: { xs: 440, lg: "auto" }, backgroundColor: "background.paper", borderRight: { lg: "1px solid" }, borderColor: "divider", ...(leftFolded && (wide ? foldedPanelSx : { display: "none" })) }}>
+            {tab === "said" && <TranscriptPanel clip={clip} playing={playingLine} usedAt={draft.source.kind === "said" ? draft.source.at : null} onSeek={player.seek} onUse={pickTranscript} />}
+            {tab === "clips" && <ClipsPanel clips={navClips} currentId={clip.id} onPick={onGo} />}
           </Box>
 
           {/* Stage */}
@@ -305,12 +307,6 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
             <ClipStage
               clip={clip}
               player={player}
-              trim={draft.trim}
-              onTrim={setTrim}
-              markers={markers}
-              markerColor={tab === "screen" ? XV_COLORS.ocr : XV_COLORS.said}
-              showBoxes={tab === "screen"}
-              pickedGrab={tab === "screen" ? pickedGrab : null}
               onOpenStudio={() => {
                 player.pause();
                 setStudio(true);
@@ -319,15 +315,14 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
           </Box>
 
           {/* Tweet */}
-          <Box component="section" aria-label="Tweet" sx={{ order: { xs: 2, lg: 0 }, flexShrink: 0, minHeight: 0, borderLeft: { lg: "1px solid" }, borderColor: "divider", backgroundColor: "background.paper" }}>
+          <Box id="xv-editor-tweet-panel" component="section" aria-label="Tweet" sx={{ order: { xs: 2, lg: 0 }, flexShrink: 0, minWidth: 0, minHeight: 0, borderLeft: { lg: "1px solid" }, borderColor: "divider", backgroundColor: "background.paper", ...(rightFolded && foldedPanelSx) }}>
             <TweetPanel
               clip={clip}
               draft={draft}
               text={text}
               length={length}
               onPatch={onPatch}
-              onFit={() => onPatch({ title: fitTitle(draft.title, tagBlock) })}
-              onRevert={() => onPatch({ ...initialDraft(clip), trim: draft.trim })}
+              onRevert={() => onPatch(initialDraft(clip))}
               onReject={() => setRejecting(true)}
               onSave={() => {
                 onPatch({ savedAt: new Date().toISOString() });
@@ -336,6 +331,15 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
               onSchedule={setScheduleAt}
             />
           </Box>
+
+          {/* Panel edges: drag to resize, buttons to fold (desktop only); the post maker's own controls */}
+          {wide && (
+            <>
+              <PanelResizeHandle panel={leftPanel} offset={EDITOR_PANELS.leftFixed + leftPanel.width} label="clip panel" controls="xv-editor-clip-panel" />
+              {!rightPanel.collapsed && <PanelResizeHandle panel={rightPanel} offset={rightPanel.width} label="tweet panel" controls="xv-editor-tweet-panel" />}
+              <FoldedPanelStrip panel={rightPanel} label="tweet panel" title={`Tweet · ${length}/${X_LIMIT}`} controls="xv-editor-tweet-panel" />
+            </>
+          )}
         </Box>
       </Box>
 
@@ -383,7 +387,6 @@ function EditorBody({ clip, draft, navClips, prevId, nextId, postedToday, onPatc
         clip={clip}
         text={ready?.text ?? text}
         copied={!!ready?.copied}
-        trimmed={trimmed}
         hasNext={!!nextId}
         onCopyAgain={async () => {
           const ok = await copy(ready?.text ?? text);

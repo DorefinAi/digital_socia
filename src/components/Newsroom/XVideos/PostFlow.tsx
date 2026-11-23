@@ -28,7 +28,6 @@ interface ReadyProps {
   text: string;
   /** The clipboard took the text (false: the browser blocked it, copy by hand) */
   copied: boolean;
-  trimmed: { start: number; end: number } | null;
   hasNext: boolean;
   onCopyAgain: () => void;
   onNext: () => void;
@@ -36,7 +35,7 @@ interface ReadyProps {
 }
 
 /** Screen 4: after Copy & Mark Posted, the steps left to do by hand */
-export function ReadyForXDialog({ open, clip, text, copied, trimmed, hasNext, onCopyAgain, onNext, onDone }: ReadyProps) {
+export function ReadyForXDialog({ open, clip, text, copied, hasNext, onCopyAgain, onNext, onDone }: ReadyProps) {
   const [saved, setSaved] = useState(false);
   return (
     <Dialog open={open} onClose={onDone} maxWidth="sm" fullWidth aria-labelledby="xv-ready-title" slotProps={{ paper: { sx: { borderRadius: "14px", backgroundImage: "none" } } }}>
@@ -66,7 +65,6 @@ export function ReadyForXDialog({ open, clip, text, copied, trimmed, hasNext, on
             <Typography sx={{ fontWeight: 700, fontSize: "0.875rem" }}>{saved ? "Video saved" : "Save the video"}</Typography>
             <Typography sx={{ mt: 0.25, fontSize: "0.75rem", color: "text.secondary", overflowWrap: "anywhere" }}>
               {clip.fileName} · {fmtDuration(clip.duration)} · {fmtSize(clip.size)}, as filed (no re-encode)
-              {trimmed ? `. The trim (${fmtDuration(trimmed.start)}–${fmtDuration(trimmed.end)}) is not applied in this demo; use Open in Video Studio to export a cut.` : ""}
             </Typography>
           </Box>
           <Button size="small" variant="outlined" component="a" href={clip.src} download={clip.fileName} onClick={() => setSaved(true)} startIcon={<Download size={13} />} sx={smBtnSx}>

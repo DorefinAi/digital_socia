@@ -1,7 +1,7 @@
 "use client";
 
-// The editor's playback: an HTML5 <video> when the clip's file is there; when it is missing, a stand-in clock that
-// runs at the playback rate, so the transcript, frame grabs and trim still follow "playback" on the demo.
+// The editor's playback: an HTML5 <video> when the clip's file is there; when it is missing, a stand-in clock, so
+// the transcript still follows "playback" on the demo.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -17,6 +17,8 @@ export interface ClipPlayer {
   pause: () => void;
   toggle: () => void;
   seek: (t: number) => void;
+  /** Jump by `by` seconds from where the video really is (quick repeated taps add up) */
+  skip: (by: number) => void;
   setRate: (r: number) => void;
   /** Wire these to the <video> */
   videoProps: Record<"onTimeUpdate" | "onPlay" | "onPause" | "onError" | "onLoadedMetadata", (e: React.SyntheticEvent<HTMLVideoElement>) => void>;
@@ -74,6 +76,16 @@ export function useClipPlayer(src: string, knownDuration: number, range: { start
     [duration, missing],
   );
 
+  const skip = useCallback(
+    (by: number) => {
+      const v = videoRef.current;
+      const from = v && !missing ? v.currentTime : timeRef.current;
+      timeRef.current = Math.max(0, Math.min(from + by, duration));
+      seek(timeRef.current);
+    },
+    [seek, missing, duration],
+  );
+
   const play = useCallback(() => {
     const { start, end } = rangeRef.current;
     const v = videoRef.current;
@@ -117,7 +129,14 @@ export function useClipPlayer(src: string, knownDuration: number, range: { start
       }
       setTime(v.currentTime);
     },
-    onPlay: (e: React.SyntheticEvent<HTMLVideoElement>) => current(e) && setPlaying(true),
+    onPlay: (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      const v = current(e);
+      if (!v) return;
+      // Played again from the end (the video's own button or Space): start over, or timeupdate would stop it at once
+      const { start, end } = rangeRef.current;
+      if (v.currentTime >= end - 0.1) v.currentTime = start;
+      setPlaying(true);
+    },
     onPause: (e: React.SyntheticEvent<HTMLVideoElement>) => current(e) && setPlaying(false),
     onError: (e: React.SyntheticEvent<HTMLVideoElement>) => {
       if (e.currentTarget.getAttribute("src") !== src) return;
@@ -128,9 +147,10 @@ export function useClipPlayer(src: string, knownDuration: number, range: { start
       const v = current(e);
       if (!v) return;
       if (Number.isFinite(v.duration) && v.duration > 0) setDuration(v.duration);
-      v.currentTime = time;
+      // Any seek hides the poster for the clip's first frame, which is black on TV cuts, so only seek when needed
+      if (time > 0) v.currentTime = time;
     },
   };
 
-  return { attach, time, duration, playing, missing, rate, play, pause, toggle, seek, setRate, videoProps };
+  return { attach, time, duration, playing, missing, rate, play, pause, toggle, seek, skip, setRate, videoProps };
 }

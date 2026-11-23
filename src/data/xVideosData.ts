@@ -61,6 +61,10 @@ export interface XvClip {
   /** What the clip is about, in the desk's words ("CM press conference") */
   topic?: string;
   receivedAt: string;
+  /** Where the file sits on the share, folder by folder under the month folder: ["21-11-2026", "3 pm convert"] */
+  folder: string[];
+  /** The file's name on the share as the desk saved it; often messy ("x...jodhpur(0).mp4", a full title, "csmp4") */
+  shareName: string;
   /** Seconds */
   duration: number;
   /** Bytes */
@@ -97,8 +101,6 @@ export interface XvClip {
   postedAt?: string;
   postedText?: string;
   rejectedReason?: string;
-  /** The real post on X this demo clip was taken from (reference: what the desk actually posted) */
-  realPost?: { url: string; views: number; likes: number; title: string; caption: string; postedIst: string };
 }
 
 interface RealClip {
@@ -141,10 +143,38 @@ const REJECTED: Record<string, string> = { "2124053303436992512": "Feature story
 const READING: Record<string, number> = { "2124091448337608704": 45 };
 const HELD: Record<string, string> = { "2124088850247213056": "Rohit" };
 
+/**
+ * The shift folder a clip lands in on the share, from its time: the desk saves into "Convert morning…", "3 pm
+ * convert" and "Unconvert" folders under each day (folder names as they are on the share, typos and dashes included)
+ */
+function shiftFolder(postedIst: string): string {
+  const hm = postedIst.slice(11, 16);
+  if (hm < "14:30") return "Convert morning to-------";
+  if (hm < "16:00") return "3 pm convert";
+  return "Unconvert";
+}
+
+const X_MARKS = ["x...", "X....", "x..........", "x.."];
+/** Characters Windows does not allow in a file name; the desk drops them (a " | " becomes two spaces) */
+const unsafe = (title: string) => title.replace(/\s*\|\s*/g, "  ").replace(/[\\/:*?"<>]/g, "").trim();
+
+/**
+ * A share-style name for demo clip `i` (posting order): an X mark the desk types when it picks a clip ("x...done..."
+ * once posted), then either the YouTube title or just the place, numbered "(0)" when the place repeats
+ */
+function shareNameFor(r: RealClip, i: number, posted: boolean, seen: Map<string, number>): string {
+  const mark = X_MARKS[i % X_MARKS.length] + (posted ? "done..." : "");
+  if (i % 3 !== 1) return `${mark}${unsafe(r.postedTitle)}.mp4`;
+  const place = r.place.toLowerCase();
+  const n = seen.get(place) ?? -1;
+  seen.set(place, n + 1);
+  return `${mark}${place}${n >= 0 ? `(${n})` : ""}.mp4`;
+}
+
 /** Minutes between two "2026-11-21 13:36" stamps */
 const minutesBetween = (a: string, b: string) => (Date.parse(b.replace(" ", "T")) - Date.parse(a.replace(" ", "T"))) / 60_000;
 
-function toClip(r: RealClip, latest: string, now: number): XvClip {
+function toClip(r: RealClip, latest: string, now: number, shareName: string): XvClip {
   // Received times keep the real posting order and gaps, the newest just now
   const receivedMs = now - (minutesBetween(r.postedIst, latest) + 0.5) * 60_000;
   const at = (ms: number) => new Date(ms).toISOString();
@@ -160,6 +190,8 @@ function toClip(r: RealClip, latest: string, now: number): XvClip {
     region: r.region === "india" ? "india" : "rajasthan",
     topic: vertical ? "Digital short, vertical" : undefined,
     receivedAt: at(receivedMs),
+    folder: [`${r.postedIst.slice(8, 10)}-${r.postedIst.slice(5, 7)}-${r.postedIst.slice(0, 4)}`, shiftFolder(r.postedIst)],
+    shareName,
     duration: r.durationS,
     size: Math.round(r.sizeMb * 1024 * 1024),
     width: r.width,
@@ -182,14 +214,15 @@ function toClip(r: RealClip, latest: string, now: number): XvClip {
     postedAt: posted ? at(receivedMs + 3 * 60_000) : undefined,
     postedText: posted ? r.postedCaption : undefined,
     rejectedReason: REJECTED[r.id],
-    realPost: { url: r.postUrl, views: r.views, likes: r.likes, title: r.postedTitle, caption: r.postedCaption, postedIst: r.postedIst },
   };
 }
 
 /** The demo clips, newest first, with received times relative to `now` so the list reads "just now", "9 min ago"… */
 export function xVideoClips(now = Date.now()): XvClip[] {
   const latest = REAL.reduce((m, r) => (r.postedIst > m ? r.postedIst : m), "");
-  return REAL.map((r) => toClip(r, latest, now)).sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+  const seen = new Map<string, number>();
+  const byTime = [...REAL].sort((a, b) => a.postedIst.localeCompare(b.postedIst));
+  return byTime.map((r, i) => toClip(r, latest, now, shareNameFor(r, i, POSTED.has(r.id), seen))).sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
 }
 
 /** Clips posted today before the demo's own (the "Posted today" card adds the desk's posts to this) */

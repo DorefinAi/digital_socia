@@ -29,9 +29,7 @@ export const isVertical = (clip: { width?: number; height?: number }) => !!clip.
 export const XV_COLORS = {
   live: "#D90429",
   clip: "#6D28D9",
-  ocr: "#22D3EE",
   said: "#1A5FB4",
-  trim: "#FFD400",
   bar: "#0E0E10",
   tile: "#FFF6CC",
   orange: "#E8710A",
@@ -111,30 +109,3 @@ export function LiveBug({ size = "0.6875rem" }: { size?: string }) {
   );
 }
 
-/** Text read from the frame, drawn where it sits (on the placeholder only: a real video already shows it) */
-export function ScreenTextOverlay({ text, box, kind, showText, boxed }: { text: string; box: { x: number; y: number; w: number; h: number }; kind: "super" | "ticker" | "strap"; showText: boolean; boxed: boolean }) {
-  return (
-    <Box aria-hidden sx={{ position: "absolute", left: `${box.x}%`, top: `${box.y}%`, width: `${box.w}%`, height: `${box.h}%`, containerType: "size" }}>
-      {showText && (
-        <Box
-          lang="hi"
-          sx={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            alignItems: "center",
-            px: "1.2%",
-            overflow: "hidden",
-            whiteSpace: "nowrap",
-            fontWeight: 700,
-            fontSize: "55cqh",
-            ...(kind === "ticker" ? { backgroundColor: "#FFD60A", color: "#111" } : { backgroundColor: "#C1121F", color: "#fff", borderLeft: "0.4em solid #FFD60A" }),
-          }}
-        >
-          {text}
-        </Box>
-      )}
-      {boxed && <Box sx={{ position: "absolute", inset: -3, border: `2px solid ${XV_COLORS.ocr}`, borderRadius: "3px" }} />}
-    </Box>
-  );
-}

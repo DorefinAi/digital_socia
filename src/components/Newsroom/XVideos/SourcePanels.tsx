@@ -1,19 +1,31 @@
 "use client";
 
-// The editor's left panel: what is said in the clip (timed transcript), what is shown on screen (frame grabs with
-// the text read from them), and the other clips in the list. A click jumps the player there; ★ puts the line on
-// line 1 of the tweet.
+// The editor's left panel: what is said in the clip (timed transcript) and the other clips. A click on a line jumps
+// the player there; ★ puts the line on line 1 of the tweet. The clips show as the share's own folder tree (day, then shift folder), like a code editor's
+// file explorer, because the desk's file names and folders are not consistent enough to read as a flat list.
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, Typography } from "@mui/material";
-import { LayoutGrid, Star } from "lucide-react";
-import type { XvClip, XvScreenText, XvTranscriptLine } from "@/data/xVideosData";
-import { ClipFrame, ScreenTextOverlay, XV_COLORS, isVertical } from "./ClipFrame";
+import { ChevronDown, ChevronRight, FileVideo, Folder, FolderOpen, Star } from "lucide-react";
+import type { XvClip, XvTranscriptLine } from "@/data/xVideosData";
+import { XV_COLORS } from "./ClipFrame";
 import { fmtClock } from "./xvTitle";
 
 const headSx = { px: 1.5, pt: 1.25, pb: 1, display: "flex", flexDirection: "column", gap: 1, borderBottom: "1px solid", borderColor: "divider" } as const;
 const hintSx = { fontSize: "0.75rem", color: "text.secondary", lineHeight: 1.4 } as const;
 const starSx = { flexShrink: 0, minWidth: 0, minHeight: 24, px: 0.75, py: 0, borderRadius: "6px", fontSize: "0.6875rem", fontWeight: 700, textTransform: "none", color: "text.primary", borderColor: "divider", backgroundColor: "background.paper", gap: 0.4, whiteSpace: "nowrap" } as const;
+
+/**
+ * Scrolls `el` into view inside `list` only. scrollIntoView would also scroll the page, which on a phone (panels
+ * stacked under the video) pushes the video off screen on every line change.
+ */
+function keepInView(list: HTMLElement | null, el: HTMLElement | null) {
+  if (!list || !el) return;
+  const box = list.getBoundingClientRect();
+  const row = el.getBoundingClientRect();
+  if (row.top < box.top) list.scrollTop -= box.top - row.top;
+  else if (row.bottom > box.bottom) list.scrollTop += row.bottom - box.bottom;
+}
 
 function PanelHead({ title, aside, hint, children }: { title: string; aside: string; hint: string; children?: React.ReactNode }) {
   return (
@@ -79,8 +91,7 @@ export function TranscriptPanel({ clip, playing, usedAt, onSeek, onUse }: Transc
   // The playing line stays in view
   useEffect(() => {
     if (playing < 0) return;
-    const el = listRef.current?.querySelector<HTMLElement>(`[data-line="${playing}"]`);
-    el?.scrollIntoView({ block: "nearest" });
+    keepInView(listRef.current, listRef.current?.querySelector<HTMLElement>(`[data-line="${playing}"]`) ?? null);
   }, [playing]);
 
   return (
@@ -136,140 +147,131 @@ export function TranscriptPanel({ clip, playing, usedAt, onSeek, onUse }: Transc
   );
 }
 
-interface ScreenProps {
-  clip: XvClip;
-  time: number;
-  usedId: string | null;
-  onSeek: (t: number) => void;
-  onUse: (g: XvScreenText) => void;
+/** A folder on the share, with its sub-folders and clips */
+interface FolderNode {
+  name: string;
+  /** "21-11-2026/3 pm convert", the key for collapsing */
+  path: string;
+  folders: FolderNode[];
+  files: XvClip[];
 }
 
-const FRAME_WHERE = { first: "Start", mid: "Middle", last: "End" } as const;
+/** Clips grouped by their folder on the share; folders and files sorted by name, as a file explorer does */
+function folderTree(clips: XvClip[]): FolderNode {
+  const root: FolderNode = { name: "", path: "", folders: [], files: [] };
+  for (const c of clips) {
+    let node = root;
+    for (const part of c.folder) {
+      const path = node.path ? `${node.path}/${part}` : part;
+      let next = node.folders.find((f) => f.name === part);
+      if (!next) {
+        next = { name: part, path, folders: [], files: [] };
+        node.folders.push(next);
+      }
+      node = next;
+    }
+    node.files.push(c);
+  }
+  const byName = (a: string, b: string) => a.localeCompare(b, "en", { numeric: true, sensitivity: "base" });
+  const sort = (n: FolderNode) => {
+    n.folders.sort((a, b) => byName(a.name, b.name));
+    n.files.sort((a, b) => byName(nameOf(a), nameOf(b)));
+    n.folders.forEach(sort);
+  };
+  sort(root);
+  return root;
+}
 
-/**
- * The stills taken from a clip whose on-screen text is not read yet (text recognition is the backend phase): a
- * click jumps there. On a TV cut the text to read is the red headline bar and the BREAKING NEWS box, both of which
- * rotate through 3-4 lines of the story; a vertical digital short has word captions instead.
- */
-function FrameGrabs({ clip, time, onSeek }: { clip: XvClip; time: number; onSeek: (t: number) => void }) {
-  const [sheet, setSheet] = useState(false);
-  const frames = clip.frames ?? [];
-  const vertical = isVertical(clip);
-  const reads = vertical ? "word captions" : "headline bar / breaking box";
-  return (
-    <>
-      {frames.map((f) => {
-        const showing = Math.abs(time - f.at) < 1;
+/** The name on the share, or the file name for a clip that has none */
+const nameOf = (c: XvClip) => c.shareName ?? c.fileName;
+/** The clips in the order the tree draws them (folders first, then files, by name), for J / K */
+export function treeOrder(clips: XvClip[]): XvClip[] {
+  const out: XvClip[] = [];
+  const walk = (n: FolderNode) => {
+    n.folders.forEach(walk);
+    out.push(...n.files);
+  };
+  walk(folderTree(clips));
+  return out;
+}
+
+const countFiles = (n: FolderNode): number => n.files.length + n.folders.reduce((sum, f) => sum + countFiles(f), 0);
+const ROW_H = 26;
+const INDENT = 14;
+const rowSx = { width: "100%", height: ROW_H, display: "flex", alignItems: "center", gap: 0.5, pr: 1, border: 0, background: "none", font: "inherit", fontSize: "0.8125rem", color: "inherit", textAlign: "left", cursor: "pointer", whiteSpace: "nowrap", "&:hover": { backgroundColor: "action.hover" }, "&:focus-visible": { outline: "1px solid", outlineColor: "primary.main", outlineOffset: -1 } } as const;
+
+export function ClipsPanel({ clips, currentId, onPick }: { clips: XvClip[]; currentId: string; onPick: (id: string) => void }) {
+  // Rebuilt only when the list changes, not on every tick of the player
+  const root = useMemo(() => folderTree(clips), [clips]);
+  const navRef = useRef<HTMLDivElement>(null);
+  const [closed, setClosed] = useState<Set<string>>(() => new Set());
+  const currentRef = useRef<HTMLButtonElement>(null);
+  // The panel is rebuilt for each clip (the editor body is keyed by clip), so folders start open and the open clip's
+  // row is always there to scroll to
+  useEffect(() => {
+    keepInView(navRef.current, currentRef.current);
+  }, [currentId]);
+  const flip = (path: string) =>
+    setClosed((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+
+  const renderFolder = (node: FolderNode, depth: number): React.ReactNode => {
+    const open = !closed.has(node.path);
+    return (
+      <Box component="li" key={node.path} sx={{ listStyle: "none" }}>
+        <Box component="button" type="button" onClick={() => flip(node.path)} aria-expanded={open} title={node.path} sx={{ ...rowSx, pl: `${4 + depth * INDENT}px`, fontWeight: 600 }}>
+          {open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+          {open ? <FolderOpen size={15} color="#C09553" aria-hidden /> : <Folder size={15} color="#C09553" aria-hidden />}
+          <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+            {node.name}
+          </Box>
+          <Box component="span" sx={{ ml: "auto", pl: 1, fontSize: "0.6875rem", fontWeight: 400, color: "text.secondary" }}>
+            {countFiles(node)}
+          </Box>
+        </Box>
+        {open && renderChildren(node, depth + 1)}
+      </Box>
+    );
+  };
+
+  const renderChildren = (node: FolderNode, depth: number) => (
+    // The vertical guide line under an open folder, as in a code editor's explorer
+    <Box component="ul" sx={{ m: 0, p: 0, position: "relative", "&::before": depth > 0 ? { content: '""', position: "absolute", top: 0, bottom: 0, left: `${11 + (depth - 1) * INDENT}px`, borderLeft: "1px solid", borderColor: "divider" } : undefined }}>
+      {node.folders.map((f) => renderFolder(f, depth))}
+      {node.files.map((c) => {
+        const current = c.id === currentId;
         return (
-          <Box key={f.where} role="listitem" sx={{ p: 0.75, borderRadius: "8px", border: "1px solid", borderColor: "divider", backgroundColor: "background.paper" }}>
-            <Box component="button" type="button" onClick={() => onSeek(f.at)} aria-label={`Jump to ${fmtClock(f.at)}`} sx={{ display: "block", width: "100%", p: 0, border: 0, background: "none", cursor: "pointer", "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: 2 } }}>
-              <ClipFrame id={clip.id} src={clip.src} fileName={clip.fileName} image={f.src} sx={{ borderRadius: "5px" }} />
-            </Box>
-            <Box sx={{ display: "flex", gap: 1, alignItems: "baseline", mt: 0.75 }}>
-              <Box component="span" sx={{ flexShrink: 0, fontFamily: "var(--font-mono), Consolas, monospace", fontSize: "0.6875rem", color: showing ? XV_COLORS.said : "text.secondary", fontWeight: showing ? 700 : 400 }}>
-                {fmtClock(f.at)}
+          <Box component="li" key={c.id} sx={{ listStyle: "none" }}>
+            <Box
+              component="button"
+              type="button"
+              ref={current ? currentRef : undefined}
+              onClick={() => onPick(c.id)}
+              aria-current={current ? "true" : undefined}
+              title={`${nameOf(c)}
+${c.headline ?? c.suggestedHeadline ?? ""}`.trim()}
+              sx={{ ...rowSx, pl: `${4 + depth * INDENT + 14}px`, backgroundColor: current ? "rgba(26,95,180,0.12)" : "transparent", fontWeight: current ? 600 : 400 }}
+            >
+              <FileVideo size={14} color="#7A5AF8" aria-hidden style={{ flexShrink: 0 }} />
+              <Box component="span" lang="hi" sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                {nameOf(c)}
               </Box>
-              <Typography sx={{ flex: 1, minWidth: 0, fontSize: "0.75rem", lineHeight: 1.45 }}>
-                <Box component="span" sx={{ fontWeight: 700 }}>
-                  {FRAME_WHERE[f.where]}
-                </Box>
-                <Box component="span" sx={{ color: "text.secondary" }}>
-                  {" "}
-                  · {reads} (text not read yet)
-                </Box>
-              </Typography>
             </Box>
           </Box>
         );
       })}
-      {clip.contactSheet && (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
-          <Button size="small" variant="outlined" onClick={() => setSheet((s) => !s)} aria-expanded={sheet} startIcon={<LayoutGrid size={14} aria-hidden />} sx={{ alignSelf: "flex-start", minHeight: 32, borderRadius: "8px", textTransform: "none", fontWeight: 600, fontSize: "0.75rem", color: "text.primary", borderColor: "divider" }}>
-            {sheet ? "Hide all frames" : "See all frames"}
-          </Button>
-          {sheet && <SheetImage src={clip.contactSheet} alt={`12 frames from ${clip.fileName}, evenly spaced, in a 4 by 3 grid`} />}
-        </Box>
-      )}
-    </>
+    </Box>
   );
-}
 
-function SheetImage({ src, alt }: { src: string; alt: string }) {
-  const [failed, setFailed] = useState(false);
-  if (failed) return <Empty text="The frames sheet is not in public/xvideos-demo/real-frames/ on this machine." />;
-  return <Box component="img" src={src} alt={alt} loading="lazy" onError={() => setFailed(true)} sx={{ display: "block", width: "100%", height: "auto", borderRadius: "6px", border: "1px solid", borderColor: "divider" }} />;
-}
-
-export function ScreenTextPanel({ clip, time, usedId, onSeek, onUse }: ScreenProps) {
-  const unread = clip.screenText.length === 0 && (clip.frames?.length ?? 0) > 0;
   return (
     <>
-      <PanelHead
-        title="On screen"
-        aside={unread ? `${clip.frames?.length} frames, text not read yet` : `${clip.screenText.length} found`}
-        hint={
-          unread
-            ? isVertical(clip)
-              ? "Stills from the start, middle and end. The word captions on them will be read here, then ★ puts one on line 1."
-              : "Stills from the start, middle and end. The red headline bar and the BREAKING NEWS box rotate through 3–4 lines of the story; once read, each line shows here and ★ puts it on line 1."
-            : "Text read from the frames: supers, tickers, name straps. ★ puts it on line 1."
-        }
-      />
-      <Box role="list" aria-label={unread ? "Frames from the clip" : "Text read from the screen"} sx={{ flex: 1, minHeight: 0, overflowY: "auto", p: 1, display: "flex", flexDirection: "column", gap: 1 }}>
-        {clip.readingProgress !== undefined && <Empty text={`Reading the clip… ${clip.readingProgress}%. Supers and tickers will show here.`} />}
-        {unread && <FrameGrabs clip={clip} time={time} onSeek={onSeek} />}
-        {clip.readingProgress === undefined && clip.screenText.length === 0 && !unread && <Empty text="No text was read from the frames of this clip." />}
-        {clip.screenText.map((g) => {
-          const used = usedId === g.id;
-          const showing = time >= g.at && time < g.at + 6;
-          return (
-            <Box key={g.id} role="listitem" sx={{ p: 0.75, borderRadius: "8px", border: "1px solid", borderColor: used ? "#000" : "divider", outline: used ? "1px solid #000" : "none", backgroundColor: used ? XV_COLORS.tile : "background.paper" }}>
-              <Box component="button" type="button" onClick={() => onSeek(g.at)} aria-label={`Jump to ${fmtClock(g.at)}`} sx={{ display: "block", width: "100%", p: 0, border: 0, background: "none", cursor: "pointer", "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: 2 } }}>
-                <ClipFrame id={clip.id} src={clip.src} fileName={clip.fileName} at={g.at + 0.5} sx={{ borderRadius: "5px" }}>
-                  <ScreenTextOverlay text={g.text} box={g.box} kind={g.kind} showText boxed />
-                </ClipFrame>
-              </Box>
-              <Box sx={{ display: "flex", gap: 1, alignItems: "flex-start", mt: 0.75 }}>
-                <Box component="span" sx={{ flexShrink: 0, pt: "2px", fontFamily: "var(--font-mono), Consolas, monospace", fontSize: "0.6875rem", color: showing ? XV_COLORS.said : "text.secondary", fontWeight: showing ? 700 : 400 }}>
-                  {fmtClock(g.at)}
-                </Box>
-                <Typography lang="hi" sx={{ flex: 1, minWidth: 0, fontSize: "0.8125rem", fontWeight: 700, lineHeight: 1.45 }}>
-                  {g.text}
-                </Typography>
-                <StarButton on={used} onClick={() => onUse(g)} label={g.text} />
-              </Box>
-            </Box>
-          );
-        })}
-      </Box>
-    </>
-  );
-}
-
-/** The other clips in the list, to jump to without going back to the desk */
-export function ClipsPanel({ clips, currentId, onPick }: { clips: XvClip[]; currentId: string; onPick: (id: string) => void }) {
-  return (
-    <>
-      <PanelHead title="Clips" aside={`${clips.length} in the list`} hint="J and K move to the next and previous clip." />
-      <Box role="list" aria-label="Clips" sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-        {clips.map((c) => (
-          <Box
-            key={c.id}
-            role="listitem"
-            component="button"
-            type="button"
-            onClick={() => onPick(c.id)}
-            aria-current={c.id === currentId ? "true" : undefined}
-            sx={{ width: "100%", display: "flex", gap: 1, p: 1, border: 0, borderBottom: "1px solid", borderColor: "divider", background: c.id === currentId ? "rgba(0,0,0,0.06)" : "none", textAlign: "left", font: "inherit", color: "inherit", cursor: "pointer", "&:hover": { backgroundColor: "action.hover" }, "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: -2 } }}
-          >
-            <ClipFrame id={c.id} src={c.src} fileName={c.fileName} image={c.poster} sx={{ width: 72, borderRadius: "4px", flexShrink: 0 }} />
-            <Box sx={{ minWidth: 0 }}>
-              <Typography lang="hi" sx={{ fontSize: "0.75rem", fontWeight: 600, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                {c.headline ?? c.suggestedHeadline ?? c.fileName}
-              </Typography>
-            </Box>
-          </Box>
-        ))}
+      <PanelHead title="Clips" aside={`${clips.length} in the folder`} hint="As saved on the share. J and K move to the next and previous clip." />
+      <Box ref={navRef} role="navigation" aria-label="Clip folders" sx={{ flex: 1, minHeight: 0, overflow: "auto", py: 0.5 }}>
+        {renderChildren(root, 0)}
       </Box>
     </>
   );

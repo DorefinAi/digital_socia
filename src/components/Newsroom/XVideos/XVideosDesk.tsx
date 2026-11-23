@@ -14,6 +14,7 @@ import { isTextEntryTarget } from "../BreakingDesk/video/keymap";
 import { XV_COLORS } from "./ClipFrame";
 import { deskReducer, draftOf, type DeskState } from "./deskState";
 import { RejectClipDialog, UndoBar } from "./PostFlow";
+import { treeOrder } from "./SourcePanels";
 import VideoEditor from "./VideoEditor";
 import { VideoPostedList, VideoQueueList, VideoRejectedList, xvRowId } from "./VideoQueue";
 import { checkClip } from "./xvTitle";
@@ -156,7 +157,8 @@ function Desk() {
 
   const editorClip = open ? byId.get(open.id) : undefined;
   // Prev/Next skip clips that left New (posted or rejected), except the one open
-  const navClips = useMemo(() => (open ? open.nav.map((id) => byId.get(id)).filter((c): c is XvClip => !!c && (c.status === "new" || c.id === open.id)) : []), [open, byId]);
+  // In the Clips tree's order, so J / K go down the list the editor sees
+  const navClips = useMemo(() => (open ? treeOrder(open.nav.map((id) => byId.get(id)).filter((c): c is XvClip => !!c && (c.status === "new" || c.id === open.id))) : []), [open, byId]);
   const navIndex = editorClip ? navClips.findIndex((c) => c.id === editorClip.id) : -1;
 
   const onUndo = useCallback((id: string) => dispatch({ type: "clip/undo", id }), []);
@@ -405,7 +407,6 @@ const KEYS: [string, string][] = [
   ["Enter", "Open the selected clip"],
   ["R", "Reject the selected clip"],
   ["Space / L", "Play or pause (editor)"],
-  ["I / O", "Set the clip's start / end at the playhead"],
   ["U", "Put the line playing on line 1 of the tweet"],
   ["Esc", "Back to the desk"],
 ];

@@ -8,6 +8,33 @@ Ground rule: the live desk (fin.sociaai.in, `frontend` on main, port 3006) and i
 
 ---
 
+## 0. Where the clips come from (checked 24 Nov 2026)
+
+The desk's video exports land on the office share, one folder per day and a shift folder inside it:
+
+```
+\\10.1.1.20\fin_data\EXPORT FOR YOUTUBE\2026\NOVEMBER 2026\
+  23-11-2026\
+    Convert Morning\   Convert 11 am to\   Convert 3 pm to\   Convert PHH\   Unconvert lk soni\
+```
+
+- Readable from this machine without a login. **The backend only reads it.** The desk renames files by hand, so nothing may write,
+  move or rename there.
+- **The desk already marks X clips in the file name:** `x...` (any number of dots, upper or lower case) = picked for X, `x...done...` =
+  posted on X. 122 of 503 videos over 21–23 Nov were marked. The watcher takes only `x...` files that are not `done`.
+- Names and folders are not consistent: the shift folder names change every day ("Convert morning to-------", "3 pm convert",
+  "Convert 3 pm to--", "convert morning"), and a file is the full YouTube title, a place ("jodhpur(0).mp4") or a nickname ("cs.mp4").
+  So the desk shows the clips as the share's own folder tree, and the backend sends the path as it is (`folder`, `shareName` in §4),
+  never a cleaned-up guess.
+- The name changes when the desk marks a clip posted (`x...` → `x...done...`), so a clip is known by its folder, size and modified
+  time, not by its name. A rename updates the row; it is not a new clip.
+- Files: `.mp4` news clips (489 in 3 days, 3 MB–1.5 GB, typically 48 MB; X-marked ones typically 26 MB, at most 330 MB), `.mpg` show
+  masters (14, up to 38 GB; skip), and editor side files `.ese2` / `.ewc2`, `.png` thumbnails, `.txt` captions (skip).
+- A file is still being written while its size changes; wait until it holds still (two checks a few seconds apart) before reading.
+  0-byte files are skipped. A `.mp4` over 512 MB (about 1 in 25) is over X's upload limit and needs a trim or re-encode before posting.
+
+---
+
 ## 1. Pieces
 
 ```
@@ -20,7 +47,7 @@ clips folder ──► worker: clip watcher ──► GPU media service ──�
 
 | Piece | Lives in | New or reused | Job |
 |---|---|---|---|
-| Clip watcher | `apps/worker` | Extends `providers/footage.ts` | Sees a new file, probes it (duration, size, shape), makes a draft row in state `reading`, queues it |
+| Clip watcher | `apps/worker` | Extends `providers/footage.ts` | Watches the share (§0) for new `x...` files, probes them (duration, size, shape), makes a draft row in state `reading`, queues it |
 | GPU media service | New, Python, on this machine | New | Speech to text (faster-whisper, already installed) and reading the screen layers from frames |
 | Composer | `packages/core/src/clips/` | New, reuses the breaking rules | Turns speech + screen text into headline, suffix, hashtags, mentions |
 | Places / handles / tags | `packages/core/src/breaking/` | **Reused as is** | `places.ts`, `handles.ts`, `post-tags.ts` (video format B, `#FINVideo`), `learn.ts` |
@@ -89,6 +116,7 @@ Fields the backend fills, by frontend name:
 | `XvClip` field | Filled from |
 |---|---|
 | `fileName, src, poster, duration, size, width, height, kind, receivedAt` | Steps 1–2 |
+| `folder` (path parts under the month folder: `["23-11-2026", "Convert 3 pm to"]`), `shareName` (the name on the share, X mark included) | The watcher, as found on the share (§0) |
 | `readingProgress` | Steps 3–5 (0–100 while `reading`) |
 | `transcript[]` (`at, text, highlight?, worth?`) | Step 5. `highlight` = the lead line's words. |
 | `screenText[]` (`at, text, box, kind`) | Step 4. `kind` needs **two more values**: `slug`, `name` (see §7). |
@@ -102,7 +130,7 @@ Fields the backend fills, by frontend name:
 
 ## 5. Tables (outline)
 
-- `clip` — file path, probe data, status (`reading`, `new`, `posted`, `rejected`, `failed`), timestamps, `held_by`, `held_until`.
+- `clip` — share folder and name (as found, updated on rename), size and modified time (its identity), probe data, status (`reading`, `new`, `posted`, `rejected`, `failed`), timestamps, `held_by`, `held_until`.
 - `clip_screen_line` — clip, layer (`bar`, `breaking`, `slug`, `name`, `reporter`), text, first seen at, last seen at, box.
 - `clip_transcript_line` — clip, at, text.
 - `clip_draft` — clip, headline, suffix, tags (value, on, source), mentions, trim, edited by, edited at.
@@ -130,9 +158,12 @@ Learning writes into the **existing** hashtag and handle library, so the breakin
 Small. The UI stays as built:
 
 1. `xVideosData.ts` mock → `fetch` from §4. Same type.
-2. `XvScreenText.kind`: add `slug` (place) and `name` (name strip / reporter). Show them in the "on screen" panel with their own label.
+2. `XvScreenText.kind`: add `slug` (place) and `name` (name strip / reporter). The desk has no On screen tab any more (removed 24 Nov
+   2026): screen text feeds the composer (place, names, the suggested headline) without being shown as its own list.
 3. The place chip shows where the place came from (slug or speech).
 4. Live reading progress through SSE instead of the fixed "Reading 45%".
+5. The Clips panel tree is already built on `folder` + `shareName`; the demo fills them with made-up folders and names in the share's
+   style.
 
 ---
 
@@ -149,7 +180,7 @@ Run steps 3–7 on the 26 clips and compare with what the desk posted:
 | Time per clip on the 4090 | under 1 min for a 2-min clip |
 
 If the headline score is low, the fallback is to show the editor the bar lines as one-click chips and let them build the headline.
-The UI already has room for this in the "on screen" panel.
+Those chips would need a new spot in the editor (the On screen tab was removed on 24 Nov 2026).
 
 ## 9. Open questions
 

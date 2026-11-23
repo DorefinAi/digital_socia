@@ -6,14 +6,13 @@
 
 import React from "react";
 import { Alert, Box, Button, Checkbox, Tooltip, Typography } from "@mui/material";
-import { ArrowUpRight, Ban, CalendarClock, Monitor, Save, Scissors, Star } from "lucide-react";
+import { Ban, CalendarClock, Monitor, Save, Star } from "lucide-react";
 import type { XvClip } from "@/data/xVideosData";
 import { X_LIMIT } from "../BreakingDesk/socialText";
 import { XV_COLORS } from "./ClipFrame";
 import { draftBrand, prefixesFor, type TagRow, type XvDraft } from "./deskState";
 import TagAdder from "./TagAdder";
-import { srOnly } from "../BreakingDesk/shared";
-import { FIN_VIDEO_TAG, X_VIDEO_LIMITS, applyLabel, channelLabelsFor, applyPrefix, checkClip, fmtClock, fmtDuration, issueLabel, labelOf, prefixOf } from "./xvTitle";
+import { FIN_VIDEO_TAG, applyLabel, channelLabelsFor, applyPrefix, checkClip, fmtClock, issueLabel, labelOf, prefixOf } from "./xvTitle";
 
 const sectSx = { display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: "0.6875rem", fontWeight: 700, letterSpacing: "0.05em", color: "text.secondary" } as const;
 const boxSx = { border: "1px solid", borderColor: "divider", borderRadius: "8px" } as const;
@@ -53,14 +52,13 @@ interface TweetPanelProps {
   text: string;
   length: number;
   onPatch: (patch: Partial<XvDraft>) => void;
-  onFit: () => void;
   onRevert: () => void;
   onReject: () => void;
   onSave: () => void;
   onSchedule: (anchor: HTMLElement) => void;
 }
 
-export default function TweetPanel({ clip, draft, text, length, onPatch, onFit, onRevert, onReject, onSave, onSchedule }: TweetPanelProps) {
+export default function TweetPanel({ clip, draft, text, length, onPatch, onRevert, onReject, onSave, onSchedule }: TweetPanelProps) {
   const label = labelOf(draft.title);
   const brand = draftBrand(draft, clip);
   const prefixes = prefixesFor(clip);
@@ -90,13 +88,6 @@ export default function TweetPanel({ clip, draft, text, length, onPatch, onFit, 
             Tweet
           </Typography>
           <Box sx={{ flex: 1 }} />
-          <Tooltip title="Shorten line 1 so the post fits in 280">
-            <span>
-              <Button size="small" onClick={onFit} disabled={!over} startIcon={<Scissors size={13} />} sx={{ minHeight: 28, textTransform: "none", fontWeight: 600, fontSize: "0.75rem", color: "text.primary" }}>
-                Fit to 280
-              </Button>
-            </span>
-          </Tooltip>
           <Tooltip title="Back to the suggested line 1 and the clip's tags">
             <Button size="small" onClick={onRevert} sx={{ minHeight: 28, minWidth: 0, textTransform: "none", fontSize: "0.75rem", color: "text.secondary" }}>
               Revert
@@ -136,15 +127,8 @@ export default function TweetPanel({ clip, draft, text, length, onPatch, onFit, 
           <Alert
             severity="warning"
             sx={{ borderRadius: "8px", fontSize: "0.8125rem", py: 0.25 }}
-            action={
-              issues.some((i) => i.code === "too_long") ? (
-                <Button color="inherit" size="small" onClick={() => onPatch({ trim: { start: draft.trim.start, end: Math.min(clip.duration, draft.trim.start + X_VIDEO_LIMITS.seconds) } })} sx={{ textTransform: "none", fontWeight: 700, whiteSpace: "nowrap" }}>
-                  Trim to {fmtDuration(X_VIDEO_LIMITS.seconds)}
-                </Button>
-              ) : undefined
-            }
           >
-            <b>Trim needed.</b> {issues.map(issueLabel).join("; ")}. Set the start and end with I and O, or trim it here.
+            <b>X will not take this file as it is.</b> {issues.map(issueLabel).join("; ")}. Cut or convert it with Open in Video Studio, under the video.
           </Alert>
         )}
 
@@ -207,7 +191,6 @@ export default function TweetPanel({ clip, draft, text, length, onPatch, onFit, 
           <TagAdder prefix="@" label="Add handle" onAdd={(v) => addTag("mentions", v)} />
         </Box>
 
-        {clip.realPost && <RealPost post={clip.realPost} />}
       </Box>
 
       <Box sx={{ borderTop: "1px solid", borderColor: "divider", px: 1.5, py: 1.25, display: "flex", gap: 0.75, flexWrap: "wrap" }}>
@@ -243,36 +226,4 @@ function SourceChip({ draft }: { draft: XvDraft }) {
     );
   if (s.kind === "typed") return <Box sx={{ ...base, backgroundColor: "transparent", borderColor: "divider", color: "text.secondary" }}>Line 1 typed by the desk</Box>;
   return <Box sx={{ ...base, backgroundColor: "transparent", borderColor: "divider", color: "text.secondary" }}>Line 1 is the suggested headline</Box>;
-}
-
-/** What @1stIndiaNews actually posted for this clip, to compare with the suggestion (reference data, read only) */
-function RealPost({ post }: { post: NonNullable<XvClip["realPost"]> }) {
-  return (
-    <Box component="section" aria-labelledby="xv-real-post" sx={{ ...boxSx, mt: 0.5, px: 1.5, py: 1.25, backgroundColor: "#F6F7F9", display: "flex", flexDirection: "column", gap: 0.75 }}>
-      <Box sx={{ display: "flex", alignItems: "baseline", gap: 1, flexWrap: "wrap" }}>
-        <Typography id="xv-real-post" component="h3" sx={{ fontSize: "0.8125rem", fontWeight: 700 }}>
-          Real post on X
-        </Typography>
-        <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
-          {post.postedIst.slice(11)} IST, {post.views.toLocaleString("en-IN")} views, {post.likes} likes
-        </Typography>
-      </Box>
-      <Typography lang="hi" sx={{ fontSize: "0.8125rem", lineHeight: 1.55, whiteSpace: "pre-line", overflowWrap: "anywhere", color: "text.primary" }}>
-        {post.caption.replace(/\n\s*\n/g, "\n")}
-      </Typography>
-      <Box
-        component="a"
-        href={post.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        sx={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 0.25, fontSize: "0.75rem", fontWeight: 600, color: "#1A5FB4", "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: 2, borderRadius: "2px" } }}
-      >
-        Open the post on X <ArrowUpRight size={13} aria-hidden />
-        <Box component="span" sx={srOnly}>
-          (opens in a new tab)
-        </Box>
-      </Box>
-      <Typography sx={{ fontSize: "0.6875rem", color: "text.secondary" }}>Reference only: what the desk posted, to compare with the suggestion above.</Typography>
-    </Box>
-  );
 }
