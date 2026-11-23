@@ -3,7 +3,8 @@
 // The post starts with place hashtags ("#Jodhpur #रावतभाटा: <headline>"); the card heading starts with the last
 // of them without its "#" ("रावतभाटा: <headline>"): the town in Hindi, else the district's English name.
 
-import type { QueueItem } from "@/lib/socia/types";
+import type { HeadingPlace, QueueItem } from "@/lib/socia/types";
+import { CARD_DISTRICTS, CARD_NATIONALS, CARD_TOWNS } from "./cardPlaces.generated";
 
 /** A run of leading hashtags that ends in ":" ("#Jodhpur #रावतभाटा: "); "#1 priority: …" is left alone */
 const LEADING_TAGS = /^\s*(?:#[^\s:：]+\s*)+[:：]\s*/u;
@@ -14,94 +15,84 @@ const LEADING_LEAD = /^\s*[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N}_-]*(?:\s+[\p{L}\p{M}
 const LEADING_PLACE = /^\s*([A-Za-z][A-Za-z-]*(?:\s+[A-Za-z][A-Za-z-]*){0,2})\s*[:：]\s*/;
 
 /**
- * Places the server may give as stories.district (backend packages/core rajasthan.ts and the national places
- * in breaking/places.ts), compared without case, spaces or hyphens. A card headline saved with one of them
- * in front ("Jaipur: …") gets it replaced, never stacked ("Ajmer: Jaipur: …"), when the district changes.
+ * Places the server may give as stories.district or as the card's place: Rajasthan's districts and the national places
+ * the composer knows, in every spelling (cardPlaces.generated.ts, built from the backend's own data: plan C3). Compared
+ * without case, spaces or hyphens. A card headline saved with one of them in front ("Jaipur: …") gets it replaced, never
+ * stacked ("Ajmer: Jaipur: …"), when the place changes.
  */
-const KNOWN_PLACES = new Set(
-  [
-    "Ajmer", "Alwar", "Balotra", "Banswara", "Baran", "Barmer", "Beawar", "Bharatpur", "Bhilwara", "Bikaner", "Bundi",
-    "Chittorgarh", "Churu", "Dausa", "Deeg", "Dholpur", "Didwana-Kuchaman", "Dungarpur", "Hanumangarh", "Jaipur",
-    "Jaisalmer", "Jalore", "Jhalawar", "Jhunjhunu", "Jodhpur", "Karauli", "Khairthal-Tijara", "Kota", "Kotputli-Behror",
-    "Nagaur", "Pali", "Phalodi", "Pratapgarh", "Rajsamand", "Salumbar", "Sawai Madhopur", "Sikar", "Sirohi",
-    "Sri Ganganagar", "Tonk", "Udaipur",
-    "Delhi", "Lucknow", "Varanasi", "Mumbai", "Kolkata", "Patna", "Bhopal", "Indore", "Chandigarh", "Ahmedabad",
-    "Gandhinagar", "Noida", "Gurugram", "Agra", "Prayagraj", "Ayodhya", "Hyderabad", "Bengaluru", "Chennai", "Srinagar",
-    "Jammu", "Dehradun", "Shimla", "Ranchi", "Mathura", "Bihar", "Uttar Pradesh", "Madhya Pradesh", "Punjab", "Haryana",
-    "Gujarat", "Maharashtra", "West Bengal", "Karnataka", "Jammu Kashmir", "Uttarakhand", "Himachal Pradesh", "Kerala",
-    "Tamil Nadu", "Assam", "Odisha", "Jharkhand", "Chhattisgarh", "Telangana", "Andhra Pradesh", "Pakistan", "China",
-    "Nepal", "Bangladesh", "USA", "Russia", "Ukraine", "Israel", "Iran", "Afghanistan",
-  ].map((p) => placeKey(p)),
-);
+const KNOWN_PLACES = new Set([...CARD_DISTRICTS.flatMap((d) => d.names), ...CARD_NATIONALS.flatMap((d) => d.names)].map((p) => placeKey(p)));
+
+/** Rajasthan's towns (everyday words left out): a saved "बेगूं: …" lead is a place, so a new place replaces it */
+const KNOWN_TOWNS = new Set(CARD_TOWNS.map((t) => placeMatchKey(t)));
 
 function placeKey(place: string): string {
-  return place.toLowerCase().replace(/[\s-]+/g, "");
+  return place.normalize("NFC").toLowerCase().replace(/[\s-]+/g, "");
 }
 
-/**
- * Rajasthan's districts' other spellings (backend packages/core rajasthan.ts: `hi` and every alias, Hindi and
- * English), keyed by placeKey of the English name, so a heading that already opens with its district in any of
- * them is recognised.
- */
+/** Every spelling of a district or national place, keyed by placeKey of any of them */
 const DISTRICT_NAMES = new Map<string, readonly string[]>(
-  ([
-    ["Ajmer", ["अजमेर"]],
-    ["Alwar", ["अलवर"]],
-    ["Balotra", ["बालोतरा"]],
-    ["Banswara", ["बांसवाड़ा", "बांसवाडा"]],
-    ["Baran", ["बारां"]],
-    ["Barmer", ["बाड़मेर", "बाडमेर"]],
-    ["Beawar", ["ब्यावर"]],
-    ["Bharatpur", ["भरतपुर"]],
-    ["Bhilwara", ["भीलवाड़ा", "भीलवाडा"]],
-    ["Bikaner", ["बीकानेर"]],
-    ["Bundi", ["बूंदी", "बूँदी"]],
-    ["Chittorgarh", ["चित्तौड़गढ़", "Chittaurgarh", "Chittor", "चित्तौड़"]],
-    ["Churu", ["चूरू"]],
-    ["Dausa", ["दौसा"]],
-    ["Deeg", ["डीग"]],
-    ["Dholpur", ["धौलपुर"]],
-    ["Didwana-Kuchaman", ["डीडवाना-कुचामन", "Didwana", "Kuchaman", "डीडवाना", "कुचामन"]],
-    ["Dungarpur", ["डूंगरपुर"]],
-    ["Hanumangarh", ["हनुमानगढ़"]],
-    ["Jaipur", ["जयपुर"]],
-    ["Jaisalmer", ["जैसलमेर"]],
-    ["Jalore", ["जालोर", "Jalor", "जालौर"]],
-    ["Jhalawar", ["झालावाड़", "झालावाड"]],
-    ["Jhunjhunu", ["झुंझुनूं", "Jhunjhunun", "झुंझुनू"]],
-    ["Jodhpur", ["जोधपुर"]],
-    ["Karauli", ["करौली"]],
-    ["Khairthal-Tijara", ["खैरथल-तिजारा", "Khairthal", "Tijara", "खैरथल", "तिजारा"]],
-    ["Kota", ["कोटा"]],
-    ["Kotputli-Behror", ["कोटपूतली-बहरोड़", "Kotputli", "Behror", "कोटपूतली", "बहरोड़"]],
-    ["Nagaur", ["नागौर"]],
-    ["Pali", ["पाली"]],
-    ["Phalodi", ["फलोदी"]],
-    ["Pratapgarh", ["प्रतापगढ़"]],
-    ["Rajsamand", ["राजसमंद"]],
-    ["Salumbar", ["सलूंबर", "Salumber", "सलूम्बर"]],
-    ["Sawai Madhopur", ["सवाई माधोपुर"]],
-    ["Sikar", ["सीकर"]],
-    ["Sirohi", ["सिरोही"]],
-    ["Sri Ganganagar", ["श्रीगंगानगर", "Ganganagar", "Shri Ganganagar", "गंगानगर"]],
-    ["Tonk", ["टोंक"]],
-    ["Udaipur", ["उदयपुर"]],
-  ] as const).map(([en, hi]) => [placeKey(en), hi]),
+  [...CARD_DISTRICTS, ...CARD_NATIONALS].flatMap((d) => d.names.map((n) => [placeKey(n), d.names] as const)),
 );
 
 /**
- * True when the heading opens with one of `names` as a word of its own ("अलवर के हल्दीना गांव में…",
- * "जयपुर रेंज IG…"): the place is already the heading's first word, so the desk sets no "Place:" in front.
+ * A place spelling's key (backend packages/core/src/breaking/place-match.ts placeMatchKey, the same rules; the shared
+ * case list keeps the two in step): NFC, zero-width joiners out, nukta, chandrabindu and anusvara out ("नैनवा" =
+ * "नैनवां"), long vowels as short, spaces and hyphens out ("बड़ी सादड़ी" = "बड़ीसादड़ी"), lower-cased.
  */
-function opensWithPlace(text: string, names: readonly string[]): boolean {
-  const t = text.normalize("NFC").toLowerCase();
-  return names.some((n) => {
-    const name = n.normalize("NFC").trim().toLowerCase();
-    if (!name || !t.startsWith(name)) return false;
-    const next = t.slice(name.length);
-    return next === "" || /^[^\p{L}\p{M}\p{N}_]/u.test(next);
-  });
+export function placeMatchKey(text: string): string {
+  return text
+    .normalize("NFC")
+    .replace(/[\u200c\u200d]/g, "")
+    .normalize("NFD")
+    .replace(/[ङञणनम]्(?=[क-ह])/g, "ं") // a half nasal before a consonant is the anusvara (बून्दी = बूंदी)
+    .replace(/[़ँं]/g, "")
+    .replace(/ी/g, "ि")
+    .replace(/ू/g, "ु")
+    .replace(/ई/g, "इ")
+    .replace(/ऊ/g, "उ")
+    .normalize("NFC")
+    .replace(/[\s\-–—_]+/gu, "")
+    .toLowerCase();
 }
+
+/** The most words a place name is written in ("नीम का थाना", "सवाई माधोपुर"): the backend's PLACE_MAX_WORDS */
+const PLACE_MAX_WORDS = 4;
+
+/**
+ * When `text` opens with one of `names` (its first word, or its first words written apart: "नीम का थाना"), the length of
+ * that opening; 0 otherwise; the longest match wins. The backend's openingPlaceLength, the same rules.
+ */
+export function openingPlaceLength(text: string, names: Iterable<string>): number {
+  const keys = new Set([...names].map(placeMatchKey).filter(Boolean));
+  if (!keys.size) return 0;
+  const lead = /^\s*/u.exec(text)![0].length;
+  const words = [...text.slice(lead).matchAll(/[\p{L}\p{M}\p{N}\u200c\u200d]+/gu)].slice(0, PLACE_MAX_WORDS);
+  if (!words[0] || words[0].index !== 0) return 0;
+  let joined = 1;
+  while (joined < words.length && /^[\s\-–]+$/u.test(text.slice(lead + (words[joined - 1]!.index ?? 0) + words[joined - 1]![0].length, lead + (words[joined]!.index ?? 0)))) joined++;
+  for (let k = joined; k >= 1; k--) {
+    if (keys.has(placeMatchKey(words.slice(0, k).map((w) => w[0]).join("")))) return lead + (words[k - 1]!.index ?? 0) + words[k - 1]![0].length;
+  }
+  return 0;
+}
+
+/** R3: the place word is part of a compound or route when a hyphen or dash follows it ("जयपुर-दिल्ली हाईवे"): it stays */
+export function placeWordInCompound(text: string, opening: number): boolean {
+  return opening > 0 && /^\s*[-–—]/u.test(text.slice(opening));
+}
+
+/** Every name a place goes by: as written, and every spelling of a district or national place */
+function namesOf(place: string | null | undefined): string[] {
+  const p = (place ?? "").trim();
+  if (!p) return [];
+  return [p, ...(DISTRICT_NAMES.get(placeKey(p)) ?? [])];
+}
+
+/**
+ * D1 guard (owner, 23 Nov 2026): dropping the place word must not leave the heading opening with a postposition
+ * ("बूंदी के देई…" → never "Bundi: के देई…"); then the word stays and no place goes in front.
+ */
+const POSTPOSITION = /^(?:में|के|की|का|से|पर|ने|को|तक|द्वारा|और|एवं|व|तथा|सहित|समेत|संग|भी)(?![\p{L}\p{M}\p{N}])/u;
 
 /** "बड़ीसादड़ी": a town as its hashtag spells it (core breaking/compose.ts townHashtag), without the "#" */
 export function townTag(town: string | null | undefined): string {
@@ -117,7 +108,8 @@ const ONE_WORD_LEAD = /^\s*([\p{L}\p{M}\p{N}_]+)\s*[:：]\s*/u;
  * ("#Sirohi: …" → "Sirohi"). Empty when the story has neither.
  */
 export function cardPlace(district: string | null | undefined, town: string | null | undefined): string {
-  return townTag(town) || (district ?? "").trim();
+  // R8: a national place's name with its spaces ("UttarPradesh" → "Uttar Pradesh")
+  return townTag(town) || (district ?? "").trim().replace(/([a-z])([A-Z])/g, "$1 $2");
 }
 
 /**
@@ -141,19 +133,24 @@ export function storyTown(town: string | null | undefined, bodyText: string | nu
  *   dropped; the place goes in front instead.
  * - Any other tag run (party, topic: "#Congress #Kota: …", "#BJP: …", "#ब्रेकिंग: …") is the story's own lead,
  *   kept by the server on purpose: it stays without its "#" signs and no place goes in front.
- * - A heading that already opens with its own place as a word (the district in English or Hindi, or the town:
- *   "अलवर के हल्दीना गांव में…") gets nothing in front, so the place is never said twice.
+ * - A heading that already opens with its own place (any spelling) loses that word, never the prefix: "उदयपुर घूमने
+ *   आई…" → "Udaipur: घूमने आई…" (D1); unless a postposition would then lead ("बूंदी के देई…"): then it is kept as it is.
  * - Idempotent: a place already in front (a known English place, the district, or the town as one word, as a
  *   saved card heading carries it) is replaced, never stacked; another lead already in front ("BJP: …", as
  *   such a heading is saved) keeps the heading as it is.
  * Hashtags later in the line stay. Never left blank by this.
  */
-export function cardHeadlineText(headline: string, district?: string | null, town?: string | null): string {
+export function cardHeadlineText(headline: string, district?: string | null, town?: string | null, placeOverride?: string | null): string {
   const text = (headline ?? "").trim();
-  const place = cardPlace(district, town);
+  // b9: the composer's decision (headingPlace.card) when the draft has one, so the card leads with line 1's place; null
+  // there means nothing in front. Undefined: a draft from before b9, whose place is worked out from district and town.
+  const place = placeOverride !== undefined ? (placeOverride ?? "").trim() : cardPlace(district, town);
   const isPlace = (word: string) => {
     const k = placeKey(word);
-    return KNOWN_PLACES.has(k) || (!!district && k === placeKey(district)) || (!!town && k === placeKey(townTag(town)));
+    return (
+      KNOWN_PLACES.has(k) || KNOWN_TOWNS.has(placeMatchKey(word)) || (!!district && k === placeKey(district)) ||
+      (!!town && placeMatchKey(word) === placeMatchKey(town)) || (!!place && placeMatchKey(word) === placeMatchKey(place))
+    );
   };
   const run = text.match(LEADING_TAGS)?.[0];
   let bare = text;
@@ -162,7 +159,10 @@ export function cardHeadlineText(headline: string, district?: string | null, tow
     if (!rest) return text;
     const first = run.trim().split(/\s+/)[0].replace(/^#/, "").replace(/[:：]$/, "");
     // The story's own lead ("#BJP: …"): its words stay, as text, and nothing goes in front
-    if (!isPlace(first)) return `${run.replace(/#/g, "").replace(/\s*([:：])\s*$/, "$1").replace(/\s+/g, " ").trim()} ${rest}`;
+    const ownLead = `${run.replace(/#/g, "").replace(/\s*([:：])\s*$/, "$1").replace(/\s+/g, " ").trim()} ${rest}`;
+    // R5 (owner, 23 Nov 2026): when line 1 leads with the composer's place before the desk's own run ("#Jaipur: #BJP: …"),
+    // the card follows it: "Jaipur: BJP: …". Otherwise the story's own lead stays as text and nothing goes in front
+    if (!isPlace(first)) return placeOverride ? `${place}: ${ownLead}` : ownLead;
     bare = rest;
   }
   if (!place) return bare;
@@ -170,22 +170,59 @@ export function cardHeadlineText(headline: string, district?: string | null, tow
   const word = bare.match(ONE_WORD_LEAD);
   if (lead && isPlace(lead[1])) bare = bare.slice(lead[0].length).trim() || bare;
   else if (word && isPlace(word[1])) bare = bare.slice(word[0].length).trim() || bare;
-  // A lead kept from a tag run and saved as text ("BJP: …", "ब्रेकिंग: …") still takes no place on reopening
-  else if (LEADING_LEAD.test(bare)) return bare;
-  // The heading already opens with its own place ("अलवर के हल्दीना…"): as the desk's posts, no "Alwar: " in front
-  const own = [district ?? "", ...(DISTRICT_NAMES.get(placeKey(district ?? "")) ?? []), town ?? "", townTag(town)];
-  if (opensWithPlace(bare, own)) return bare;
+  // A lead kept from a tag run and saved as text ("BJP: …", "ब्रेकिंग: …") still takes no place on reopening, unless the
+  // composer's line 1 leads with its place (R5)
+  else if (LEADING_LEAD.test(bare)) return placeOverride ? `${place}: ${bare}` : bare;
+  // D1 (owner, 23 Nov 2026; the desk's own cards, 15–22 Nov): the card always leads with its place, and when the heading
+  // already opens with that place the word goes, not the prefix ("उदयपुर घूमने आई…" → "Udaipur: घूमने आई…", "लाखेरी
+  // पंचायत समिति…" → "लाखेरी: पंचायत समिति…"). Guard: if that leaves a postposition first ("बूंदी के देई…"), the word
+  // stays and nothing goes in front. Spelling-tolerant ("बून्दी" is Bundi, "नैनवा" is नैनवां).
+  const opening = openingPlaceLength(bare, [...namesOf(place), ...(placeKey(place) === placeKey(townTag(town)) ? [town ?? ""] : [])]);
+  if (opening) {
+    // R3: "जयपुर-दिल्ली हाईवे…": the word is part of a route, so it stays and nothing goes in front
+    if (placeWordInCompound(bare, opening)) return bare;
+    const rest = bare.slice(opening).replace(/^[\s,:：]+/u, "");
+    if (!rest || cardKeepsPlaceWord(rest)) return bare;
+    return `${place}: ${rest}`;
+  }
   return `${place}: ${bare}`;
 }
 
-/** The card heading for a draft: its story's district and town */
-export function draftCardHeadline(headline: string, d: { bodyText: string; story: { district?: string | null; town?: string | null } }): string {
-  return cardHeadlineText(headline, d.story.district, storyTown(d.story.town, d.bodyText, d.story.district));
+/** D1 guard: what follows the dropped place word opens with a postposition, so the word must stay */
+export function cardKeepsPlaceWord(rest: string): boolean {
+  return POSTPOSITION.test(rest.normalize("NFC").trim());
+}
+
+/**
+ * The card's place as the composer decided it with line 1 (b9 headingPlace.card), or undefined to work it out from the
+ * story's district and town as before: a draft from before b9, or one whose city is the desk's own tag in the copy.
+ */
+export function headingCardPlace(hp: HeadingPlace | null | undefined): string | null | undefined {
+  if (!hp || hp.placement === "copy" || hp.placement === "none") return undefined;
+  return hp.card;
+}
+
+/**
+ * Q3 (owner, 23 Nov 2026): a card heading the desk saved is never rewritten. The draft's card_headline is the story's own
+ * headline until someone saves the card; anything else there is what the desk saved, and it is shown exactly as saved.
+ */
+export function deskSavedHeading(saved: string | null | undefined, storyHeadline: string | null | undefined): boolean {
+  const n = (s: string | null | undefined) => (s ?? "").normalize("NFC").replace(/\s+/g, " ").trim();
+  return typeof storyHeadline === "string" && !!n(saved) && n(saved) !== n(storyHeadline);
+}
+
+/** The card heading for a draft: as the desk saved it (Q3), else line 1's place (b9), else its story's district and town */
+export function draftCardHeadline(
+  headline: string,
+  d: { bodyText: string; story: { district?: string | null; town?: string | null; headline?: string | null }; handlePick?: { headingPlace?: HeadingPlace | null } | null },
+): string {
+  if (deskSavedHeading(headline, d.story.headline)) return headline.trim();
+  return cardHeadlineText(headline, d.story.district, storyTown(d.story.town, d.bodyText, d.story.district), headingCardPlace(d.handlePick?.headingPlace));
 }
 
 /** The card heading for a queue row */
-export function queueCardHeadline(item: Pick<QueueItem, "headline" | "bodyText" | "district" | "town">): string {
-  return cardHeadlineText(item.headline, item.district, storyTown(item.town, item.bodyText, item.district));
+export function queueCardHeadline(item: Pick<QueueItem, "headline" | "bodyText" | "district" | "town" | "headingPlace">): string {
+  return cardHeadlineText(item.headline, item.district, storyTown(item.town, item.bodyText, item.district), headingCardPlace(item.headingPlace));
 }
 
 /** A point without its closing punctuation, as the post joins them (core breaking/compose.ts trimPoint) */
