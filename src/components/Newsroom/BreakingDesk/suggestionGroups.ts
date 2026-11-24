@@ -52,8 +52,12 @@ const draftKeys = (onDraft: readonly unknown[] | undefined, prefix: (v: string) 
 const reasonOf = (raw: unknown, fallback: string): string => {
   if (raw === undefined || raw === null) return fallback;
   if (typeof raw !== "string") return "";
+  // P2 (owner, 25 Nov 2026): the composer moves a handle off the post when it would go over X's 280; say so plainly
+  if (raw.trim() === "length") return LENGTH_REASON;
   return raw.trim() || fallback;
 };
+/** The reason shown for a handle the composer moved off the post to keep it within X's 280 characters */
+export const LENGTH_REASON = "Moved off to fit X's 280 characters";
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 /**

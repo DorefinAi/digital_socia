@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { HashtagSuggestion, MentionSuggestion } from "../../../lib/socia/types";
-import { groupSuggestions, offerableHashtag, offeredHashtags, offeredMentions, sourceLabel } from "./suggestionGroups";
+import { LENGTH_REASON, groupSuggestions, offerableHashtag, offeredHashtags, offeredMentions, sourceLabel } from "./suggestionGroups";
 
 const handle = (h: string, extra: Partial<MentionSuggestion> = {}): MentionSuggestion => ({ handleId: h, entity: h, handle: h, exact: true, ...extra });
 const values = (rows: { value: string }[]) => rows.map((r) => r.value);
@@ -30,6 +30,11 @@ test("an office alias stays a normal suggestion and shows its reason", () => {
   assert.deepEqual(values(normal), ["@BhajanlalBjp"]);
   assert.equal(reporter.length, 0);
   assert.equal(normal[0].reason, "CM mentioned without a name");
+});
+
+test("a handle moved off the post for X's 280 says so in plain words", () => {
+  const rows = offeredMentions([handle("@INCRajasthan", { entity: "कांग्रेस", source: "party", reason: "length" })], []);
+  assert.equal(rows[0].reason, LENGTH_REASON);
 });
 
 test("a suggestion with no source (older servers) is a normal suggestion with today's reason", () => {
