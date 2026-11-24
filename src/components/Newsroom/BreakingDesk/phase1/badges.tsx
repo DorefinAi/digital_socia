@@ -22,6 +22,7 @@ const NEEDS_CHECK_LABEL: Record<string, string> = {
   file_deleted: "File deleted",
   text_changed: "Text differs from file",
   no_city: "No city tag, pick one",
+  national_story: "National story",
 };
 
 /** What a needs-check reason means, in the desk's words */
@@ -38,6 +39,7 @@ const NEEDS_CHECK_HINT: Record<string, string> = {
   text_changed: "A word or number of the file is missing from the post text. Check it against Story from FTP before posting.",
   place_conflict: "The headline's #District tag and the place line name different districts. The post uses the headline's tag; check which is right.",
   no_city: "The story names no place, so no city hashtag was added. Pick one of the offered places (one click) or add your own.",
+  national_story: "A story from outside Rajasthan: it goes out as #FirstIndiaNews and no Rajasthan city is added. Add the state or place tag offered (one click) if it fits.",
 };
 
 export const needsCheckLabel = (code: NeedsCheckCode) => NEEDS_CHECK_LABEL[code] ?? code.replace(/_/g, " ");
