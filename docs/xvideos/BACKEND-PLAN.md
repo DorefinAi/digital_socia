@@ -146,7 +146,8 @@ Learning writes into the **existing** hashtag and handle library, so the breakin
 |---|---|
 | Volume | Measured on the 26 clips: about **10 clips an hour**, 67 min of video over 2 h 40 min |
 | Where the heavy work runs | The GPU media service only. One clip at a time, a second one when the queue is long. Low process priority. |
-| Speed | **Not measured yet.** The test of Whisper on the RTX 4090 did not finish (first model download). Measure before building. Target: a clip is ready on the desk before the editor needs it, under 1 min for a 2-min clip. |
+| Speed | Speech **measured** (24 Nov 2026, §9): 5.8 s for a 3 min 16 s clip in 8 s chunks, so about 4 s for a 2-min clip. Screen text and headline are estimates, about 30–55 s more. Target: under 1 min for a 2-min clip. |
+| GPU memory | RTX 4090, 23 GB. Whisper about 4 GB + Qwen2.5-VL 7B about 7 GB. A third model (Qwen3 14B, about 10 GB) does not fit beside them with room to spare, so the vision model also writes the headline. |
 | Live desk | Separate process and queue. The API only reads and writes rows. A backlog makes clips wait in `reading`; it never slows the desk. |
 | Failure | A clip that fails goes to `failed` with the reason and shows on the desk with an empty draft. The editor can still post it by hand. |
 | Posting | Copy & Mark Posted is one row write. The editor uploads the video on X. A later step uploads the video through the X API (chunked upload, network-bound, not compute). |
@@ -182,10 +183,43 @@ Run steps 3–7 on the 26 clips and compare with what the desk posted:
 If the headline score is low, the fallback is to show the editor the bar lines as one-click chips and let them build the headline.
 Those chips would need a new spot in the editor (the On screen tab was removed on 24 Nov 2026).
 
-## 9. Open questions
+## 9. Measured and decided, 24 Nov 2026
+
+**Speech (Whisper large-v3, faster-whisper 1.2.1, float16, RTX 4090).** The 3 min 16 s "Budget Files" clip:
+
+| Setting | Time | Text kept |
+|---|---|---|
+| One segment at a time, beam 5 | 112 s | 2,469 characters |
+| Batched 16, 30 s chunks | 4–5 s | about 1,500 (Hindi runs past Whisper's token cap per chunk, the rest is cut) |
+| **Batched 16, 8 s chunks, beam 1 (chosen)** | **5.8 s** | 2,465, and it kept a stretch the slow run skipped |
+
+Hindi in Devanagari costs many tokens, so one-at-a-time decoding left the GPU half idle. The words are right; spelling follows
+the sound ("अशोग गहलोत", "गोशना"), so names should come from the screen text, the speech gives the context.
+Script: `docs/xvideos/test/whisper_time.py`.
+
+Setup notes for the media service:
+- The installed PyAV does not match faster-whisper's decoder: audio is decoded with ffmpeg to 16 kHz mono float instead.
+- ctranslate2 needs cuBLAS 12 (`cublas64_12.dll`); the test borrowed the copy in Ollama's `lib/ollama/cuda_v12`. The service should
+  ship its own (`nvidia-cublas-cu12`) rather than depend on Ollama's folder.
+
+**Models (proposed, the vision model is not downloaded yet).**
+
+| Job | Model |
+|---|---|
+| Speech | Whisper large-v3, batched as above |
+| Screen text **and** headline | Qwen2.5-VL 7B. One model for both, so the GPU holds two models, not three |
+| Fixed parts (suffix, brand tag, `#FINVideo`, place tag, police) | Rules in code (§3), never the model |
+
+**Training on the desk's past posts.** The share holds 506 X-marked clips from Aug–Nov 2026, 359 of them marked done (posted):
+Aug 45, Sep 89, Oct 0 (empty), Nov 225. File names do not carry the posted title ("jc sir", "JPR", "udrrr"), so each clip is
+matched to its post on X by day and video length. Each pair (frames + transcript → posted headline) is a training example. A LoRA
+on Qwen2.5-VL 7B fits the RTX 4090 (about 1–3 h); about 50 clips are held back to score it against what the desk posted. Needs
+the full model weights (about 16 GB) and the training tools (about 3–4 GB): not downloaded yet.
+
+## 10. Open questions
 
 - Q1–Q3 in CONTENT-ANALYSIS.md: suffix default, English names, captions over 280 characters.
-- Q4. The clips folder: where does it come from on the live machine (a share from playout, a watch folder)?
+- Q4. ~~The clips folder~~ Answered: `\\10.1.1.20\fin_data\EXPORT FOR YOUTUBE`, read only (§0).
 - Q5. Screen text: fixed-area OCR (needs PaddleOCR installed, fast) or a local vision model reading the frame (slower, handles new
   layouts). The test in §8 decides.
 - Q6. Direct posting through the X API: when, and which account permission?
