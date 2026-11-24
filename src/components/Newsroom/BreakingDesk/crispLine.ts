@@ -176,7 +176,7 @@ function cutPoints(parts: string[], all: string, dots: string, max: number): str
 
 const squash = (s: string) => s.normalize("NFC").replace(/[\s,]+/g, " ").trim();
 /** A line of hashtags and handles only ("#Extra @x"): Fit never cuts it */
-const isTagLine = (line: string) => line.split(/\s+/).every((w) => /^[#@][\p{L}\p{M}\p{N}_]+$/u.test(w));
+const isTagLine = (line: string) => line.split(/\s+/).every((w) => /^[#@][\p{L}\p{M}\p{N}_]+$/u.test(w) || /^#[A-Za-z0-9_]+(?:-[A-Za-z0-9]+)+$/.test(w));
 
 export interface FitInput {
   /** A live breaking draft (the story's layout is "breaking"); anything else keeps the plain shortening */

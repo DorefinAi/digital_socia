@@ -16,8 +16,10 @@ export const SERVER_MENTIONS_MAX = 5;
 /** Picker rows that come from typing in the box rather than from the suggestions */
 export const TYPED_REASON = "In the post text";
 
-// A hashtag is # and then letters (any script, with their matras), digits or _: "#दिल्ली" yes, "#Delhi," or "##" no.
-const HASHTAG = /^#[\p{L}\p{M}\p{N}_]+$/u;
+// A hashtag is # and then letters (any script, with their matras), digits or _: "#दिल्ली" yes, "#Delhi," or "##" no. An
+// English tag joined by hyphens is one too: the composer writes "#Kotputli-Behror" for that merged district (owner, 25 Nov
+// 2026; X links only "#Kotputli", as the desk knows), so a tag line carrying it is still the tag line.
+const HASHTAG = /^#(?:[\p{L}\p{M}\p{N}_]+|[A-Za-z0-9_]+(?:-[A-Za-z0-9]+)+)$/u;
 export const isHashtag = (tag: string) => HASHTAG.test(tag);
 // On the live desk a mention is an X handle as the API checks it (JSON Schema's ASCII \w, up to 15)
 const X_HANDLE = /^@[A-Za-z0-9_]{1,15}$/;
