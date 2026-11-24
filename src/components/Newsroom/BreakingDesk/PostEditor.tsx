@@ -73,7 +73,7 @@ import { PLATFORM_LIMITS, TagSuggestion, composePostText, countChars, findUrl, s
 import { BREAKING_POST_MAX } from "./crispLine";
 import { RejectDialog, ScheduleDialog } from "./actionDialogs";
 import { FoldedPanelStrip, PanelResizeHandle, PanelsConfig, useResizablePanels } from "./ResizablePanels";
-import { CategoryLabel, PLATFORM_META, PlatformIcon, priorityTag, rejectedNotice, srOnly, TAG_TINT, tagTint } from "./shared";
+import { CategoryLabel, PLATFORM_META, PlatformIcon, priorityTag, rejectedNotice, srOnly, storyTag, TAG_TINT, tagTint } from "./shared";
 import { PostMock, TagOption, TagPicker, fieldSx, sectionLabel } from "./composerParts";
 import { PostTextBox } from "./PostTextBox";
 import { putText, takeTyped, type BoxText } from "./postTextSync";
@@ -1658,11 +1658,14 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     if (fromList !== undefined) {
       target = fromList === null ? null : (shown.find((n) => n.id === fromList) ?? null);
     } else {
-      // 2. The panel never showed this story: the same list rebuilt (one list for every story, newest first, posted
-      // included: no BIG Breaking / Breaking split since 24 Nov 2026)
+      // 2. The panel never showed this story: its BIG Breaking / Breaking tab rebuilt (newest first, posted included)
       const order = queueOrder ?? desk?.queue ?? [];
-      const oneList = () => "all";
-      const above = storiesAbove(afterPostOrder(order, item.id, "all", oneList, () => false), item.id);
+      const tabOf = (n: FtpNewsItem) => (storyTag(n) === "big_breaking" ? "big_breaking" : "breaking");
+      // The tab as the desk knows the story: its queue row carries the file's BIG tag, the editor's copy doesn't
+      const tags = live?.draft.story.tags;
+      const row = order.find((n) => n.id === item.id);
+      const currentTab = row ? tabOf(row) : tags ? (tags.big ? "big_breaking" : "breaking") : tabOf(item);
+      const above = storiesAbove(afterPostOrder(order, item.id, currentTab, tabOf, () => false), item.id);
       target = above.length > 1 ? above[above.length - 2]! : null;
     }
     const step = afterPost(onSwitch && target ? target : undefined, fix);
