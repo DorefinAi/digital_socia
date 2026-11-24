@@ -198,7 +198,9 @@ export function cardKeepsPlaceWord(rest: string): boolean {
  * story's district and town as before: a draft from before b9, or one whose city is the desk's own tag in the copy.
  */
 export function headingCardPlace(hp: HeadingPlace | null | undefined): string | null | undefined {
-  if (!hp || hp.placement === "copy" || hp.placement === "none") return undefined;
+  if (!hp || hp.placement === "copy") return undefined;
+  // No city on the post (24 Nov 2026: no #Jaipur fallback): no place on the card either, never one of the card's own
+  if (hp.placement === "none") return null;
   return hp.card;
 }
 

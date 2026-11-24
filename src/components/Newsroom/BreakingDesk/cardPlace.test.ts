@@ -40,7 +40,8 @@ test("a lead town on line 1 is the card's place in Hindi; a lead district its En
 test("a draft from before b9, or whose city is the desk's own tag, keeps the old way (district and town)", () => {
   assert.equal(headingCardPlace(undefined), undefined);
   assert.equal(headingCardPlace(hp("copy", null)), undefined);
-  assert.equal(headingCardPlace(hp("none", null)), undefined);
+  // No city on the post: no place on the card (24 Nov 2026)
+  assert.equal(headingCardPlace(hp("none", null)), null);
   assert.equal(draftCardHeadline("हाईवे पर हादसा", draft("हाईवे पर हादसा", "Jodhpur", null)), "Jodhpur: हाईवे पर हादसा");
   assert.equal(draftCardHeadline("हाईवे पर हादसा", draft("हाईवे पर हादसा", "Jodhpur", null, hp("copy", null))), "Jodhpur: हाईवे पर हादसा");
 });
@@ -150,4 +151,9 @@ test("Q4: the guard keeps the place word before तक, द्वारा, औ�
   }
   // A word that only starts like one is not guarded ("वन विभाग")
   assert.equal(cardHeadlineText("बूंदी वन विभाग की कार्रवाई", "Bundi"), "Bundi: वन विभाग की कार्रवाई");
+});
+
+test("24 Nov 2026: a story with no city gets no place on the card, even when the story has a district of its own", () => {
+  const d = draft("दिल्लीः केंद्रीय कैबिनेट की कल बैठक होगी", "Jaipur", null, hp("none", null, { source: "none" }));
+  assert.equal(draftCardHeadline(d.headline, d), "दिल्लीः केंद्रीय कैबिनेट की कल बैठक होगी");
 });

@@ -37,7 +37,7 @@ const NEEDS_CHECK_HINT: Record<string, string> = {
   file_deleted: "File is deleted, please check FTP.",
   text_changed: "A word or number of the file is missing from the post text. Check it against Story from FTP before posting.",
   place_conflict: "The headline's #District tag and the place line name different districts. The post uses the headline's tag; check which is right.",
-  no_city: "A national story that names no place, so no city hashtag was added. Pick one of the offered places (one click) or add your own.",
+  no_city: "The story names no place, so no city hashtag was added. Pick one of the offered places (one click) or add your own.",
 };
 
 export const needsCheckLabel = (code: NeedsCheckCode) => NEEDS_CHECK_LABEL[code] ?? code.replace(/_/g, " ");
