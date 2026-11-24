@@ -363,6 +363,12 @@ export interface HeadingPlace {
   placement: "lead" | "inline" | "trailing" | "copy" | "none";
   /** The card heading's place word ("नैनवां", "Jodhpur"), or null for none in front */
   card: string | null;
+  /**
+   * P6/P10 (owner, 25 Nov 2026): the card heading exactly as the composer decided it with line 1 (line 1 as posted, its tag
+   * syntax gone: "#Churu: जिला प्रमुख…" → "Churu: जिला प्रमुख…", "कोटा ग्रामीण की…" → the same). The card uses it as it is;
+   * absent on drafts composed before.
+   */
+  cardHeadline?: string;
 }
 
 export interface DraftMedia {

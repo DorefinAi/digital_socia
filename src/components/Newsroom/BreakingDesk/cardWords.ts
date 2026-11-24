@@ -93,6 +93,11 @@ function namesOf(place: string | null | undefined): string[] {
  * ("बूंदी के देई…" → never "Bundi: के देई…"); then the word stays and no place goes in front.
  */
 const POSTPOSITION = /^(?:में|के|की|का|से|पर|ने|को|तक|द्वारा|और|एवं|व|तथा|सहित|समेत|संग|भी)(?![\p{L}\p{M}\p{N}])/u;
+/**
+ * P6 (owner, 25 Nov 2026), for drafts composed before the backend sent cardHeadline: a word that makes a name with the place
+ * keeps the place word too ("कोटा ग्रामीण की…" never "Kota: ग्रामीण की…", "जोधपुर पुलिस कमिश्नरेट…" never "Jodhpur: पुलिस…")
+ */
+const NAME_FORMING = /^(?:ग्रामीण|पुलिस|कमिश्नरेट|शहर|संभाग|नगर|देहात|विकास\s+प्राधिकरण|जिला\s+प्रशासन)(?![\p{L}\p{M}\p{N}])/u;
 
 /** "बड़ीसादड़ी": a town as its hashtag spells it (core breaking/compose.ts townHashtag), without the "#" */
 export function townTag(town: string | null | undefined): string {
@@ -188,9 +193,19 @@ export function cardHeadlineText(headline: string, district?: string | null, tow
   return `${place}: ${bare}`;
 }
 
-/** D1 guard: what follows the dropped place word opens with a postposition, so the word must stay */
+/** D1 guard: what follows the dropped place word opens with a postposition (or a name-forming word, P6), so the word must stay */
 export function cardKeepsPlaceWord(rest: string): boolean {
-  return POSTPOSITION.test(rest.normalize("NFC").trim());
+  const r = rest.normalize("NFC").trim();
+  return POSTPOSITION.test(r) || NAME_FORMING.test(r);
+}
+
+/**
+ * P6/P10: the card heading the composer decided with line 1 (headingPlace.cardHeadline), when the draft carries one; else
+ * undefined (a draft composed before 25 Nov 2026 works its heading out as before)
+ */
+export function composedCardHeadline(hp: HeadingPlace | null | undefined): string | undefined {
+  const text = hp?.cardHeadline?.trim();
+  return text ? text : undefined;
 }
 
 /**
@@ -213,17 +228,24 @@ export function deskSavedHeading(saved: string | null | undefined, storyHeadline
   return typeof storyHeadline === "string" && !!n(saved) && n(saved) !== n(storyHeadline);
 }
 
-/** The card heading for a draft: as the desk saved it (Q3), else line 1's place (b9), else its story's district and town */
+/**
+ * The card heading for a draft: as the desk saved it (Q3), else the composer's own heading with line 1 (P6/P10), else line 1's
+ * place (b9), else its story's district and town
+ */
 export function draftCardHeadline(
   headline: string,
   d: { bodyText: string; story: { district?: string | null; town?: string | null; headline?: string | null }; handlePick?: { headingPlace?: HeadingPlace | null } | null },
 ): string {
   if (deskSavedHeading(headline, d.story.headline)) return headline.trim();
+  const composed = composedCardHeadline(d.handlePick?.headingPlace);
+  if (composed !== undefined) return composed;
   return cardHeadlineText(headline, d.story.district, storyTown(d.story.town, d.bodyText, d.story.district), headingCardPlace(d.handlePick?.headingPlace));
 }
 
-/** The card heading for a queue row */
+/** The card heading for a queue row: the composer's own (P6/P10), else worked out as before */
 export function queueCardHeadline(item: Pick<QueueItem, "headline" | "bodyText" | "district" | "town" | "headingPlace">): string {
+  const composed = composedCardHeadline(item.headingPlace);
+  if (composed !== undefined) return composed;
   return cardHeadlineText(item.headline, item.district, storyTown(item.town, item.bodyText, item.district), headingCardPlace(item.headingPlace));
 }
 

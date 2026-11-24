@@ -133,8 +133,10 @@ test("R8: a national place on the card keeps its spaces, old drafts included", (
 
 test("Q3: a heading the desk saved stays exactly as saved; only Socia's own heading is rewritten", () => {
   const story = { district: "Jaipur", town: null, headline: "जयपुर पुलिस की बड़ी कार्रवाई" };
-  // Never saved: card_headline is the story's headline, so Socia writes the card (D1)
-  assert.equal(draftCardHeadline(story.headline, { bodyText: "", story }), "Jaipur: पुलिस की बड़ी कार्रवाई");
+  // Never saved: card_headline is the story's headline, so Socia writes the card (D1; P6: "पुलिस" names the place's force, the
+  // word stays and nothing goes in front)
+  assert.equal(draftCardHeadline(story.headline, { bodyText: "", story }), "जयपुर पुलिस की बड़ी कार्रवाई");
+  assert.equal(draftCardHeadline("जयपुर फर्जी कॉल सेंटर पकड़ा", { bodyText: "", story: { ...story, headline: "जयपुर फर्जी कॉल सेंटर पकड़ा" } }), "Jaipur: फर्जी कॉल सेंटर पकड़ा");
   // The desk typed its own: kept exactly, spaces and all
   for (const typed of ["जयपुर पुलिस की बड़ी कार्रवाई !", "Jaipur: जयपुर पुलिस की बड़ी कार्रवाई", "बड़ी कार्रवाई"]) {
     assert.equal(draftCardHeadline(typed, { bodyText: "", story, handlePick: { headingPlace: hp("lead", "Jaipur") } }), typed);
@@ -156,4 +158,41 @@ test("Q4: the guard keeps the place word before तक, द्वारा, औ�
 test("24 Nov 2026: a story with no city gets no place on the card, even when the story has a district of its own", () => {
   const d = draft("दिल्लीः केंद्रीय कैबिनेट की कल बैठक होगी", "Jaipur", null, hp("none", null, { source: "none" }));
   assert.equal(draftCardHeadline(d.headline, d), "दिल्लीः केंद्रीय कैबिनेट की कल बैठक होगी");
+});
+
+
+// ─── P6/P10 (owner, 25 Nov 2026): the composer sends the card heading itself (headingPlace.cardHeadline) ───
+
+test("P6: the card is the composer's heading, line 1 as posted: Kota, Ajmer, Jodhpur, Jamwaramgarh, Churu", () => {
+  const cases: [string, HeadingPlace, string][] = [
+    ["कोटा ग्रामीण की मंडाना थाना पुलिस ने नाकाबंदी की", hp("trailing", null, { cardHeadline: "कोटा ग्रामीण की मंडाना थाना पुलिस ने नाकाबंदी की" }), "कोटा ग्रामीण की मंडाना थाना पुलिस ने नाकाबंदी की"],
+    ["अजमेर जिला प्रमुख चुनाव भाजपा का कब्जा तय", hp("trailing", null, { cardHeadline: "अजमेर जिला प्रमुख चुनाव भाजपा का कब्जा तय" }), "अजमेर जिला प्रमुख चुनाव भाजपा का कब्जा तय"],
+    ["जोधपुर पुलिस कमिश्नरेट में साक्षात्कार", hp("trailing", null, { cardHeadline: "जोधपुर पुलिस कमिश्नरेट में साक्षात्कार" }), "जोधपुर पुलिस कमिश्नरेट में साक्षात्कार"],
+    ["जयपुर-जमवारामगढ़ स्टेट हाईवे पर भीषण सड़क हादसा", hp("trailing", null, { town: "जमवारामगढ़", cardHeadline: "जयपुर-जमवारामगढ़ स्टेट हाईवे पर भीषण सड़क हादसा" }), "जयपुर-जमवारामगढ़ स्टेट हाईवे पर भीषण सड़क हादसा"],
+    ["चूरू जिला प्रमुख के लिए कांग्रेस से आया बड़ा नाम", hp("lead", "Churu", { cardHeadline: "Churu: जिला प्रमुख के लिए कांग्रेस से आया बड़ा नाम" }), "Churu: जिला प्रमुख के लिए कांग्रेस से आया बड़ा नाम"],
+    ["बूंदी के केशवरायपाटन में श्रद्धा का सैलाब", hp("inline", "केशवरायपाटन", { cardHeadline: "केशवरायपाटन में श्रद्धा का सैलाब" }), "केशवरायपाटन में श्रद्धा का सैलाब"],
+    ["सरकार ने जारी किए नए दिशा-निर्देश", hp("none", null, { cardHeadline: "सरकार ने जारी किए नए दिशा-निर्देश" }), "सरकार ने जारी किए नए दिशा-निर्देश"],
+  ];
+  for (const [headline, place, card] of cases) {
+    const d = draft(headline, "Kota", null, place);
+    assert.equal(draftCardHeadline(d.headline, d), card, headline);
+    assert.equal(queueCardHeadline({ headline, bodyText: "", district: "Kota", town: null, headingPlace: place }), card, headline);
+  }
+});
+
+test("P6 + Q3: a heading the desk saved still wins over the composer's", () => {
+  const d = draft("चूरू जिला प्रमुख के लिए नाम", "Churu", null, hp("lead", "Churu", { cardHeadline: "Churu: जिला प्रमुख के लिए नाम" }));
+  assert.equal(draftCardHeadline("चूरू: कांग्रेस का बड़ा नाम", d), "चूरू: कांग्रेस का बड़ा नाम");
+  assert.equal(draftCardHeadline(d.headline, d), "Churu: जिला प्रमुख के लिए नाम");
+});
+
+test("P6, drafts composed before: a name-forming word keeps the place word (no 'Kota: ग्रामीण…', no 'Jodhpur: पुलिस…')", () => {
+  const kota = draft("कोटा ग्रामीण की मंडाना थाना पुलिस ने नाकाबंदी की", "Kota", null, hp("trailing", "Kota"));
+  assert.equal(draftCardHeadline(kota.headline, kota), "कोटा ग्रामीण की मंडाना थाना पुलिस ने नाकाबंदी की");
+  const jdr = draft("जोधपुर पुलिस कमिश्नरेट में साक्षात्कार", "Jodhpur", null, hp("trailing", "Jodhpur"));
+  assert.equal(draftCardHeadline(jdr.headline, jdr), "जोधपुर पुलिस कमिश्नरेट में साक्षात्कार");
+  assert.equal(cardKeepsPlaceWord("ग्रामीण की मंडाना"), true);
+  assert.equal(cardKeepsPlaceWord("विकास प्राधिकरण की बैठक"), true);
+  // An empty composed heading is no heading: the old way applies
+  assert.equal(draftCardHeadline("हाईवे पर हादसा", draft("हाईवे पर हादसा", "Jodhpur", null, hp("lead", "Jodhpur", { cardHeadline: " " }))), "Jodhpur: हाईवे पर हादसा");
 });
