@@ -1,10 +1,10 @@
-"""Build src/data/xClipsReal.json from the First India X video sample (21 Nov 2026).
+"""Build src/features/xvideos/data/xClipsReal.json from the First India X video sample (21 Nov 2026).
 
 Usage:
     python -I docs/xvideos/build-real-clips.py "<path to firstindia_videos_2026-11-21>"
 
 Reads the folder's dataset.jsonl and transcripts/<post_id>.srt (both outside the repo) and writes one entry per post
-to src/data/xClipsReal.json, which the X Clips demo desk reads (src/data/xVideosData.ts). The videos, frames and
+to src/features/xvideos/data/xClipsReal.json, which the X Clips demo desk reads (src/features/xvideos/data/xVideosData.ts). The videos, frames and
 contact sheets themselves are NOT written here: they are copied by hand into the gitignored
 public/xvideos-demo/real/<post_id>.mp4 and public/xvideos-demo/real-frames/<post_id>_{first,mid,last,sheet}.jpg.
 
@@ -36,7 +36,7 @@ KNOWN_PLACES = [
 ]
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / "src" / "data" / "xClipsReal.json"
+OUT = ROOT / "src" / "features" / "xvideos" / "data" / "xClipsReal.json"
 
 TIME = re.compile(r"(\d+):(\d+):(\d+)[,.](\d+)")
 # "Bansur Cylinder Blast: …" / "Accident: …": an English topic prefix before a colon

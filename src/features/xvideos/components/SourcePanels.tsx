@@ -7,7 +7,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, Typography } from "@mui/material";
 import { ChevronDown, ChevronRight, FileVideo, Folder, FolderOpen, Star } from "lucide-react";
-import type { XvClip, XvTranscriptLine } from "@/data/xVideosData";
+import type { XvClip, XvTranscriptLine } from "../data/xVideosData";
 import { XV_COLORS } from "./ClipFrame";
 import { fmtClock } from "./xvTitle";
 

@@ -5,10 +5,10 @@ import Link from "next/link";
 import { Box, Button, Typography } from "@mui/material";
 import { PauseCircle } from "lucide-react";
 import DeskPage from "@/components/Layout/DeskPage";
-import XVideosDesk from "@/components/Newsroom/XVideos/XVideosDesk";
+import { XVideosDesk } from "@/features/xvideos";
 import { XVIDEOS_ENABLED } from "@/lib/socia/config";
 
-// The X Videos desk: live clips to X posts, by hand. Demo data only for now, behind NEXT_PUBLIC_XVIDEOS=true.
+// The X Videos desk (src/features/xvideos): live clips to X posts, by hand, behind NEXT_PUBLIC_XVIDEOS=true.
 export default function XVideosPage() {
   return <DeskPage>{XVIDEOS_ENABLED ? <XVideosDesk /> : <NotAvailable />}</DeskPage>;
 }

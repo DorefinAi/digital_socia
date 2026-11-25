@@ -6,7 +6,7 @@
 import React, { useEffect, useState } from "react";
 import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, TextField, Typography } from "@mui/material";
 import { Check, Download, ExternalLink } from "lucide-react";
-import type { XvClip } from "@/data/xVideosData";
+import type { XvClip } from "../data/xVideosData";
 import { fmtDuration, fmtSize } from "./xvTitle";
 import type { UndoEntry } from "./deskState";
 

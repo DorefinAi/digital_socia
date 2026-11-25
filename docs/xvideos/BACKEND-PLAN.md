@@ -216,7 +216,59 @@ matched to its post on X by day and video length. Each pair (frames + transcript
 on Qwen2.5-VL 7B fits the RTX 4090 (about 1–3 h); about 50 clips are held back to score it against what the desk posted. Needs
 the full model weights (about 16 GB) and the training tools (about 3–4 GB): not downloaded yet.
 
-## 10. Open questions
+## 10. Headline architecture (proposed 25 Nov 2026)
+
+Built the way the breaking headline was built: **pure rules in `packages/core` decide, a worker stage runs them, every draft
+records which tables made it, and the desk's posts teach it.** The model is one more source of candidates behind the same
+check; it never writes the post on its own.
+
+```
+ GPU media service (Python)            packages/core/src/clips/                          apps/worker  stage "clip-compose"
+ ─────────────────────────             ──────────────────────────────────────            ───────────────────────────────
+ bar lines + times      ─┐            1 evidence.ts   one ClipEvidence (lines, slug,      loads ClipEvidence + dictionaries,
+ place slug, name strip  ├─ evidence ─►               names, numbers, transcript)        calls composeClip, saves clip_draft
+ transcript (Whisper)   ─┘            2 candidates    rules: Way B / Way C  ──┐           with compose_version, logs
+                                        (HeadlineSource)  model: few-shot ────┤           proposals (emit / suggest)
+ /headline (Qwen2.5-VL) ◄── examples ─┘                   later: LoRA ────────┤
+                                      3 check.ts      grounded? fits 280? ◄───┘                      │
+                                      4 composeClip   best + 2 alternates, then the                  ▼
+                                                      FIXED parts through the breaking   desk edits / posts ──► learn
+                                                      composer (places, handles, tags)   (evidence, suggested, posted)
+```
+
+### 10.1 The parts
+
+| # | Part | Where | Job |
+|---|---|---|---|
+| 1 | `ClipEvidence` | `core/clips/evidence.ts` | One plain object per clip: bar lines (text, first seen, how long on screen), the lead line (§2 step 6), place slug, name strips, reporter card, transcript with times. Names and numbers are pulled out of it once (`facts`). Built from the media service's JSON; nothing below reads frames or audio. |
+| 2 | Headline sources | `core/clips/headline/` | `HeadlineSource` interface, like `rewrite/`'s `Rewriter` (`createRewriter(mode)`): `candidates(evidence, examples) → Candidate[]`. **`rules`**: Way B (lead bar line + `, ` + the next bar line that adds a fact), Way C (name strip + bar line), speech-only for vertical clips. **`model`**: the media service's `/headline`, Qwen2.5-VL with 5 of the desk's past posts as examples (§10.3). `HEADLINE_MODE=rules\|model\|both`. |
+| 3 | Check | `core/clips/check.ts` | Every candidate, rules or model, passes the same gate: **grounded** (each name, number and place in it is in the evidence; the model invents nothing), **fits** (headline + suffix + tags ≤ 280 weighted, `xLen` / `fit.ts`), **not a bar line copied whole** when a better join exists, Hindi/English per the desk's rule (Q2). A candidate that fails is dropped, with the reason logged. |
+| 4 | `composeClip` | `core/clips/compose.ts` | Ranks the passing candidates (model first when it passed, else rules), keeps the best and 2 alternates for the desk. The **fixed parts are not new code**: the clip goes into `composeBreaking` as a breaking story (headline = chosen line, district = slug's place, `points` = the other bar lines), so places, the `\| <City> News` suffix (`isVideoHeadline` format B), `#FINVideo`, brand tag, police and leader handles come out exactly as on the breaking desk. |
+| 5 | Stage `clip-compose` | `apps/worker/src/stages/` | Same shape as `stages/compose.ts`: `nextStoryIsolated`-style pick, the shared `Dictionaries`, `compose_version` = dictionary versions + headline source + model version, `recordProposal` for each emitted / suggested part. |
+| 6 | Learn | `db` + `core/clips/learn.ts` | On Mark posted: the breaking `learn.ts` runs on the tags and handles as it does today; the clip adds one `clip_example` row (evidence, suggested headline, posted headline, edit distance). These rows are the examples for §10.3 and the LoRA set. |
+
+### 10.2 Why this shape
+
+- **The model can be wrong without the post being wrong.** It only offers a line; the grounding check throws out an invented name
+  or number, and the rules line is always there as the fallback. With the model off (GPU busy, service down) the desk still gets
+  a Way B headline.
+- **One set of place/handle/tag rules for both desks.** A fix on the breaking desk (a district alias, a police handle) is a fix
+  here too.
+- **Measurable.** Every draft stores which source won and what the desk posted, so "model vs rules" is a number per week, not a
+  feeling (the §8 score, ≥ 18/26, is the first one).
+
+### 10.3 Getting good headlines from the first run, in three steps
+
+| Step | What | Needs | When it is on |
+|---|---|---|---|
+| H1 | Rules only (Way B / C) | Nothing new | From the first build |
+| H2 | Model with examples: for each clip, the 5 most alike posted clips (same place, shared names/words) go in the prompt with their posted headline. The desk's style comes from its own posts, no training. | Qwen2.5-VL 7B download (~16 GB) | When it beats H1 on the 50 held-back clips |
+| H3 | LoRA on the 359 posted clips (§9), then H2's examples on top | Training tools (~3–4 GB), 1–3 h on the 4090 | When it beats H2 on the same 50 |
+
+The 50 held-back clips are never examples nor training data. Each step is switched on only by its score, and `HEADLINE_MODE`
+switches back without a deploy.
+
+## 11. Open questions
 
 - Q1–Q3 in CONTENT-ANALYSIS.md: suffix default, English names, captions over 280 characters.
 - Q4. ~~The clips folder~~ Answered: `\\10.1.1.20\fin_data\EXPORT FOR YOUTUBE`, read only (§0).

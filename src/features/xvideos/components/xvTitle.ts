@@ -3,7 +3,7 @@
 // then #FINVideo, the other tags, then the handles: how @1stIndiaNews posts them in the 21 Nov sample), and the
 // checks against X's video limits. No React here, so `node --test` runs them (xvTitle.test.ts). Imports stay relative for that reason.
 
-import { X_LIMIT, countChars, cutAtWeight } from "../BreakingDesk/socialText";
+import { X_LIMIT, countChars, cutAtWeight } from "../../../components/Newsroom/BreakingDesk/socialText";
 
 /** Every video post carries this tag, right after the brand tag */
 export const FIN_VIDEO_TAG = "#FINVideo";

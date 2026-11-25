@@ -7,10 +7,11 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { Box, Button, Checkbox, IconButton, InputBase, ListItemText, Menu, MenuItem, Skeleton, Tooltip, Typography } from "@mui/material";
 import { Keyboard, ListFilter, RefreshCw, Search, X as CloseIcon } from "lucide-react";
-import { XV_POSTED_EARLIER, xVideoClips, type XvClip } from "@/data/xVideosData";
+import { XV_POSTED_EARLIER, xVideoClips, type XvClip } from "../data/xVideosData";
+import { XVIDEOS_SOURCE } from "../lib/source";
 import { XIcon } from "@/components/leftNavigation/aiContentPlatforms";
-import VolumeStrip from "../BreakingDesk/VolumeStrip";
-import { isTextEntryTarget } from "../BreakingDesk/video/keymap";
+import VolumeStrip from "../../../components/Newsroom/BreakingDesk/VolumeStrip";
+import { isTextEntryTarget } from "../../../components/Newsroom/BreakingDesk/video/keymap";
 import { XV_COLORS } from "./ClipFrame";
 import { deskReducer, draftOf, type DeskState } from "./deskState";
 import { RejectClipDialog, UndoBar } from "./PostFlow";
@@ -18,6 +19,7 @@ import { treeOrder } from "./SourcePanels";
 import VideoEditor from "./VideoEditor";
 import { VideoPostedList, VideoQueueList, VideoRejectedList, xvRowId } from "./VideoQueue";
 import { checkClip } from "./xvTitle";
+import { useXvClipDetail, useXvLive } from "./useXvLive";
 
 type Tab = "new" | "posted" | "rejected";
 type Kind = "all" | "live" | "clip";
@@ -53,9 +55,11 @@ export default function XVideosDesk() {
 }
 
 function Desk() {
-  const [state, dispatch] = useReducer(deskReducer, undefined, (): DeskState => ({ clips: xVideoClips(Date.now()), drafts: {}, undo: [] }));
+  const [state, dispatch] = useReducer(deskReducer, undefined, (): DeskState => ({ clips: XVIDEOS_SOURCE === "demo" ? xVideoClips(Date.now()) : [], drafts: {}, undo: [] }));
   const [now, setNow] = useState(() => Date.now());
-  const [updatedAt, setUpdatedAt] = useState(() => Date.now());
+  // Demo: the sample clips. Live (NEXT_PUBLIC_XVIDEOS_SOURCE=api): the clips on the video share, asked every 15 s
+  const live = useXvLive(dispatch);
+  const updatedAt = live.updatedAt;
   const [tab, setTab] = useState<Tab>("new");
   const [kind, setKind] = useState<Kind>("all");
   const [query, setQuery] = useState("");
@@ -63,6 +67,8 @@ function Desk() {
   const [filtersAt, setFiltersAt] = useState<HTMLElement | null>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [open, setOpen] = useState<{ id: string; nav: string[] } | null>(null);
+  // Live: the open clip's transcript, also after Prev / Next or a reject that moves on
+  useXvClipDetail(dispatch, open?.id ?? null);
   const [rejecting, setRejecting] = useState<XvClip | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [keysOpen, setKeysOpen] = useState(false);
@@ -95,7 +101,8 @@ function Desk() {
   const visibleRejected = useMemo(() => rejectedClips.filter(matches), [rejectedClips, matches]);
 
   const focused = focusedId && visibleNew.some((c) => c.id === focusedId) ? focusedId : (visibleNew[0]?.id ?? null);
-  const postedToday = XV_POSTED_EARLIER + postedClips.length;
+  // The demo counts the morning's posts it has no clips for; live, every posted clip is in the list
+  const postedToday = (live.mode === "demo" ? XV_POSTED_EARLIER : 0) + postedClips.length;
   const stats = [
     { label: "To post", value: newClips.length, tone: "text.secondary" },
     { label: "Needs check", value: newClips.filter((c) => needsCheck(c, trims[c.id])).length, tone: XV_COLORS.orange },
@@ -185,20 +192,20 @@ function Desk() {
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, flexWrap: "wrap" }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, fontSize: "0.75rem", color: "text.secondary" }}>
-            <Box component="span" aria-hidden sx={{ width: 7, height: 7, borderRadius: "50%", backgroundColor: "success.main" }} />
-            Clips folder ok
+            <Box component="span" aria-hidden sx={{ width: 7, height: 7, borderRadius: "50%", backgroundColor: live.error ? "error.main" : live.loaded ? "success.main" : "text.disabled" }} />
+            {live.error ? <span role="alert">{live.error}</span> : live.loaded ? "Clips folder ok" : "Loading the clips…"}
           </Box>
           <Tooltip title="Shortcuts">
             <IconButton size="small" onClick={() => setKeysOpen(true)} aria-label="Shortcuts" sx={{ color: "text.secondary" }}>
               <Keyboard size={16} />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Check the clips folder now (demo: the list does not change)">
+          <Tooltip title={live.mode === "demo" ? "Check the clips folder now (demo: the list does not change)" : "Check the clips folder now"}>
             <Box
               component="button"
               type="button"
               onClick={() => {
-                setUpdatedAt(Date.now());
+                live.refresh();
                 setNow(Date.now());
               }}
               sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, border: 0, background: "none", p: 0.5, minHeight: 32, cursor: "pointer", color: "text.secondary", fontSize: "0.6875rem", fontFamily: "inherit", "&:hover": { color: "text.primary" }, "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", borderRadius: "4px" } }}

@@ -7,8 +7,8 @@ import React, { useId, useState } from "react";
 import { Box, Typography } from "@mui/material";
 import { Plus } from "lucide-react";
 import type { HandleSearchItem } from "@/lib/socia/types";
-import { XV_TAG_DIRECTORY } from "@/data/xVideosData";
-import { moveHighlight, searchTerm, useTagSearch, type TagSearchFn } from "../BreakingDesk/tagSearch";
+import { XV_TAG_DIRECTORY } from "../data/xVideosData";
+import { moveHighlight, searchTerm, useTagSearch, type TagSearchFn } from "../../../components/Newsroom/BreakingDesk/tagSearch";
 import { cleanTag } from "./xvTitle";
 
 /** The demo directory, searched like GET /handles?mode=prefix: from the start of the handle or a name */

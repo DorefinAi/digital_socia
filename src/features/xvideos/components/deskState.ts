@@ -1,7 +1,7 @@
 // The X Videos desk's client state (demo only, nothing is sent): the clips, each clip's draft as the desk edits it,
 // and the posts that can still be undone. One reducer, so the list and the editor always agree.
 
-import type { XvClip } from "@/data/xVideosData";
+import type { XvClip } from "../data/xVideosData";
 import { STANDARD_PREFIXES, brandTagFor, buildTitle, labelOf } from "./xvTitle";
 
 /** Where line 1 of the tweet came from, for the source chip */
@@ -47,7 +47,9 @@ export type DeskAction =
   | { type: "clip/undo"; id: string }
   | { type: "undo/expire"; now: number }
   | { type: "clip/reject"; id: string; reason: string }
-  | { type: "clip/restore"; id: string };
+  | { type: "clip/restore"; id: string }
+  | { type: "clips/sync"; clips: XvClip[] }
+  | { type: "clip/detail"; clip: XvClip };
 
 /** The "Start with" choices for a clip: the standard ones, then its own */
 export const prefixesFor = (clip: XvClip): string[] => [...STANDARD_PREFIXES, ...(clip.prefixes ?? [])];
@@ -101,5 +103,38 @@ export function deskReducer(state: DeskState, action: DeskAction): DeskState {
       return { ...state, clips: state.clips.map((c) => (c.id === action.id ? { ...c, status: "rejected", rejectedReason: action.reason } : c)) };
     case "clip/restore":
       return { ...state, clips: state.clips.map((c) => (c.id === action.id ? { ...c, status: "new", rejectedReason: undefined } : c)) };
+    case "clips/sync":
+      return { ...state, clips: syncClips(state.clips, action.clips) };
+    case "clip/detail":
+      // Only what the list leaves out: a slow answer must not undo a newer list's status or progress
+      return {
+        ...state,
+        clips: state.clips.map((c) =>
+          c.id === action.clip.id
+            ? { ...c, transcript: action.clip.transcript.length ? action.clip.transcript : c.transcript, frames: action.clip.frames ?? c.frames, contactSheet: action.clip.contactSheet ?? c.contactSheet, cutTimes: action.clip.cutTimes ?? c.cutTimes }
+            : c,
+        ),
+      };
   }
+}
+
+/**
+ * The list the backend sent, with what this tab did meanwhile kept: a clip posted or rejected here stays so (the
+ * desk's own actions are not sent yet), and a transcript already fetched for the editor is not dropped by the list,
+ * which leaves transcripts out.
+ */
+export function syncClips(current: readonly XvClip[], incoming: readonly XvClip[]): XvClip[] {
+  const byId = new Map(current.map((c) => [c.id, c]));
+  return incoming.map((next) => {
+    const had = byId.get(next.id);
+    if (!had) return next;
+    const merged = keepDeskChoice(had, next);
+    return next.transcript.length || !had.transcript.length ? merged : { ...merged, transcript: had.transcript };
+  });
+}
+
+/** `next` from the backend, keeping a post or reject this tab made that the backend does not know yet */
+function keepDeskChoice(had: XvClip, next: XvClip): XvClip {
+  const localChoice = (had.status === "rejected" && next.status !== "rejected") || (had.status === "posted" && next.status === "new");
+  return localChoice ? { ...next, status: had.status, postedAt: had.postedAt, postedText: had.postedText, rejectedReason: had.rejectedReason } : next;
 }

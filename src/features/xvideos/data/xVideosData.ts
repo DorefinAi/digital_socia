@@ -1,5 +1,5 @@
 // Demo data for the X Videos desk (/ai-content/x-videos, behind NEXT_PUBLIC_XVIDEOS), built on 26 real video posts
-// @1stIndiaNews put on X on 21 Nov 2026 (src/data/xClipsReal.json, made by docs/xvideos/build-real-clips.py). The
+// @1stIndiaNews put on X on 21 Nov 2026 (src/features/xvideos/data/xClipsReal.json, made by docs/xvideos/build-real-clips.py). The
 // suggested headline and tags are what was really posted, standing in for the system's guess; the transcript is the
 // real Hindi speech (Whisper, machine-made, capped at 40 lines). The desk states (posted, rejected, being read,
 // held) are assigned here for the demo. The videos and frames are local copies under public/xvideos-demo/real*/,
@@ -101,6 +101,8 @@ export interface XvClip {
   postedAt?: string;
   postedText?: string;
   rejectedReason?: string;
+  /** Live data only: why the backend could not read this clip (probe or speech failed after its retries) */
+  loadError?: string;
 }
 
 interface RealClip {

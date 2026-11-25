@@ -7,8 +7,8 @@
 import React from "react";
 import { Alert, Box, Button, Checkbox, Tooltip, Typography } from "@mui/material";
 import { Ban, CalendarClock, Monitor, Save, Star } from "lucide-react";
-import type { XvClip } from "@/data/xVideosData";
-import { X_LIMIT } from "../BreakingDesk/socialText";
+import type { XvClip } from "../data/xVideosData";
+import { X_LIMIT } from "../../../components/Newsroom/BreakingDesk/socialText";
 import { XV_COLORS } from "./ClipFrame";
 import { draftBrand, prefixesFor, type TagRow, type XvDraft } from "./deskState";
 import TagAdder from "./TagAdder";

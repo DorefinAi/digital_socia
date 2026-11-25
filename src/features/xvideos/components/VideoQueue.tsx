@@ -7,10 +7,10 @@
 import React from "react";
 import { Box, Button, IconButton, LinearProgress, Tooltip, Typography } from "@mui/material";
 import { AlertTriangle, Ban, Check, Copy, PenLine, RotateCcw, Undo2 } from "lucide-react";
-import type { XvClip } from "@/data/xVideosData";
-import { ageTone } from "../BreakingDesk/deskRules";
-import { srOnly, timeAgo } from "../BreakingDesk/shared";
-import { XRichText } from "../BreakingDesk/phase1/XPostPreview";
+import type { XvClip } from "../data/xVideosData";
+import { ageTone } from "../../../components/Newsroom/BreakingDesk/deskRules";
+import { srOnly, timeAgo } from "../../../components/Newsroom/BreakingDesk/shared";
+import { XRichText } from "../../../components/Newsroom/BreakingDesk/phase1/XPostPreview";
 import { ClipFrame, LiveBug, XV_COLORS } from "./ClipFrame";
 import { checkClip, fmtDuration, issueLabel } from "./xvTitle";
 

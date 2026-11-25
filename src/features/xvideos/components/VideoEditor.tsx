@@ -9,12 +9,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Box, Button, Dialog, IconButton, Menu, MenuItem, Snackbar, Tooltip, Typography, useMediaQuery, type Theme } from "@mui/material";
 import { ArrowLeft, Check, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Eye, Film, Mic, PanelLeftClose, PanelLeftOpen, X as CloseIcon } from "lucide-react";
-import type { XvClip, XvTranscriptLine } from "@/data/xVideosData";
-import VolumeStrip from "../BreakingDesk/VolumeStrip";
-import { FoldedPanelStrip, PanelResizeHandle, type PanelsConfig, useResizablePanels } from "../BreakingDesk/ResizablePanels";
-import XPostPreview from "../BreakingDesk/phase1/XPostPreview";
-import { isTextEntryTarget } from "../BreakingDesk/video/keymap";
-import { StudioModal } from "../BreakingDesk/video/panels/StudioLauncher";
+import type { XvClip, XvTranscriptLine } from "../data/xVideosData";
+import VolumeStrip from "../../../components/Newsroom/BreakingDesk/VolumeStrip";
+import { FoldedPanelStrip, PanelResizeHandle, type PanelsConfig, useResizablePanels } from "../../../components/Newsroom/BreakingDesk/ResizablePanels";
+import XPostPreview from "../../../components/Newsroom/BreakingDesk/phase1/XPostPreview";
+import { isTextEntryTarget } from "../../../components/Newsroom/BreakingDesk/video/keymap";
+import { StudioModal } from "../../../components/Newsroom/BreakingDesk/video/panels/StudioLauncher";
 import { XIcon } from "@/components/leftNavigation/aiContentPlatforms";
 import { ClipFrame, XV_COLORS, isVertical } from "./ClipFrame";
 import ClipStage from "./ClipStage";
@@ -23,7 +23,7 @@ import { ReadyForXDialog, RejectClipDialog, UndoBar } from "./PostFlow";
 import { ClipsPanel, TranscriptPanel } from "./SourcePanels";
 import TweetPanel from "./TweetPanel";
 import { useClipPlayer } from "./useClipPlayer";
-import { X_LIMIT } from "../BreakingDesk/socialText";
+import { X_LIMIT } from "../../../components/Newsroom/BreakingDesk/socialText";
 import { applyLabel, applyPrefix, assembleTagBlock, composeTweet, labelOf, lineAt, prefixOf, tweetLength } from "./xvTitle";
 
 /** Same shape as the X post maker's panels; its own key so the two desks keep their own widths */

@@ -6,7 +6,7 @@
 import React from "react";
 import { Box, Button, IconButton } from "@mui/material";
 import { Clapperboard, Pause, Play, RotateCcw, RotateCw } from "lucide-react";
-import type { XvClip } from "@/data/xVideosData";
+import type { XvClip } from "../data/xVideosData";
 import type { ClipPlayer } from "./useClipPlayer";
 import { LiveBug, MissingNote, backdropFor, isVertical } from "./ClipFrame";
 

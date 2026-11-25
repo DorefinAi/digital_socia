@@ -1,5 +1,5 @@
 // The X Videos desk's title, tag block and X limit checks.
-// Run: node --import ./src/components/Newsroom/BreakingDesk/video/timeline/__checks__/resolve-ts.mjs --test src/components/Newsroom/XVideos/xvTitle.test.ts
+// Run: node --import ./src/components/Newsroom/BreakingDesk/video/timeline/__checks__/resolve-ts.mjs --test src/features/xvideos/components/xvTitle.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
