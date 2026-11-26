@@ -15,6 +15,7 @@ import { fontsReady, istDate, loadImage } from "./backgroundCard";
 import { cardBodyText } from "../cardWords";
 import { CARD_GAP_LINES, CARD_LINE, LEGACY_CARD_LINE, type PxRect, V3_CARD_HANG_TOP, V3_CARD_LINE, cardBlockTop, cardTextArea, largestFit, legacyTextArea } from "./cardFit";
 import { DATE_STROKE, fitDate } from "./cardDate";
+import { lastLineWidth, wrapCounts } from "./lastLine";
 import type { BoxHandle } from "../ResizeFrame";
 import { textResizeKind } from "../textResize";
 
@@ -180,15 +181,9 @@ function lineCount(ctx: CanvasRenderingContext2D, text: string, width: number): 
       continue;
     }
     const space = wordWidth(ctx, " ");
-    let line = 0;
-    count += 1;
-    for (const word of words) {
-      const w = wordWidth(ctx, word);
-      if (line && line + space + w > width) {
-        count += 1;
-        line = w;
-      } else line += (line ? space : 0) + w;
-    }
+    // The card's own wrapping, its last-line rule included (lastLine.ts): never a last line of one or two words
+    const sizes = words.map((word) => wordWidth(ctx, word));
+    count += wrapCounts(sizes, space, lastLineWidth(sizes, space, width)).length;
   }
   return count;
 }
