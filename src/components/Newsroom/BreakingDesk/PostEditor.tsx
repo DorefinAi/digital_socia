@@ -1684,22 +1684,23 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
   const canCopyPost = canPost && mayMarkPosted && !takenBy;
 
   /**
-   * Saves the posted card for the operator: the image just sent (already in memory, no refetch), else the card
-   * already on the server. The file's extension follows its type (.jpg, or .png for older cards).
+   * The posted card: the image just sent (already in memory, no refetch), else the card already on the server.
+   * `type` names the format (an image type, or the stored key's path when the response has none). Null: no card.
    */
-  const downloadPostedCard = async (image: Blob | null): Promise<boolean> => {
+  const postedCard = async (image: Blob | null): Promise<{ blob: Blob; type: string } | null> => {
+    if (image) return { blob: image, type: image.type };
+    const src = apiFileUrl((draftRef.current ?? live?.draft)?.card.url);
+    if (!src) return null;
+    const res = await fetch(src, { credentials: credentialsFor(src) });
+    if (!res.ok) throw new Error(String(res.status));
+    const blob = await res.blob();
+    return { blob, type: blob.type.startsWith("image/") ? blob.type : new URL(src, window.location.href).pathname };
+  };
+
+  /** Saves the posted card as a file. The extension follows its type (.jpg, or .png for older cards). */
+  const downloadPostedCard = (card: { blob: Blob; type: string }): boolean => {
     try {
-      let blob = image;
-      let type = image?.type;
-      if (!blob) {
-        const src = apiFileUrl((draftRef.current ?? live?.draft)?.card.url);
-        if (!src) return false;
-        const res = await fetch(src, { credentials: credentialsFor(src) });
-        if (!res.ok) throw new Error(String(res.status));
-        blob = await res.blob();
-        // The stored key's extension names the format when the response has no image type
-        type = blob.type.startsWith("image/") ? blob.type : new URL(src, window.location.href).pathname;
-      }
+      const { blob, type } = card;
       const href = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = href;
@@ -1726,8 +1727,27 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
     // Step times in devtools (console.debug "[copy-posted]"), to see where the seconds go
     const timer = stepTimer("[copy-posted]");
     settleBox();
+    // X (owner, 26 Nov 2026: text and card both, every time): X's post box opens with the text already in it
+    // (X's own post link), and the card goes on the clipboard as an image, so Ctrl+V there attaches it. Both
+    // start inside the click: first the clipboard write, while the desk still has the focus (it takes the card
+    // as a promise, filled in once the card is made), then the tab, which takes the focus. One named tab is
+    // reused, so posts don't pile up tabs.
+    const cardSlot = isX ? clipboardImageSlot() : null;
+    const xTab = isX ? window.open(xComposeUrl(copiedText), X_COMPOSE_TAB) : null;
+    // X's page gets no handle back to the desk (set while the new tab is still blank, so it is allowed)
+    if (xTab) {
+      try {
+        xTab.opener = null;
+      } catch {
+        // already navigated away: nothing to cut
+      }
+    } else {
+      // No X tab (blocked, or not X): the text goes on the clipboard and the card downloads, as before
+      cardSlot?.cancel();
+    }
     try {
-      await navigator.clipboard.writeText(copiedText);
+      // With the X tab open the text is in X's box already, and the clipboard is the card's
+      if (!xTab) await navigator.clipboard.writeText(copiedText);
       timer.lap("clipboard");
     } catch {
       inFlight.current = null;
@@ -1753,9 +1773,19 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         return timer.time("card image", prepareCopyCard(exported));
       });
       const version = versionRef.current;
-      const cardSaved = await timer.time("card download", downloadPostedCard(card.image));
+      // X: the card fills the clipboard write started in the click (Ctrl+V in X's box attaches it). Downloading
+      // is the fallback, and the way everywhere else, as before.
+      const posted = await timer.time("card", postedCard(card.image).catch(() => null));
+      let cardCopied = false;
+      if (cardSlot && xTab) {
+        if (posted) cardCopied = await timer.time("card to clipboard", cardSlot.fill(posted.blob));
+        else cardSlot.cancel();
+      }
+      const cardSaved = cardCopied || (posted ? downloadPostedCard(posted) : false);
       timer.done();
-      if (!cardSaved) onSaved?.("The card didn't download. Open the story in Posted and save the card by hand.");
+      if (isX && !xTab) onSaved?.(`The browser blocked the X tab. The text is copied${cardSaved ? " and the card downloaded" : ""}: open X and paste it.`);
+      else if (!cardSaved) onSaved?.("The card didn't copy or download. Open the story in Posted and save the card by hand.");
+      else if (isX && !cardCopied) onSaved?.("The text is in X's post box. The browser wouldn't copy the card, so it was downloaded: attach it from Downloads.");
       const headline = item.headline;
       const liveNow = live;
       // The story's hold is kept (not released on leaving) so the background mark-posted still goes through
@@ -1784,6 +1814,11 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
         try {
           await finish;
         } catch (err) {
+          // X's post box holds a post the server didn't mark: close it, and empty the clipboard (best effort)
+          if (xTab) {
+            xTab.close();
+            void navigator.clipboard?.writeText("").catch(() => undefined);
+          }
           const code = errorCode(err);
           if (code === "already_posted") {
             const who = (err as { data?: { postedBy?: string | { name?: string } | null } }).data;
@@ -1798,10 +1833,16 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
       })();
     } catch (err) {
       timer.done("failed");
+      // The card's clipboard write never gets its card
+      cardSlot?.cancel();
       // The clipboard holds a post the server didn't mark: empty it (best effort) and block with a banner. Not when
       // the server says this very draft was just posted from here: the clipboard then holds that good post.
       const justPostedHere = errorCode(err) === "already_posted" && !!desk?.pending.some((p) => p.copied && p.draftId === id);
-      if (!justPostedHere) void navigator.clipboard?.writeText("").catch(() => undefined);
+      if (!justPostedHere) {
+        void navigator.clipboard?.writeText("").catch(() => undefined);
+        // X's post box holds a post the server didn't mark: close it too
+        xTab?.close();
+      }
       if (errorCode(err) === "already_posted") {
         // 409 already_posted { postedBy, postedAt }; postedBy is the name (an object tolerated)
         const who = (err as { data?: { postedBy?: string | { name?: string } | null; postedAt?: string | null } }).data;
@@ -2547,7 +2588,7 @@ export default function PostEditor({ item, platform, onClose, onSwitch, onSaved,
 
   const postButton = (onDark: boolean) =>
     live && copyMode ? (
-      <Tooltip title={!mayMarkPosted ? "Your role can't mark posts as posted" : blockedReason || `Copies the post, saves the card and moves the story to Posted${editorShortcutSuffix("post.approve")}`}>
+      <Tooltip title={!mayMarkPosted ? "Your role can't mark posts as posted" : blockedReason || `${isX ? "Opens X with the post typed in, copies the card (Ctrl+V there)" : "Copies the post, saves the card"} and moves the story to Posted${editorShortcutSuffix("post.approve")}`}>
         <span>
           <Button
             variant="contained"
@@ -4000,6 +4041,67 @@ function Phase1Checks({ story, takenBy, notPosted, retry }: { story: DraftView["
       )}
     </Box>
   );
+}
+
+/** The browser tab Copy & Mark Posted opens X's post box in (one tab, reused) */
+const X_COMPOSE_TAB = "socia-x-post";
+
+/** X's own new-post link: opens the post box with `text` already in it */
+function xComposeUrl(text: string): string {
+  return `https://x.com/intent/post?text=${encodeURIComponent(text)}`;
+}
+
+/**
+ * A clipboard write for the card, started now (inside the click, while the page has the focus) and filled in
+ * later: the browser takes the image as a promise, so the card can be made after the X tab has taken the focus.
+ * `fill` resolves true once the card is on the clipboard (false: the browser refused); `cancel` drops the write.
+ * Every slot must end in `fill` or `cancel`. Null when the browser has no image clipboard. Browsers only take PNG
+ * images on the clipboard, so a JPEG card is redrawn as PNG first.
+ */
+function clipboardImageSlot(): { fill: (card: Blob) => Promise<boolean>; cancel: () => void } | null {
+  if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) return null;
+  let resolve!: (png: Blob) => void;
+  let reject!: (why: Error) => void;
+  const png = new Promise<Blob>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  let written: Promise<boolean>;
+  try {
+    written = navigator.clipboard.write([new ClipboardItem({ "image/png": png })]).then(
+      () => true,
+      () => false,
+    );
+  } catch {
+    return null;
+  }
+  return {
+    fill: async (card) => {
+      try {
+        resolve(card.type === "image/png" ? card : await toPng(card));
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error("png export failed"));
+      }
+      return written;
+    },
+    cancel: () => reject(new Error("cancelled")),
+  };
+}
+
+/** Redraws an image blob as PNG (the only image type browsers write to the clipboard). */
+async function toPng(image: Blob): Promise<Blob> {
+  const bitmap = await createImageBitmap(image);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("no 2d context");
+    ctx.drawImage(bitmap, 0, 0);
+    return await new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("png export failed"))), "image/png"));
+  } finally {
+    bitmap.close();
+  }
 }
 
 /** Copies `text`: the clipboard API, else the browser's older copy command. Resolves false when both are blocked. */

@@ -138,8 +138,8 @@ function LiveUndoToast({ keyboardUndo }: { keyboardUndo: boolean }) {
           return (
             <Box key={p.id} sx={toastSx}>
               <Box sx={{ minWidth: 0, flex: 1 }}>
-                <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600 }}>{p.copied.withCard ? "Copied, card saved, moved to Posted" : "Copied and moved to Posted"}</Typography>
-                <Typography sx={{ fontSize: "0.75rem", color: failed[p.id] ? "#FF8A80" : "rgba(255,255,255,0.65)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{failed[p.id] ?? keyboardUndo ? `Paste it into X now. ${keyLabel("mod+z")} to undo` : "Paste it into X now."}</Typography>
+                <Typography sx={{ fontSize: "0.8125rem", fontWeight: 600 }}>{p.copied.withCard ? "Copied with the card, moved to Posted" : "Copied and moved to Posted"}</Typography>
+                <Typography sx={{ fontSize: "0.75rem", color: failed[p.id] ? "#FF8A80" : "rgba(255,255,255,0.65)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{failed[p.id] ?? keyboardUndo ? `Finish the post in X now. ${keyLabel("mod+z")} to undo` : "Finish the post in X now."}</Typography>
               </Box>
               <Button size="small" onClick={() => void undo(p.id)} aria-keyshortcuts="Control+Z Meta+Z" sx={{ minHeight: 30, color: "#FFD400", fontWeight: 700 }}>
                 Undo
