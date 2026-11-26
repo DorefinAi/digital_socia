@@ -87,7 +87,8 @@ export function crispPoints(points: string[], dots: string, max = BREAKING_BODY_
   };
   const taken = fill(parts);
   if (taken) return taken + dots;
-  const items = parts[0]!.split(/\s*[,،;]\s*/u).filter(Boolean);
+  // A comma between two digits is part of a number ("1,50,000 रुपये"), never a list break (core LIST_BREAK)
+  const items = parts[0]!.split(/\s*(?:[،;]|,(?!\d)|(?<!\d),)\s*/u).filter(Boolean);
   const listed = fill(items);
   if (listed && items.length >= LIST_MIN_ITEMS) return listed + dots;
   const first = parts.length > 1 ? parts[0]! + dots : parts[0]!;
