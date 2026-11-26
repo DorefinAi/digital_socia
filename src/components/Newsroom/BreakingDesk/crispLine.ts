@@ -1,5 +1,5 @@
 // The breaking post's line 2, the desk's way: the frontend copy of the composer's crispPoints / breakingDots
-// (backend packages/core/src/breaking/compose.ts, format b8). The word lists and numbers live in the backend; this
+// (backend packages/core/src/breaking/compose.ts; whole points since 27 Nov 2026). This
 // copy is checked against the backend's 200 shared cases (packages/core/test/fixtures/crisp-cases.json).
 import type { SocialPlatform } from "@/types/newsroom";
 import { countChars, shortenToFit } from "./socialText";
@@ -7,40 +7,17 @@ import { countChars, shortenToFit } from "./socialText";
 const X = "X (Twitter)" as const;
 const xLen = (text: string) => countChars(text, X);
 
-/** Line 2's length, its dots included: the cut lands between MIN and MAX, nearest TARGET */
+/** Line 2's length, its dots included: whole points up to MAX (MIN and TARGET describe the desk's habit) */
 export const BREAKING_BODY_MIN = 100;
 export const BREAKING_BODY_TARGET = 120;
 export const BREAKING_BODY_MAX = 130;
-/** A line 2 shorter than this is a stub ("आमजन....") and the post goes without it */
+/** Kept for old callers: since 27 Nov 2026 line 2 is whole points, so no stub is ever cut (no floor applies) */
 export const BREAKING_BODY_FLOOR = 40;
 /** The longest whole post the composer writes and the desk can post by hand (b8 decisions §0.2); Fit makes 280 */
 export const BREAKING_POST_MAX = 1000;
 
 const nfc = (words: string[]): ReadonlySet<string> => new Set(words.map((w) => w.normalize("NFC")));
 
-/** Postpositions, conjunctions and relational nouns a point can stop on so its outcome is withheld */
-const LINKING_WORDS = nfc([
-  "का", "की", "के", "को", "से", "में", "पर", "ने", "और", "व", "एवं", "तथा", "जबकि", "बाद", "लेकर", "दौरान", "तक", "लिए", "साथ",
-  "द्वारा", "बीच", "सहित", "समेत", "खिलाफ", "बावजूद", "चलते", "जरिए", "कि", "लेकिन", "पहले",
-]);
-/** "की गई", "को है": after these the word before is a verb or complete, not a link */
-const AUXILIARIES = nfc([
-  "गई", "गया", "गए", "गयी", "जा", "जाएगी", "जाएगा", "जाएंगे", "जाती", "जाता", "जाते", "है", "हैं", "था", "थी", "थे", "रही", "रहा", "रहे", "हो",
-  "होगा", "होगी", "होंगे", "हुआ", "हुई", "हुए", "सकता", "सकती", "सकते", "चुकी", "चुका", "चुके",
-]);
-/** Describing words the payoff follows: "डंपर और कार के बीच हुई जोरदार...." */
-const HANGING_WORDS = nfc([
-  "जोरदार", "भीषण", "बड़ी", "बड़ा", "बड़े", "गंभीर", "दर्दनाक", "तेज", "अहम", "नई", "नया", "नए", "भारी", "खास", "विशेष",
-  "अचानक", "पूरी", "पूरा", "पूरे", "अनूठी", "अनूठा", "शानदार", "सनसनीखेज", "जानलेवा", "खूनी",
-]);
-/** Words that finish a statement: a cut after them gives the outcome away ("…किया गिरफ्तार", "…जारी") */
-const FINISHING_WORDS = nfc([
-  "किया", "किए", "की", "दी", "दिया", "दिए", "मिला", "मिली", "मिले", "गिरफ्तार", "जारी", "बरामद", "जब्त", "दर्ज", "शुरू", "पूरी",
-  "मौजूद", "रवाना", "पहुंचे", "पहुंची", "पहुंचा", "निलंबित", "घायल",
-]);
-const NUMBER = /^[\p{N}.,:]+$/u;
-/** Punctuation left dangling before the dots */
-const DANGLING = /[\s,،;:।॥|\-–—]+$/u;
 /** Trailing punctuation a cut on words or letters drops (core compose.ts TRAILING) */
 const TRAILING = /[\s।॥,;:\-–—]+$/u;
 /** Line 2's closing dots (or an ellipsis) */
@@ -48,23 +25,9 @@ const CLOSING_DOTS = /\s*(?:\.{2,}|…)$/u;
 
 const trimPoint = (p: string) => p.normalize("NFC").replace(/[\s।॥|.,;:!-]+$/u, "").replace(/\s+/g, " ").trim();
 
-interface Word { text: string; start: number; end: number }
-
-let wordSplitter: Intl.Segmenter | null = null;
 let letterSplitter: Intl.Segmenter | null = null;
 // Older browsers (Firefox before 125) have no Intl.Segmenter: checked on each use, as the other card files do
 const hasSegmenter = () => typeof Intl !== "undefined" && typeof (Intl as { Segmenter?: unknown }).Segmenter === "function";
-
-/** The words of `text`, with their offsets; split on spaces where the browser has no word segmenter */
-function wordsOf(text: string): Word[] {
-  if (hasSegmenter()) {
-    wordSplitter ??= new Intl.Segmenter("hi", { granularity: "word" });
-    return [...wordSplitter.segment(text)].filter((s) => s.isWordLike).map((s) => ({ text: s.segment, start: s.index, end: s.index + s.segment.length }));
-  }
-  // Word characters, the zero-width joiners Hindi typing puts inside a word ("दिल्‍ली"), and numbers like 1.39 / 5,732
-  // A word starts with a letter or digit, so the joiners and selectors inside an emoji are never words
-  return [...text.matchAll(/[\p{L}\p{N}_][\p{L}\p{M}\p{N}_\u200C\u200D]*(?:[.,:'’][\p{L}\p{N}_][\p{L}\p{M}\p{N}_\u200C\u200D]*)*/gu)].map((m) => ({ text: m[0], start: m.index ?? 0, end: (m.index ?? 0) + m[0].length }));
-}
 
 /** The letters of `text` (whole graphemes); one code point each without a segmenter */
 function lettersOf(text: string): string[] {
@@ -74,19 +37,6 @@ function lettersOf(text: string): string[] {
   }
   // As the segmenter groups them: an emoji sequence, or a letter with its vowel signs, conjuncts joined by a virama
   return text.match(/\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F|\u200D\p{Extended_Pictographic}|[\u{E0020}-\u{E007F}])*|\P{M}\p{M}*[\u200C\u200D]*(?:(?<=[\u094D\u200C\u200D])\p{L}\p{M}*[\u200C\u200D]*)*/gu) ?? [];
-}
-
-const isContent = (w: Word | undefined): w is Word => !!w && !LINKING_WORDS.has(w.text) && !AUXILIARIES.has(w.text);
-
-/** The longest run of whole words within `budget`, trailing punctuation dropped (core cutOnWords) */
-function cutOnWords(text: string, budget: number): string {
-  if (budget <= 0) return "";
-  let end = 0;
-  for (const w of wordsOf(text)) {
-    if (xLen(text.slice(0, w.end)) > budget) break;
-    end = w.end;
-  }
-  return text.slice(0, end).replace(TRAILING, "");
 }
 
 /** Whole letters within `budget`, never ending on a virama (core cutOnGraphemes): the fallback for one huge word */
@@ -111,67 +61,37 @@ export function plainHeadline(line1: string): string {
   return line1.normalize("NFC").replace(/\s+/g, " ").trim().replace(/^(?:#\S+\s*)+[:：]?\s*/u, "").trim();
 }
 
+/** A point with at least this many comma-separated items is a list written on one line (line 2 takes whole items) */
+const LIST_MIN_ITEMS = 3;
+
 /**
- * The points as line 2: all of them when they fit in `max`; otherwise a cut between MIN and `max` X characters
- * (dots included) that withholds the payoff, then `dots`. Under BREAKING_BODY_FLOOR: "". Same as the composer's.
+ * The points as line 2, by WHOLE points (owner, 27 Nov 2026), the same as the composer's (core crispPoints): every point
+ * when they all fit in `max` (no dots); otherwise the points from the top while they fit with `dots`, then `dots`; when
+ * even the first point does not fit `max`, its comma-separated items the same way (a list on one line, 3 items or more),
+ * else that whole point then `dots` as long as it fits `room`; else "". A point, or an item, is never cut.
  */
-export function crispPoints(points: string[], dots: string, max = BREAKING_BODY_MAX): string {
+export function crispPoints(points: string[], dots: string, max = BREAKING_BODY_MAX, room = max): string {
   const parts = points.map(trimPoint).filter(Boolean);
   if (!parts.length || max <= 0) return "";
   const all = parts.join(", ");
-  const line = xLen(all) <= max ? all : cutPoints(parts, all, dots, max);
-  return xLen(line) < BREAKING_BODY_FLOOR ? "" : line;
-}
-
-function cutPoints(parts: string[], all: string, dots: string, max: number): string {
+  if (xLen(all) <= max) return all;
   const dotLen = xLen(dots);
-  // Never under the floor: a shorter cut would win on score and then be dropped as a stub (review B2)
-  const lo = Math.max(BREAKING_BODY_FLOOR, Math.min(BREAKING_BODY_MIN, max - 30));
-  const target = Math.min(BREAKING_BODY_TARGET, max);
-  const words = wordsOf(all);
-  // Each word's point, and how many words and content words of that point come after it
-  const point: number[] = [];
-  let p = 0;
-  let pointEnd = parts[0]!.length;
-  for (const w of words) {
-    while (w.start >= pointEnd && p < parts.length - 1) pointEnd += 2 + parts[++p]!.length;
-    point.push(p);
-  }
-  const rest = new Array<number>(words.length).fill(0);
-  const hidden = new Array<number>(words.length).fill(0);
-  for (let i = words.length - 2; i >= 0; i--) {
-    if (point[i + 1] !== point[i]) continue;
-    rest[i] = rest[i + 1]! + 1;
-    hidden[i] = hidden[i + 1]! + (isContent(words[i + 1]) ? 1 : 0);
-  }
-  let best: { text: string; score: number } | null = null;
-  for (let i = 0; i < words.length; i++) {
-    const w = words[i]!;
-    const text = all.slice(0, w.end).replace(DANGLING, "");
-    const len = xLen(text) + dotLen;
-    // Prefixes only grow: nothing after this fits either
-    if (len > max) break;
-    if (!text || len < lo) continue;
-    const next = words[i + 1];
-    let score = 0;
-    // The order matters: "की" is both a linking and a finishing word, "पूरी" both describing and finishing; the
-    // first rule that matches decides
-    if (!rest[i]) score -= 4;
-    else if (LINKING_WORDS.has(w.text) && isContent(next) && !(NUMBER.test(words[i - 1]?.text ?? "") && NUMBER.test(next.text))) score += 3;
-    else if (HANGING_WORDS.has(w.text) && isContent(next)) score += 3;
-    else if (FINISHING_WORDS.has(w.text) || AUXILIARIES.has(w.text)) score -= 2;
-    else if (NUMBER.test(w.text)) score -= 2;
-    else if (isContent(w) && next && (FINISHING_WORDS.has(next.text) || AUXILIARIES.has(next.text))) score += 2;
-    else if (LINKING_WORDS.has(w.text)) score -= 1;
-    if (rest[i] && hidden[i]! >= 2) score += 1;
-    score -= Math.abs(len - target) / 10;
-    if (!best || score > best.score) best = { text, score };
-  }
-  if (best) return best.text + dots;
-  const onWords = cutOnWords(all, max - dotLen).replace(DANGLING, "");
-  if (onWords && xLen(onWords) + dotLen >= BREAKING_BODY_FLOOR) return onWords + dots;
-  const onLetters = cutOnLetters(all, max - dotLen).replace(DANGLING, "");
-  return onLetters ? onLetters + dots : "";
+  const fill = (xs: string[]) => {
+    let taken = "";
+    for (const x of xs) {
+      const next = taken ? `${taken}, ${x}` : x;
+      if (xLen(next) + dotLen > max) break;
+      taken = next;
+    }
+    return taken;
+  };
+  const taken = fill(parts);
+  if (taken) return taken + dots;
+  const items = parts[0]!.split(/\s*[,،;]\s*/u).filter(Boolean);
+  const listed = fill(items);
+  if (listed && items.length >= LIST_MIN_ITEMS) return listed + dots;
+  const first = parts.length > 1 ? parts[0]! + dots : parts[0]!;
+  return xLen(first) <= room ? first : "";
 }
 
 const squash = (s: string) => s.normalize("NFC").replace(/[\s,]+/g, " ").trim();
@@ -204,7 +124,7 @@ export interface FitInput {
  *   - is left exactly as typed when the desk wrote it and the post fits, or cut from the desk's own words when not,
  *   - stays out when the desk deleted it.
  * The post is measured exactly as it will go out (Windows line breaks made plain, every line break counted), and
- * line 2 is cut again until it fits; under 40 characters it is dropped. Dots: the composer's own, else from the
+ * line 2 takes fewer whole points until it fits (never a cut inside a point). Dots: the composer's own, else from the
  * plain headline as the composer picks them.
  */
 export function fitPostBody({ liveBreaking, platform, body, composerLine2, original, storyPoints, budget }: FitInput): string {
@@ -233,8 +153,9 @@ export function fitPostBody({ liveBreaking, platform, body, composerLine2, origi
   const points = storyPoints.map((p) => p.trim()).filter(Boolean);
   const source = untouched && points.length ? points : [typed.replace(CLOSING_DOTS, "")];
   // Room for line 2 once line 1, the tag lines and the blank line before line 2 are counted
-  let max = Math.min(BREAKING_BODY_MAX, budget - xLen(assemble("")) - 2);
-  let line2 = crispPoints(source, dots, max);
+  const room = budget - xLen(assemble("")) - 2;
+  let max = Math.min(BREAKING_BODY_MAX, room);
+  let line2 = crispPoints(source, dots, max, room);
   while (line2 && xLen(assemble(line2)) > budget) {
     max -= xLen(assemble(line2)) - budget;
     line2 = crispPoints(source, dots, max);

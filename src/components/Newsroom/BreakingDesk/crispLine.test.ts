@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { BREAKING_BODY_FLOOR, BREAKING_BODY_MAX, BREAKING_BODY_MIN, breakingDots, crispPoints, fitPostBody, plainHeadline } from "./crispLine";
+import { BREAKING_BODY_MAX, breakingDots, crispPoints, fitPostBody, plainHeadline } from "./crispLine";
 import { countChars } from "./socialText";
 
 const xLen = (s: string) => countChars(s, "X (Twitter)");
@@ -46,26 +46,26 @@ test("gives every shared Fit case, each within its budget", { skip: noBackend },
 
 // ─── crispPoints ─────────────────────────────────────────────────────────────────────────────────────────
 
-test("cuts long points to 100–130 with the dots counted inside, on a linking word", () => {
-  assert.equal(crispPoints(points, "...."), "मंडी की एडवाइजरी में भी सियासी सवाल, किसान पहले जाएं या मौसम देखें, फसल खाली जमीन पर नहीं रखने का फरमान, किसानों की....");
+test("long points: whole points within 130, then the dots; never a cut inside a point (27 Nov 2026)", () => {
+  assert.equal(crispPoints(points, "...."), "मंडी की एडवाइजरी में भी सियासी सवाल, किसान पहले जाएं या मौसम देखें, फसल खाली जमीन पर नहीं रखने का फरमान....");
   for (const d of ["...", "...."]) {
     const body = crispPoints(points, d);
-    assert.ok(xLen(body) >= BREAKING_BODY_MIN && xLen(body) <= BREAKING_BODY_MAX, `${xLen(body)}`);
+    assert.ok(xLen(body) <= BREAKING_BODY_MAX, `${xLen(body)}`);
+    assert.ok(points.some((_, i) => body === points.slice(0, i + 1).join(", ") + d), body);
   }
 });
 
-test("never takes a cut under 40 when one of 40 or more fits (review B2)", () => {
-  const raid = ["पुलिस ने अवैध शराब के खिलाफ अभियान चलाकर", "तस्करों के ठिकानों पर दबिश देकर शराब बरामद की गई और दो आरोपी पकड़े"];
-  assert.equal(crispPoints(raid, "...", 45), "पुलिस ने अवैध शराब के खिलाफ अभियान चलाकर...");
-  for (let max = 45; max <= 69; max++) {
-    const out = crispPoints(raid, "...", max);
-    assert.ok(xLen(out) >= BREAKING_BODY_FLOOR && xLen(out) <= max, `${max}: ${out}`);
-  }
+test("Hanumangarh: whole points, then the dots", () => {
+  const hmh = ["कांग्रेस ने रामकुमार स्वामी को घोषित किया प्रत्याशी", "भाजपा ने रजनीश कस्वां को बनाया प्रत्याशी", "दोनों दलों के कार्यकर्ताओं में उत्साह, कल होगा नामांकन दाखिल करने का कार्यक्रम"];
+  assert.equal(crispPoints(hmh, "..."), "कांग्रेस ने रामकुमार स्वामी को घोषित किया प्रत्याशी, भाजपा ने रजनीश कस्वां को बनाया प्रत्याशी...");
 });
 
-test("drops a line 2 under 40 characters, and cuts one huge word by letters", () => {
-  assert.equal(crispPoints(["पुलिस ने आरोपी को पकड़ा", "जांच जारी"], "...."), "");
-  assert.equal(crispPoints(["अ".repeat(200)], "..."), `${"अ".repeat(BREAKING_BODY_MAX - 3)}...`);
+test("a short line 2 stays (no floor); a list on one line gives whole items; one huge word gives no line 2", () => {
+  assert.equal(crispPoints(["पुलिस ने आरोपी को पकड़ा", "जांच जारी"], "...."), "पुलिस ने आरोपी को पकड़ा, जांच जारी");
+  const list = "बिकासर से अमृतलाल भांभू, सिलवा से लालूदान, रायसर से मेघाराम मेघवाल,बंधडा से मुन्नी, जैसलसर से प्रमिला कंवर शेखावत, बिरमसर से रामलाल, उदासर से गोपालराम, कानासर से भंवरलाल";
+  assert.equal(crispPoints([list, "दूसरा बिंदु"], "..."), "बिकासर से अमृतलाल भांभू, सिलवा से लालूदान, रायसर से मेघाराम मेघवाल, बंधडा से मुन्नी, जैसलसर से प्रमिला कंवर शेखावत...");
+  assert.equal(crispPoints(["अ".repeat(200)], "..."), "");
+  assert.equal(xLen(crispPoints(["अ".repeat(200)], "...", BREAKING_BODY_MAX, 250)), 200);
 });
 
 test("splits words and counts emoji like the backend where the browser has no Intl.Segmenter (review B5)", () => {
@@ -133,8 +133,9 @@ test("Fit keeps a line 2 the desk shortened, and does not bring back one they de
 });
 
 test("Fit never cuts a line of tags and handles (review B6)", () => {
+  // The desk's own line of two sentences is too long and is never cut inside (27 Nov 2026): it goes, the tags stay whole
   const out = fit(`${headline}\n\n#Extra @x\n\n${longDesk} ${longDesk}`, 200);
-  assert.ok(out.includes("\n\n#Extra @x\n\n"));
+  assert.ok(out.includes("\n\n#Extra @x"));
   assert.ok(xLen(out) <= 200);
 });
 
