@@ -45,7 +45,17 @@ export interface DeskState {
   parked: Record<string, XvClip[]>;
   drafts: Record<string, XvDraft>;
   undo: UndoEntry[];
+  /**
+   * Live: per clip, when the desk last sent it an action and whether the answer is still to come. A list asked for
+   * before that (or while it is pending) does not overwrite the clip's desk state, so a poll already on its way never
+   * undoes a post, undo, reject or restore made meanwhile.
+   */
+  acted?: Record<string, { at: number; pending: boolean }>;
 }
+
+/** The fields the desk's own actions set; the backend's answer (or a list newer than the last action) replaces them */
+const DESK_FIELDS = ["status", "postedAt", "postedText", "postId", "postedBy", "rejectedReason", "heldBy", "savedDraft"] as const;
+const deskFields = (c: XvClip) => Object.fromEntries(DESK_FIELDS.map((k) => [k, c[k]])) as Pick<XvClip, (typeof DESK_FIELDS)[number]>;
 
 export type DeskAction =
   | { type: "draft/patch"; id: string; patch: Partial<XvDraft> }
@@ -54,8 +64,15 @@ export type DeskAction =
   | { type: "undo/expire"; now: number }
   | { type: "clip/reject"; id: string; reason: string }
   | { type: "clip/restore"; id: string }
-  /** The backend's list for day folder `day` (another day than the shown one switches to it first) */
-  | { type: "clips/sync"; day: string | null; clips: XvClip[] }
+  /**
+   * The backend's list for day folder `day` (another day than the shown one switches to it first); `requestedAt`: when
+   * that list was asked for (live), so an answer older than the desk's last action on a clip leaves that clip alone
+   */
+  | { type: "clips/sync"; day: string | null; clips: XvClip[]; requestedAt?: number }
+  /** Live: an action on this clip went to the backend */
+  | { type: "clip/sending"; id: string; at: number }
+  /** Live: the backend refused or could not be reached; the next list shows what stands */
+  | { type: "clip/failed"; id: string }
   /** The desk picked another day: show what this tab had for it (if anything) until its list comes */
   | { type: "day/switch"; day: string }
   | { type: "clip/detail"; clip: XvClip }
@@ -120,14 +137,25 @@ export function deskReducer(state: DeskState, action: DeskAction): DeskState {
       return switchDay(state, action.day);
     case "clips/sync": {
       const base = action.day ? switchDay(state, action.day) : state;
-      return { ...base, clips: syncClips(base.clips, action.clips) };
+      const clips = syncClips(base.clips, action.clips, base.acted, action.requestedAt);
+      // A post the list says no longer stands leaves the undo bar
+      const posted = new Set(clips.filter((c) => c.status === "posted").map((c) => c.id));
+      const undo = base.undo.filter((u) => posted.has(u.clipId) || !clips.some((c) => c.id === u.clipId));
+      return { ...base, clips, undo: undo.length === base.undo.length ? base.undo : undo };
+    }
+    case "clip/sending":
+      return { ...state, acted: { ...state.acted, [action.id]: { at: action.at, pending: true } } };
+    case "clip/failed": {
+      const a = state.acted?.[action.id];
+      return a ? { ...state, acted: { ...state.acted, [action.id]: { ...a, pending: false, at: 0 } } } : state;
     }
     case "clip/server": {
       const s = action.clip;
-      const serverFields = { status: s.status, postedAt: s.postedAt, postedText: s.postedText, postId: s.postId, postedBy: s.postedBy, rejectedReason: s.rejectedReason, heldBy: s.heldBy, savedDraft: s.savedDraft };
+      const a = state.acted?.[s.id];
       return {
         ...state,
-        clips: state.clips.map((c) => (c.id === s.id ? { ...c, ...serverFields } : c)),
+        clips: state.clips.map((c) => (c.id === s.id ? { ...c, ...deskFields(s) } : c)),
+        acted: a ? { ...state.acted, [s.id]: { ...a, pending: false } } : state.acted,
         // A post the backend no longer has standing leaves the undo bar
         undo: s.status === "posted" ? state.undo : state.undo.filter((u) => u.clipId !== s.id),
       };
@@ -159,24 +187,21 @@ export function switchDay(state: DeskState, day: string): DeskState {
 }
 
 /**
- * The list the backend sent, with what this tab did meanwhile kept: a clip posted or rejected here stays so (the
- * desk's own actions are not sent yet), and a transcript already fetched for the editor is not dropped by the list,
- * which leaves transcripts out.
+ * The list the backend sent, with what this tab did meanwhile kept: a clip whose action is still on its way, or that
+ * the desk acted on after this list was asked for, keeps its desk state (status, post, reject, hold, draft); everything
+ * else is the backend's. A transcript already fetched for the editor is not dropped by the list, which leaves
+ * transcripts out. Without `requestedAt` (an old caller) only pending actions are kept.
  */
-export function syncClips(current: readonly XvClip[], incoming: readonly XvClip[]): XvClip[] {
+export function syncClips(current: readonly XvClip[], incoming: readonly XvClip[], acted: DeskState["acted"] = {}, requestedAt?: number): XvClip[] {
   const byId = new Map(current.map((c) => [c.id, c]));
   return incoming.map((next) => {
     const had = byId.get(next.id);
     if (!had) return next;
-    const merged = keepDeskChoice(had, next);
+    const a = acted[next.id];
+    const keep = a && (a.pending || (requestedAt !== undefined && a.at >= requestedAt));
+    const merged = keep ? { ...next, ...deskFields(had) } : next;
     return next.transcript.length || !had.transcript.length ? merged : { ...merged, transcript: had.transcript };
   });
-}
-
-/** `next` from the backend, keeping a post or reject this tab made that the backend does not know yet */
-function keepDeskChoice(had: XvClip, next: XvClip): XvClip {
-  const localChoice = (had.status === "rejected" && next.status !== "rejected") || (had.status === "posted" && next.status === "new");
-  return localChoice ? { ...next, status: had.status, postedAt: had.postedAt, postedText: had.postedText, postId: had.postId, rejectedReason: had.rejectedReason } : next;
 }
 
 /** The tags and handles of a draft that go in the post (ticked), as the backend records them */

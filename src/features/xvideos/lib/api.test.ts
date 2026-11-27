@@ -54,12 +54,39 @@ test("a clip still being read keeps its progress; a failed one says why", () => 
   assert.equal(toXvClip(wire({ status: "new", error: "probe: no video stream" })).loadError, "probe: no video stream");
 });
 
-test("the list merge keeps a reject made in this tab and a transcript already fetched", () => {
+test("the list merge keeps a reject still on its way and a transcript already fetched", () => {
   const had = [{ ...toXvClip(wire({ status: "new" })), status: "rejected" as const, rejectedReason: "duplicate", transcript: [{ at: 0, text: "नमस्कार" }] }];
-  const [merged] = syncClips(had, [toXvClip(wire({ status: "new" }))]);
+  const id = had[0]!.id;
+  const [merged] = syncClips(had, [toXvClip(wire({ status: "new" }))], { [id]: { at: 100, pending: true } }, 200);
   assert.equal(merged?.status, "rejected");
   assert.equal(merged?.rejectedReason, "duplicate");
   assert.deepEqual(merged?.transcript, [{ at: 0, text: "नमस्कार" }]);
+});
+
+test("a list asked for before the desk's last action leaves that clip alone; a newer list (or a failed action) wins", () => {
+  const had = [{ ...toXvClip(wire({ status: "new", done: false })), status: "new" as const }];
+  const id = had[0]!.id;
+  const staleList = [toXvClip(wire({ status: "posted", postId: 5, done: false }))];
+  // Undone at 300 (answer back), a poll asked for at 250 still says posted: kept new
+  assert.equal(syncClips(had, staleList, { [id]: { at: 300, pending: false } }, 250)[0]?.status, "new");
+  // A list asked for after the undo says posted: the backend wins
+  assert.equal(syncClips(had, staleList, { [id]: { at: 300, pending: false } }, 400)[0]?.status, "posted");
+  // No action on the clip: the backend wins
+  assert.equal(syncClips(had, staleList, {}, 1)[0]?.status, "posted");
+});
+
+test("a failed post goes back to what the backend says, and leaves the undo bar", () => {
+  const clip = toXvClip(wire({ status: "new", done: false }));
+  let state: DeskState = { clips: [clip], day: null, parked: {}, drafts: {}, undo: [] };
+  state = deskReducer(state, { type: "clip/post", id: clip.id, text: "t", at: 1 });
+  state = deskReducer(state, { type: "clip/sending", id: clip.id, at: 10 });
+  // A poll on its way while the post is pending does not undo it
+  state = deskReducer(state, { type: "clips/sync", day: null, clips: [toXvClip(wire({ status: "new", done: false }))], requestedAt: 20 });
+  assert.equal(state.clips[0]!.status, "posted");
+  state = deskReducer(state, { type: "clip/failed", id: clip.id });
+  state = deskReducer(state, { type: "clips/sync", day: null, clips: [toXvClip(wire({ status: "new", done: false }))], requestedAt: 30 });
+  assert.equal(state.clips[0]!.status, "new");
+  assert.deepEqual(state.undo, []);
 });
 
 test("the list merge takes new clips and drops ones the backend no longer lists", () => {
@@ -152,6 +179,8 @@ test("another day's list replaces the shown one; going back brings this tab's re
   const b = toXvClip(wire({ id: "b", status: "new", day: "2026-11-26" }));
   let s = deskReducer(desk(), { type: "clips/sync", day: "2026-11-27", clips: [a] });
   s = deskReducer(s, { type: "clip/reject", id: "a", reason: "duplicate" });
+  // Sent to the backend, its answer still on its way
+  s = deskReducer(s, { type: "clip/sending", id: "a", at: 10 });
   s = deskReducer(s, { type: "day/switch", day: "2026-11-26" });
   assert.equal(s.day, "2026-11-26");
   assert.deepEqual(s.clips, [], "nothing of the 27th is listed under the 26th while its list loads");

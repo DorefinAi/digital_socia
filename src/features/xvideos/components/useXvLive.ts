@@ -34,6 +34,8 @@ export interface XvLive {
    * ~15 s. A second call meanwhile does nothing. Demo: moves the "Updated" time on only
    */
   refresh: () => void;
+  /** Asks for the list again now (no share walk): after a desk action the backend refused */
+  reload: () => void;
   /** A Refresh is still checking the share (the ~15 s after it) */
   checking: boolean;
 }
@@ -73,11 +75,12 @@ export function useXvLive(dispatch: Dispatch<DeskAction>, day: string | null, ho
       const ctl = new AbortController();
       inflight.current = ctl;
       const signal = AbortSignal.any([ctl.signal, AbortSignal.timeout(LIST_TIMEOUT_MS)]);
+      const requestedAt = Date.now();
       fetchXvClips(day ?? holdRef.current, signal)
         .then(
           (res) => {
             if (ctl.signal.aborted) return;
-            dispatch({ type: "clips/sync", day: res.day, clips: res.clips });
+            dispatch({ type: "clips/sync", day: res.day, clips: res.clips, requestedAt });
             setLoaded(true);
             setLoadedDay(res.day);
             setFailure(null);
@@ -157,12 +160,16 @@ export function useXvLive(dispatch: Dispatch<DeskAction>, day: string | null, ho
     );
   }, [live, load, day]);
 
+  const reload = useCallback(() => {
+    if (live) load(true);
+  }, [live, load]);
+
   // A failed walk request shows like a failed list, for the ~15 s of the check
   const error = failure && failure.day === day ? failure.text : null;
   const shownError = error ?? rescanError;
   return useMemo(
-    () => ({ mode: live ? "api" : "demo", loaded, loadedDay, error: shownError, updatedAt, refresh, checking }),
-    [live, loaded, loadedDay, shownError, updatedAt, refresh, checking],
+    () => ({ mode: live ? "api" : "demo", loaded, loadedDay, error: shownError, updatedAt, refresh, reload, checking }),
+    [live, loaded, loadedDay, shownError, updatedAt, refresh, reload, checking],
   );
 }
 

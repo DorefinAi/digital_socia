@@ -80,7 +80,7 @@ function Desk() {
   // Live: the open clip's transcript, also after Prev / Next or a reject that moves on
   useXvClipDetail(dispatch, open?.id ?? null);
   // Live: every action to the backend (drafts saved a moment after the last change); a refusal is shown here
-  const actions = useXvActions(live.mode === "api", dispatch, state, live.refresh);
+  const actions = useXvActions(live.mode === "api", dispatch, state, live.reload);
   const [rejecting, setRejecting] = useState<XvClip | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [keysOpen, setKeysOpen] = useState(false);
@@ -224,8 +224,8 @@ function Desk() {
   const sendUndo = actions.undo;
   const onUndo = useCallback(
     (id: string) => {
-      sendUndo(id);
-      dispatch({ type: "clip/undo", id });
+      // Shown only when it went to the backend (not while the post's own answer is still on its way)
+      if (sendUndo(id)) dispatch({ type: "clip/undo", id });
     },
     [sendUndo],
   );
@@ -239,8 +239,8 @@ function Desk() {
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 2 }}>
       <VolumeStrip name="X" used={postedToday} cap={10000} />
       {actions.error && (
-        <Alert severity="warning" onClose={actions.clearError} sx={{ borderRadius: "10px" }}>
-          {actions.error}
+        <Alert key={actions.error.n} severity="warning" onClose={actions.clearError} closeText="Dismiss this warning" sx={{ borderRadius: "10px" }}>
+          {actions.error.text}
         </Alert>
       )}
 
@@ -487,8 +487,8 @@ function Desk() {
           }}
           onClose={closeEditor}
           onPost={(text) => {
-            actions.post(editorClip.id, text, draftOf(state, editorClip));
             dispatch({ type: "clip/post", id: editorClip.id, text, at: Date.now() });
+            actions.post(editorClip.id, text, draftOf(state, editorClip));
           }}
           onReject={(reason) => {
             const next = navIndex >= 0 ? (navClips[navIndex + 1] ?? navClips[navIndex - 1]) : undefined;
