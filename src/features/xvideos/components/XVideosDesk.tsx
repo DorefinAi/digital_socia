@@ -1,7 +1,8 @@
 "use client";
 
 // The X Videos desk (screen 1, then the editor): live clips land in the clips folder, the desk writes line 1 from
-// what is said or shown in the clip, ticks the tags, and posts on X by hand with Copy & Mark Posted. Demo data only
+// what is said or shown in the clip, ticks the tags, and posts on X by hand with Copy & Mark Posted. The list is one
+// day folder of the share (today's unless the desk picks another day in the header). Demo data by default
 // (src/data/xVideosData.ts); every action stays in this browser tab.
 
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
@@ -9,6 +10,8 @@ import { Box, Button, Checkbox, IconButton, InputBase, ListItemText, Menu, MenuI
 import { Keyboard, ListFilter, RefreshCw, Search, X as CloseIcon } from "lucide-react";
 import { XV_POSTED_EARLIER, xVideoClips, type XvClip } from "../data/xVideosData";
 import { XVIDEOS_SOURCE } from "../lib/source";
+import { dayLabel, demoFolders, findDay, istDay, latestDay } from "../lib/folders";
+import { srOnly } from "../../../components/Newsroom/BreakingDesk/shared";
 import { XIcon } from "@/components/leftNavigation/aiContentPlatforms";
 import VolumeStrip from "../../../components/Newsroom/BreakingDesk/VolumeStrip";
 import { isTextEntryTarget } from "../../../components/Newsroom/BreakingDesk/video/keymap";
@@ -19,7 +22,8 @@ import { treeOrder } from "./SourcePanels";
 import VideoEditor from "./VideoEditor";
 import { VideoPostedList, VideoQueueList, VideoRejectedList, xvRowId } from "./VideoQueue";
 import { checkClip } from "./xvTitle";
-import { useXvClipDetail, useXvLive } from "./useXvLive";
+import { useXvClipDetail, useXvFolders, useXvLive } from "./useXvLive";
+import DayPicker from "./DayPicker";
 
 type Tab = "new" | "posted" | "rejected";
 type Kind = "all" | "live" | "clip";
@@ -30,12 +34,6 @@ const outlineBtnSx = { minHeight: 34, borderRadius: "8px", textTransform: "none"
 const subscribeNothing = () => () => undefined;
 /** False on the server and in the first client render: the demo's times are relative to the browser's clock */
 const useMounted = () => useSyncExternalStore(subscribeNothing, () => true, () => false);
-
-const ordinal = (d: number) => (d % 10 === 1 && d !== 11 ? "st" : d % 10 === 2 && d !== 12 ? "nd" : d % 10 === 3 && d !== 13 ? "rd" : "th");
-const dayLabel = (t: number) => {
-  const d = new Date(t);
-  return `${d.getDate()}${ordinal(d.getDate())} ${d.toLocaleDateString("en-IN", { month: "short" })}`;
-};
 
 const needsCheck = (c: XvClip, trim?: { start: number; end: number }) => c.readingProgress !== undefined || checkClip(c, trim).length > 0;
 
@@ -55,10 +53,21 @@ export default function XVideosDesk() {
 }
 
 function Desk() {
-  const [state, dispatch] = useReducer(deskReducer, undefined, (): DeskState => ({ clips: XVIDEOS_SOURCE === "demo" ? xVideoClips(Date.now()) : [], drafts: {}, undo: [] }));
+  const [state, dispatch] = useReducer(
+    deskReducer,
+    undefined,
+    (): DeskState => (XVIDEOS_SOURCE === "demo" ? { clips: xVideoClips(Date.now()), day: istDay(), parked: {}, drafts: {}, undo: [] } : { clips: [], day: null, parked: {}, drafts: {}, undo: [] }),
+  );
   const [now, setNow] = useState(() => Date.now());
-  // Demo: the sample clips. Live (NEXT_PUBLIC_XVIDEOS_SOURCE=api): the clips on the video share, asked every 15 s
-  const live = useXvLive(dispatch);
+  const [open, setOpen] = useState<{ id: string; nav: string[] } | null>(null);
+  // The day folder the desk picked; null follows today's, also when the date rolls over with the desk open
+  const [pickedDay, setPickedDay] = useState<string | null>(null);
+  // Demo: the sample clips. Live (NEXT_PUBLIC_XVIDEOS_SOURCE=api): one day folder of the video share, asked every
+  // 15 s. While a clip is open the shown day is held, so a midnight rollover never pulls the clip from under the editor
+  // (only the requests use it: opening a clip does not restart the poll or stop a Refresh check)
+  const live = useXvLive(dispatch, pickedDay, open ? state.day : null);
+  const demoDays = useMemo(() => (live.mode === "demo" ? demoFolders(state.clips, state.day ?? undefined) : null), [live.mode, state.clips, state.day]);
+  const days = useXvFolders(demoDays);
   const updatedAt = live.updatedAt;
   const [tab, setTab] = useState<Tab>("new");
   const [kind, setKind] = useState<Kind>("all");
@@ -66,13 +75,41 @@ function Desk() {
   const [onlyChecks, setOnlyChecks] = useState(false);
   const [filtersAt, setFiltersAt] = useState<HTMLElement | null>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
-  const [open, setOpen] = useState<{ id: string; nav: string[] } | null>(null);
   // Live: the open clip's transcript, also after Prev / Next or a reject that moves on
   useXvClipDetail(dispatch, open?.id ?? null);
   const [rejecting, setRejecting] = useState<XvClip | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [keysOpen, setKeysOpen] = useState(false);
   const lastOpened = useRef<string | null>(null);
+
+  const todayFolder = days.folders?.today;
+  // Just after midnight the folders can still say yesterday: the IST date, or a list that rolled on, is newer
+  const today = latestDay(todayFolder, istDay(now), state.day) ?? istDay(now);
+
+  // The folders are behind (a list from a day they don't know, or today moved on): ask again, once per case. A
+  // request already in flight is followed by one more, so the answer is never the one from before midnight
+  const askedFoldersFor = useRef<string | null>(null);
+  const refreshDays = days.refresh;
+  useEffect(() => {
+    if (!days.folders || !state.day) return;
+    if (findDay(days.folders, state.day) && days.folders.today >= today) return;
+    const key = `${state.day}|${today}`;
+    if (askedFoldersFor.current === key) return;
+    askedFoldersFor.current = key;
+    refreshDays();
+  }, [days.folders, state.day, today, refreshDays]);
+
+  const shownDay = state.day;
+  const pickDay = useCallback(
+    (day: string) => {
+      // Compared with the real IST date too, so a stale folders "today" never turns a picked day into "follow today"
+      setPickedDay(day === latestDay(todayFolder, istDay(), shownDay) ? null : day);
+      dispatch({ type: "day/switch", day });
+      setFocusedId(null);
+      lastOpened.current = null;
+    },
+    [todayFolder, shownDay],
+  );
 
   // The ages ("9 min ago") move on every 30 s
   useEffect(() => {
@@ -92,7 +129,7 @@ function Desk() {
 
   const q = query.trim().toLowerCase();
   const matches = useCallback(
-    (c: XvClip) => !q || [c.fileName, c.district, c.topic ?? "", c.headline ?? "", c.suggestedHeadline ?? "", drafts[c.id]?.title ?? ""].some((s) => s.toLowerCase().includes(q)),
+    (c: XvClip) => !q || [c.fileName, c.district, c.innerFolder ?? "", c.topic ?? "", c.headline ?? "", c.suggestedHeadline ?? "", drafts[c.id]?.title ?? ""].some((s) => s.toLowerCase().includes(q)),
     [q, drafts],
   );
   const searched = useMemo(() => newClips.filter((c) => matches(c) && (!onlyChecks || needsCheck(c, trims[c.id]))), [newClips, matches, onlyChecks, trims]);
@@ -101,12 +138,24 @@ function Desk() {
   const visibleRejected = useMemo(() => rejectedClips.filter(matches), [rejectedClips, matches]);
 
   const focused = focusedId && visibleNew.some((c) => c.id === focusedId) ? focusedId : (visibleNew[0]?.id ?? null);
+  // Today's folder, or another day the desk picked (the stats then count that day; X's daily volume stays today's)
+  const viewingToday = live.mode === "demo" || !state.day || state.day === today;
+  // The list for the shown day is still on its way (first load, or another day just picked)
+  const listLoading = live.mode === "api" && (!live.loaded || (!!state.day && live.loadedDay !== state.day));
+  // Nothing to show yet: a skeleton while it loads, the error with Retry when the request failed
+  const listFailed = listLoading && !clips.length && !!live.error;
+  const showSkeleton = listLoading && !clips.length && !listFailed;
+  const hideLists = showSkeleton || listFailed;
   // The demo counts the morning's posts it has no clips for; live, every posted clip is in the list
-  const postedToday = (live.mode === "demo" ? XV_POSTED_EARLIER : 0) + postedClips.length;
+  const postedShown = (live.mode === "demo" ? XV_POSTED_EARLIER : 0) + postedClips.length;
+  const postedToday = viewingToday ? postedShown : (findDay(days.folders, today)?.done ?? 0);
+  const shownDayText = state.day && !viewingToday ? dayLabel(state.day) : "today";
+  const shownFolder = findDay(days.folders, state.day);
+  const emptyDayHint = shownFolder && !shownFolder.clips ? "No videos in this day's folder." : "Every video of this day's folder is posted or rejected.";
   const stats = [
     { label: "To post", value: newClips.length, tone: "text.secondary" },
     { label: "Needs check", value: newClips.filter((c) => needsCheck(c, trims[c.id])).length, tone: XV_COLORS.orange },
-    { label: "Posted today", value: postedToday, tone: "success.main" },
+    { label: viewingToday ? "Posted today" : `Posted on ${shownDayText}`, value: postedShown, tone: "success.main" },
   ];
 
   const openClip = useCallback(
@@ -191,6 +240,7 @@ function Desk() {
           <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 0.25 }}>This dashboard is linked with the live clips folder. Click on Open, pick the title from the clip and click on &quot;Copy &amp; Mark Posted&quot;.</Typography>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, flexWrap: "wrap" }}>
+          <DayPicker folders={days.folders} today={today} day={state.day} loading={listLoading && !listFailed} error={days.error} onPick={pickDay} onOpen={days.refresh} />
           <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, fontSize: "0.75rem", color: "text.secondary" }}>
             <Box component="span" aria-hidden sx={{ width: 7, height: 7, borderRadius: "50%", backgroundColor: live.error ? "error.main" : live.loaded ? "success.main" : "text.disabled" }} />
             {live.error ? <span role="alert">{live.error}</span> : live.loaded ? "Clips folder ok" : "Loading the clips…"}
@@ -200,18 +250,24 @@ function Desk() {
               <Keyboard size={16} />
             </IconButton>
           </Tooltip>
-          <Tooltip title={live.mode === "demo" ? "Check the clips folder now (demo: the list does not change)" : "Check the clips folder now"}>
+          <Tooltip title={live.mode === "demo" ? "Check the clips folder now (demo: the list does not change)" : live.checking ? "Checking the share for new files" : "Check the share for new files now"}>
             <Box
               component="button"
               type="button"
+              aria-disabled={live.checking || undefined}
+              aria-busy={live.checking || undefined}
               onClick={() => {
+                if (live.checking) return;
                 live.refresh();
+                days.refresh();
                 setNow(Date.now());
               }}
-              sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, border: 0, background: "none", p: 0.5, minHeight: 32, cursor: "pointer", color: "text.secondary", fontSize: "0.6875rem", fontFamily: "inherit", "&:hover": { color: "text.primary" }, "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", borderRadius: "4px" } }}
+              sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, border: 0, background: "none", p: 0.5, minHeight: 32, cursor: live.checking ? "progress" : "pointer", color: "text.secondary", fontSize: "0.6875rem", fontFamily: "inherit", "&:hover": { color: "text.primary" }, "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", borderRadius: "4px" } }}
             >
-              <RefreshCw size={12} aria-hidden />
-              Updated {new Date(updatedAt).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true })}
+              <Box component="span" aria-hidden sx={{ display: "inline-flex", ...(live.checking && { animation: "xvSpin 1s linear infinite", "@keyframes xvSpin": { to: { transform: "rotate(360deg)" } }, "@media (prefers-reduced-motion: reduce)": { animation: "none" } }) }}>
+                <RefreshCw size={12} />
+              </Box>
+              {live.checking ? "Checking the share…" : `Updated ${new Date(updatedAt).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true })}`}
             </Box>
           </Tooltip>
         </Box>
@@ -284,12 +340,6 @@ function Desk() {
               </IconButton>
             )}
           </Box>
-          <Tooltip title="Only today's clips in this demo">
-            <Button variant="outlined" sx={outlineBtnSx} aria-label={`Date: today, ${dayLabel(now)}`}>
-              <Box component="span" aria-hidden sx={{ width: 7, height: 7, borderRadius: "50%", backgroundColor: "success.main" }} />
-              {dayLabel(now)}
-            </Button>
-          </Tooltip>
           <Button variant="outlined" onClick={(e) => setFiltersAt(e.currentTarget)} aria-haspopup="menu" sx={outlineBtnSx}>
             <ListFilter size={14} aria-hidden /> Filters{onlyChecks ? " (1)" : ""}
           </Button>
@@ -303,13 +353,41 @@ function Desk() {
       </Box>
 
       {/* Lists */}
-      {tab === "new" &&
+      {listFailed && (
+        <EmptyState
+          title={`The clips of ${shownDayText} did not load.`}
+          hint={live.error ?? ""}
+          action={
+            <Button variant="outlined" onClick={() => live.refresh()} disabled={live.checking} sx={outlineBtnSx}>
+              {live.checking ? "Checking the share…" : "Retry"}
+            </Button>
+          }
+        />
+      )}
+      {showSkeleton && (
+        <Box role="status" sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          <Box component="span" sx={srOnly}>
+            Loading the videos of {shownDayText}
+          </Box>
+          <Skeleton variant="rounded" height={84} />
+          <Skeleton variant="rounded" height={84} />
+          <Skeleton variant="rounded" height={84} />
+        </Box>
+      )}
+      {!hideLists &&
+        tab === "new" &&
         (visibleNew.length ? (
           <VideoQueueList clips={visibleNew} focusedId={focused} now={now} savedTitles={savedTitles} scheduled={scheduled} trims={trims} onFocus={setFocusedId} onOpen={openClip} onReject={setRejecting} />
         ) : (
           <EmptyState
-            title={narrowed ? "No clip matches." : "No new clips."}
-            hint={narrowed ? "Clear the search or the filters to see the rest." : "New clips show here a few seconds after they land in the clips folder."}
+            title={narrowed ? "No clip matches." : viewingToday ? "No new clips." : `No new clips on ${shownDayText}.`}
+            hint={
+              narrowed
+                ? "Clear the search or the filters to see the rest."
+                : viewingToday
+                  ? "New clips show here a few seconds after they land in today's folder."
+                  : emptyDayHint
+            }
             action={
               narrowed ? (
                 <Button
@@ -327,7 +405,8 @@ function Desk() {
             }
           />
         ))}
-      {tab === "posted" &&
+      {!hideLists &&
+        tab === "posted" &&
         (visiblePosted.length ? (
           <VideoPostedList
             clips={visiblePosted}
@@ -346,9 +425,10 @@ function Desk() {
             onUndo={(c) => onUndo(c.id)}
           />
         ) : (
-          <EmptyState title={q ? "No posted clip matches." : "Nothing posted yet today."} hint="Clips land here when someone presses Copy & Mark Posted." />
+          <EmptyState title={q ? "No posted clip matches." : viewingToday ? "Nothing posted yet today." : `Nothing posted on ${shownDayText}.`} hint="Clips land here when someone presses Copy & Mark Posted." />
         ))}
-      {tab === "rejected" &&
+      {!hideLists &&
+        tab === "rejected" &&
         (visibleRejected.length ? (
           <VideoRejectedList clips={visibleRejected} now={now} onRestore={(c) => dispatch({ type: "clip/restore", id: c.id })} />
         ) : (

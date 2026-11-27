@@ -2,11 +2,12 @@
 
 // The Video Draft list: Post Draft's rows (time dot, age, bold headline, reject, Open) with a clip thumbnail and its
 // length. The headline is the system's guess from the clip until the desk saves one; "Reading the clip… 45%" shows
-// while it is read; a clip over X's limit carries an orange chip beside Reject.
+// while it is read; a clip over X's limit carries an orange chip beside Reject. Each row also says which folder of the
+// day it sits in and carries an "x" when the file name has the desk's x mark (shown only, never a filter).
 
 import React from "react";
 import { Box, Button, IconButton, LinearProgress, Tooltip, Typography } from "@mui/material";
-import { AlertTriangle, Ban, Check, Copy, PenLine, RotateCcw, Undo2 } from "lucide-react";
+import { AlertTriangle, Ban, Check, Copy, FolderOpen, PenLine, RotateCcw, Undo2 } from "lucide-react";
 import type { XvClip } from "../data/xVideosData";
 import { ageTone } from "../../../components/Newsroom/BreakingDesk/deskRules";
 import { srOnly, timeAgo } from "../../../components/Newsroom/BreakingDesk/shared";
@@ -70,12 +71,46 @@ function Thumb({ clip }: { clip: XvClip }) {
   );
 }
 
+/** The desk's x mark on the file name, as a small square tag */
+function XMark() {
+  return (
+    <Box
+      component="span"
+      title="The file name has the desk's x mark"
+      sx={{ display: "inline-grid", placeItems: "center", width: 18, height: 18, borderRadius: "4px", border: "1px solid", borderColor: "text.primary", color: "text.primary", fontSize: "0.75rem", fontWeight: 800, lineHeight: 1, flexShrink: 0 }}
+    >
+      <span aria-hidden>x</span>
+      <Box component="span" sx={srOnly}>
+        Marked x
+      </Box>
+    </Box>
+  );
+}
+
+/** Where the clip sits inside its day folder ("3 pm convert / jaipur"); nothing for a file loose in the day folder */
+function InnerFolder({ path }: { path?: string }) {
+  if (!path) return null;
+  return (
+    <Box component="span" title={path} sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, minWidth: 0, maxWidth: { xs: "100%", md: 280 } }}>
+      <FolderOpen size={12} aria-hidden style={{ flexShrink: 0 }} />
+      <Box component="span" sx={srOnly}>
+        Folder{" "}
+      </Box>
+      <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {path}
+      </Box>
+    </Box>
+  );
+}
+
 function Meta({ clip, extra }: { clip: XvClip; extra?: React.ReactNode }) {
   return (
     <Box sx={metaSx}>
       <Box component="span" sx={{ display: { md: "none" }, fontWeight: 700, color: "text.primary", fontVariantNumeric: "tabular-nums" }}>
         {clock(clip.receivedAt)}
       </Box>
+      {clip.picked && <XMark />}
+      <InnerFolder path={clip.innerFolder} />
       {extra}
     </Box>
   );
@@ -112,9 +147,12 @@ function Headline({ clip, savedTitle }: { clip: XvClip; savedTitle?: string }) {
     );
   }
   return (
-    <Typography lang="hi" sx={headlineSx}>
-      {clip.suggestedHeadline ?? "No headline yet"}
-    </Typography>
+    <>
+      <Typography lang="hi" sx={headlineSx}>
+        {clip.suggestedHeadline ?? "No headline yet"}
+      </Typography>
+      {clip.suggestedHeadline && clip.headlineSource === "file_name" && <Typography sx={{ mt: 0.125, fontSize: "0.6875rem", color: "text.secondary" }}>From the file name</Typography>}
+    </>
   );
 }
 

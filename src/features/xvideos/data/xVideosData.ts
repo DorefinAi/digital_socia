@@ -6,6 +6,7 @@
 // which are gitignored; a missing file shows a dark frame with the file name.
 
 import realClips from "./xClipsReal.json";
+import { istDay } from "../lib/folders";
 
 export type XvKind = "live" | "clip";
 export type XvStatus = "new" | "posted" | "rejected";
@@ -103,6 +104,16 @@ export interface XvClip {
   rejectedReason?: string;
   /** Live data only: why the backend could not read this clip (probe or speech failed after its retries) */
   loadError?: string;
+  /** Folders inside the day folder, joined with " / " ("3 pm convert"); "" for a file loose in the day folder */
+  innerFolder?: string;
+  /** The day folder the clip is in, "2026-11-27" */
+  day?: string | null;
+  /** The file name carries the desk's x mark (shown, never used to hide a clip) */
+  picked?: boolean;
+  /** "file_name": the suggested headline is the file's own name, a full heading */
+  headlineSource?: "file_name" | null;
+  /** The share already deleted the file */
+  gone?: boolean;
 }
 
 interface RealClip {
@@ -157,15 +168,18 @@ function shiftFolder(postedIst: string): string {
 }
 
 const X_MARKS = ["x...", "X....", "x..........", "x.."];
+/** The desk's x mark at the start of a file name ("x...", "X....") */
+const X_MARK_RE = /^x\.{2,}/i;
 /** Characters Windows does not allow in a file name; the desk drops them (a " | " becomes two spaces) */
 const unsafe = (title: string) => title.replace(/\s*\|\s*/g, "  ").replace(/[\\/:*?"<>]/g, "").trim();
 
 /**
  * A share-style name for demo clip `i` (posting order): an X mark the desk types when it picks a clip ("x...done..."
- * once posted), then either the YouTube title or just the place, numbered "(0)" when the place repeats
+ * once posted; every fifth clip not picked yet has none), then either the YouTube title or just the place, numbered
+ * "(0)" when the place repeats
  */
 function shareNameFor(r: RealClip, i: number, posted: boolean, seen: Map<string, number>): string {
-  const mark = X_MARKS[i % X_MARKS.length] + (posted ? "done..." : "");
+  const mark = !posted && i % 5 === 3 ? "" : X_MARKS[i % X_MARKS.length] + (posted ? "done..." : "");
   if (i % 3 !== 1) return `${mark}${unsafe(r.postedTitle)}.mp4`;
   const place = r.place.toLowerCase();
   const n = seen.get(place) ?? -1;
@@ -193,6 +207,12 @@ function toClip(r: RealClip, latest: string, now: number, shareName: string): Xv
     topic: vertical ? "Digital short, vertical" : undefined,
     receivedAt: at(receivedMs),
     folder: [`${r.postedIst.slice(8, 10)}-${r.postedIst.slice(5, 7)}-${r.postedIst.slice(0, 4)}`, shiftFolder(r.postedIst)],
+    // The demo shows one day folder: today's
+    day: istDay(now),
+    innerFolder: shiftFolder(r.postedIst),
+    picked: X_MARK_RE.test(shareName),
+    // A share name that is the full title reads as the headline; a bare place name does not
+    headlineSource: reading === undefined && shareName.includes(unsafe(r.postedTitle)) ? "file_name" : null,
     shareName,
     duration: r.durationS,
     size: Math.round(r.sizeMb * 1024 * 1024),

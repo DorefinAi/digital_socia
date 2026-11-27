@@ -36,7 +36,12 @@ export interface UndoEntry {
 }
 
 export interface DeskState {
+  /** The shown day folder's clips, and only those */
   clips: XvClip[];
+  /** The day folder `clips` are from ("2026-11-27"); null until the first list says */
+  day: string | null;
+  /** Other days' clips as this tab last had them, so a post or reject made here survives a look at another day */
+  parked: Record<string, XvClip[]>;
   drafts: Record<string, XvDraft>;
   undo: UndoEntry[];
 }
@@ -48,7 +53,10 @@ export type DeskAction =
   | { type: "undo/expire"; now: number }
   | { type: "clip/reject"; id: string; reason: string }
   | { type: "clip/restore"; id: string }
-  | { type: "clips/sync"; clips: XvClip[] }
+  /** The backend's list for day folder `day` (another day than the shown one switches to it first) */
+  | { type: "clips/sync"; day: string | null; clips: XvClip[] }
+  /** The desk picked another day: show what this tab had for it (if anything) until its list comes */
+  | { type: "day/switch"; day: string }
   | { type: "clip/detail"; clip: XvClip };
 
 /** The "Start with" choices for a clip: the standard ones, then its own */
@@ -103,8 +111,12 @@ export function deskReducer(state: DeskState, action: DeskAction): DeskState {
       return { ...state, clips: state.clips.map((c) => (c.id === action.id ? { ...c, status: "rejected", rejectedReason: action.reason } : c)) };
     case "clip/restore":
       return { ...state, clips: state.clips.map((c) => (c.id === action.id ? { ...c, status: "new", rejectedReason: undefined } : c)) };
-    case "clips/sync":
-      return { ...state, clips: syncClips(state.clips, action.clips) };
+    case "day/switch":
+      return switchDay(state, action.day);
+    case "clips/sync": {
+      const base = action.day ? switchDay(state, action.day) : state;
+      return { ...base, clips: syncClips(base.clips, action.clips) };
+    }
     case "clip/detail":
       // Only what the list leaves out: a slow answer must not undo a newer list's status or progress
       return {
@@ -116,6 +128,19 @@ export function deskReducer(state: DeskState, action: DeskAction): DeskState {
         ),
       };
   }
+}
+
+/**
+ * Shows day folder `day`: the shown day's clips are parked and the new day's parked clips (or none) come back, so no
+ * clip of one day is ever listed under another. The undo bar keeps only the new day's posts.
+ */
+export function switchDay(state: DeskState, day: string): DeskState {
+  if (state.day === day) return state;
+  // The first list of the session (state.day still null) takes over the demo's or the empty start list as is
+  if (state.day === null) return { ...state, day };
+  const { [day]: back = [], ...rest } = state.parked;
+  const ids = new Set(back.map((c) => c.id));
+  return { ...state, day, clips: back, parked: { ...rest, [state.day]: state.clips }, undo: state.undo.filter((u) => ids.has(u.clipId)) };
 }
 
 /**
