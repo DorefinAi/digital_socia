@@ -2,6 +2,7 @@ import { BreakingTag, CardLayout, CardTextLayer, CardTextStyle, MediaAdjust, Tex
 import { CHANNEL } from "@/constants";
 import { ORG_CARD_FONT, fontById, nearestWeight } from "./templateFonts";
 import { CARD_LINE } from "./live/cardFit";
+import { lastLineWidth } from "./live/lastLine";
 
 export type TemplateFormat = "x" | "ig_post" | "ig_reel";
 
@@ -136,11 +137,13 @@ function layoutLines(ctx: CanvasRenderingContext2D, paragraphs: Word[][], maxWid
   const lines: Line[] = [];
   for (const paragraph of paragraphs) {
     let line: Line = { words: [], w: 0 };
+    for (const word of paragraph) word.forEach((run) => (run.w = ctx.measureText(run.text).width));
+    // Owner, 27 Nov 2026: never a last line of one or two words; the column narrows a little when that gives it three
+    const wrapAt = lastLineWidth(paragraph.map((word) => word.reduce((sum, run) => sum + run.w, 0)), space, maxWidth);
     for (const word of paragraph) {
-      word.forEach((run) => (run.w = ctx.measureText(run.text).width));
       const width = word.reduce((sum, run) => sum + run.w, 0);
       const next = line.w + (line.words.length ? space : 0) + width;
-      if (line.words.length && next > maxWidth) {
+      if (line.words.length && next > wrapAt) {
         lines.push(line);
         line = { words: [word], w: width };
       } else {

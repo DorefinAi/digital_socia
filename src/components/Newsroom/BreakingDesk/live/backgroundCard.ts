@@ -9,6 +9,7 @@ import { CARD_FACE_SAMPLE } from "../cardFace";
 import { cardBodyText } from "../cardWords";
 import { CARD_GAP_LINES, CARD_LINE, type PxRect, cardBlockTop, cardTextArea, largestFit } from "./cardFit";
 import { dateStrokePx, fitDate } from "./cardDate";
+import { lastLineWidth } from "./lastLine";
 import { cardJpeg, fitCard } from "./cardImage";
 import { isTainted } from "./rgbPng";
 
@@ -102,12 +103,14 @@ function wrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): st
     const words = paragraph.split(/\s+/).filter(Boolean);
     // Widths add up word by word, as cardRender.ts lays out the editor's card, so both break lines alike
     const space = ctx.measureText(" ").width;
+    // The card's last-line rule (lastLine.ts, as cardRender.ts): never a last line of one or two words
+    const wrapAt = lastLineWidth(words.map((word) => ctx.measureText(word).width), space, maxWidth);
     let line = "";
     let lineW = 0;
     for (const word of words) {
       const w = ctx.measureText(word).width;
       const nextW = line ? lineW + space + w : w;
-      if (nextW <= maxWidth) {
+      if (nextW <= wrapAt) {
         line = line ? `${line} ${word}` : word;
         lineW = nextW;
         continue;
