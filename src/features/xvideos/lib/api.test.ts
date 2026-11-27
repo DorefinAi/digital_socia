@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { toXvClip, xvClipsPath, xvRescanPath, type XvWireClip } from "./wire";
 import { dayLabel, demoFolders, findDay, istDay, latestDay, monthLabel, toXvFolders } from "./folders";
-import { deskReducer, syncClips, type DeskState } from "../components/deskState";
+import { deskReducer, initialDraft, postedParts, savedDraftOf, syncClips, type DeskState } from "../components/deskState";
 
 const wire = (over: Partial<XvWireClip> = {}): XvWireClip => ({
   id: "c1",
@@ -210,4 +210,36 @@ test("the composed post comes through: place, region, label, tags on and off", (
   assert.deepEqual(c.hashtags, [{ value: "#Tonk", on: true }, { value: "#RajasthanNews", on: false }]);
   assert.deepEqual(c.mentions, [{ value: "@TonkPolice", on: true }]);
   assert.equal(toXvClip(wire({ region: "mars" as never })).region, undefined);
+});
+
+test("the desk's own decision and saved draft come through the wire", () => {
+  const draft = { title: "हेडलाइन | Kota News", brandOn: true, hashtags: [{ value: "#Kota", on: true }], mentions: [], trim: { start: 0, end: 20 } };
+  const posted = toXvClip(wire({ status: "posted", postId: 41, postedAt: "2026-11-27T10:00:00.000Z", postedText: "t", postedBy: "Ravi", heldBy: "Asha", draft }));
+  assert.equal(posted.postId, 41);
+  assert.equal(posted.postedAt, "2026-11-27T10:00:00.000Z");
+  assert.equal(posted.postedBy, "Ravi");
+  assert.equal(posted.heldBy, "Asha");
+  assert.deepEqual(posted.savedDraft, draft);
+  const rejected = toXvClip(wire({ status: "rejected", rejectedReason: "Not news", postId: 9 }));
+  assert.equal(rejected.rejectedReason, "Not news");
+  assert.equal(rejected.postId, undefined);
+});
+
+test("a saved draft opens as it was left; the backend's answer settles a clip", () => {
+  const draft = { title: "सेव की हुई", brandOn: false, hashtags: [], mentions: [{ value: "@x", on: true }], trim: { start: 1, end: 9 } };
+  const clip = toXvClip(wire({ draft }));
+  assert.deepEqual(initialDraft(clip), { ...draft, source: { kind: "suggested" } });
+  const state: DeskState = { clips: [toXvClip(wire({}))], day: null, parked: {}, drafts: {}, undo: [{ clipId: "11111111-1111-4111-8111-111111111111", title: "t", until: 1 }] };
+  const id = state.clips[0]!.id;
+  const posted = deskReducer(state, { type: "clip/server", clip: { ...state.clips[0]!, status: "posted", postId: 7, postedBy: "Ravi" } });
+  assert.equal(posted.clips[0]!.postId, 7);
+  const undone = deskReducer(posted, { type: "clip/server", clip: { ...state.clips[0]!, status: "new" } });
+  assert.equal(undone.clips[0]!.status, "new");
+  assert.deepEqual(undone.undo.filter((u) => u.clipId === id), []);
+});
+
+test("a draft as the backend keeps it, and the parts that go in the post", () => {
+  const d = { title: "t", source: { kind: "said" as const, at: 4 }, brandOn: true, hashtags: [{ value: "#A", on: true, added: true }, { value: "#B", on: false }], mentions: [{ value: "@m", on: true }], trim: { start: 5, end: 2 } };
+  assert.deepEqual(savedDraftOf(d), { title: "t", source: { kind: "said", at: 4 }, brandOn: true, hashtags: [{ value: "#A", on: true, added: true }, { value: "#B", on: false }], mentions: [{ value: "@m", on: true }], trim: { start: 5, end: 5 } });
+  assert.deepEqual(postedParts(d), { hashtags: ["#A"], mentions: ["@m"] });
 });

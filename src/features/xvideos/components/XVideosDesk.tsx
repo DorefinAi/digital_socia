@@ -3,10 +3,11 @@
 // The X Videos desk (screen 1, then the editor): live clips land in the clips folder, the desk writes line 1 from
 // what is said or shown in the clip, ticks the tags, and posts on X by hand with Copy & Mark Posted. The list is one
 // day folder of the share (today's unless the desk picks another day in the header). Demo data by default
-// (src/data/xVideosData.ts); every action stays in this browser tab.
+// (src/data/xVideosData.ts), where every action stays in this browser tab; live (NEXT_PUBLIC_XVIDEOS_SOURCE=api) each
+// action goes to the backend (useXvActions): the desk shows it at once and the backend's answer settles it.
 
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
-import { Box, Button, Checkbox, IconButton, InputBase, ListItemText, Menu, MenuItem, Skeleton, Tooltip, Typography } from "@mui/material";
+import { Alert, Box, Button, Checkbox, IconButton, InputBase, ListItemText, Menu, MenuItem, Skeleton, Tooltip, Typography } from "@mui/material";
 import { Keyboard, ListFilter, RefreshCw, Search, X as CloseIcon } from "lucide-react";
 import { XV_POSTED_EARLIER, xVideoClips, type XvClip } from "../data/xVideosData";
 import { XVIDEOS_SOURCE } from "../lib/source";
@@ -23,6 +24,7 @@ import VideoEditor from "./VideoEditor";
 import { VideoPostedList, VideoQueueList, VideoRejectedList, xvRowId } from "./VideoQueue";
 import { checkClip } from "./xvTitle";
 import { useXvClipDetail, useXvFolders, useXvLive } from "./useXvLive";
+import { useXvActions } from "./useXvActions";
 import DayPicker from "./DayPicker";
 
 type Tab = "new" | "posted" | "rejected";
@@ -77,6 +79,8 @@ function Desk() {
   const [focusedId, setFocusedId] = useState<string | null>(null);
   // Live: the open clip's transcript, also after Prev / Next or a reject that moves on
   useXvClipDetail(dispatch, open?.id ?? null);
+  // Live: every action to the backend (drafts saved a moment after the last change); a refusal is shown here
+  const actions = useXvActions(live.mode === "api", dispatch, state, live.refresh);
   const [rejecting, setRejecting] = useState<XvClip | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [keysOpen, setKeysOpen] = useState(false);
@@ -217,7 +221,14 @@ function Desk() {
   const navClips = useMemo(() => (open ? treeOrder(open.nav.map((id) => byId.get(id)).filter((c): c is XvClip => !!c && (c.status === "new" || c.id === open.id))) : []), [open, byId]);
   const navIndex = editorClip ? navClips.findIndex((c) => c.id === editorClip.id) : -1;
 
-  const onUndo = useCallback((id: string) => dispatch({ type: "clip/undo", id }), []);
+  const sendUndo = actions.undo;
+  const onUndo = useCallback(
+    (id: string) => {
+      sendUndo(id);
+      dispatch({ type: "clip/undo", id });
+    },
+    [sendUndo],
+  );
   const onUndoExpire = useCallback((n: number) => dispatch({ type: "undo/expire", now: n }), []);
   const undoUntil = useMemo(() => Object.fromEntries(undo.map((u) => [u.clipId, u.until])), [undo]);
 
@@ -227,6 +238,11 @@ function Desk() {
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 2 }}>
       <VolumeStrip name="X" used={postedToday} cap={10000} />
+      {actions.error && (
+        <Alert severity="warning" onClose={actions.clearError} sx={{ borderRadius: "10px" }}>
+          {actions.error}
+        </Alert>
+      )}
 
       {/* Header */}
       <Box sx={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
@@ -430,7 +446,14 @@ function Desk() {
       {!hideLists &&
         tab === "rejected" &&
         (visibleRejected.length ? (
-          <VideoRejectedList clips={visibleRejected} now={now} onRestore={(c) => dispatch({ type: "clip/restore", id: c.id })} />
+          <VideoRejectedList
+            clips={visibleRejected}
+            now={now}
+            onRestore={(c) => {
+              dispatch({ type: "clip/restore", id: c.id });
+              actions.restore(c.id);
+            }}
+          />
         ) : (
           <EmptyState title="No rejected clips." hint="A clip you reject moves here, with the reason. Restore puts it back in New." />
         ))}
@@ -439,7 +462,10 @@ function Desk() {
         clip={rejecting}
         onClose={() => setRejecting(null)}
         onReject={(reason) => {
-          if (rejecting) dispatch({ type: "clip/reject", id: rejecting.id, reason });
+          if (rejecting) {
+            dispatch({ type: "clip/reject", id: rejecting.id, reason });
+            actions.reject(rejecting.id, reason);
+          }
           setRejecting(null);
         }}
       />
@@ -460,10 +486,14 @@ function Desk() {
             setOpen((o) => (o ? { ...o, id } : o));
           }}
           onClose={closeEditor}
-          onPost={(text) => dispatch({ type: "clip/post", id: editorClip.id, text, at: Date.now() })}
+          onPost={(text) => {
+            actions.post(editorClip.id, text, draftOf(state, editorClip));
+            dispatch({ type: "clip/post", id: editorClip.id, text, at: Date.now() });
+          }}
           onReject={(reason) => {
             const next = navIndex >= 0 ? (navClips[navIndex + 1] ?? navClips[navIndex - 1]) : undefined;
             dispatch({ type: "clip/reject", id: editorClip.id, reason });
+            actions.reject(editorClip.id, reason);
             if (next && next.id !== editorClip.id) setOpen((o) => (o ? { ...o, id: next.id } : o));
             else closeEditor();
           }}

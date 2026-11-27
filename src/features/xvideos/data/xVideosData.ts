@@ -101,7 +101,12 @@ export interface XvClip {
   heldBy?: string;
   postedAt?: string;
   postedText?: string;
+  /** Live data: the standing post's id (undo names it) and who posted it */
+  postId?: number;
+  postedBy?: string;
   rejectedReason?: string;
+  /** Live data: the draft an editor saved for this clip (the desk opens it instead of the suggestion) */
+  savedDraft?: XvSavedDraft;
   /** Live data only: why the backend could not read this clip (probe or speech failed after its retries) */
   loadError?: string;
   /** Folders inside the day folder, joined with " / " ("3 pm convert"); "" for a file loose in the day folder */
@@ -114,6 +119,18 @@ export interface XvClip {
   headlineSource?: "file_name" | "screen" | null;
   /** The share already deleted the file */
   gone?: boolean;
+}
+
+/** A draft as the backend keeps it (deskState.ts XvDraft, saved as is) */
+export interface XvSavedDraft {
+  title: string;
+  source?: { kind: string; at?: number };
+  brandOn: boolean;
+  hashtags: { value: string; on: boolean; added?: boolean }[];
+  mentions: { value: string; on: boolean; added?: boolean }[];
+  trim: { start: number; end: number };
+  savedAt?: string;
+  scheduledAt?: string;
 }
 
 interface RealClip {

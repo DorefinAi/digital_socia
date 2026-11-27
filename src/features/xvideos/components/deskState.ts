@@ -1,7 +1,8 @@
-// The X Videos desk's client state (demo only, nothing is sent): the clips, each clip's draft as the desk edits it,
-// and the posts that can still be undone. One reducer, so the list and the editor always agree.
+// The X Videos desk's client state: the clips, each clip's draft as the desk edits it, and the posts that can still be
+// undone. One reducer, so the list and the editor always agree. Live, XVideosDesk sends each action to the backend and
+// its answer comes back as "clip/server"; in the demo nothing is sent.
 
-import type { XvClip } from "../data/xVideosData";
+import type { XvClip, XvSavedDraft } from "../data/xVideosData";
 import { STANDARD_PREFIXES, brandTagFor, buildTitle, labelOf } from "./xvTitle";
 
 /** Where line 1 of the tweet came from, for the source chip */
@@ -57,13 +58,17 @@ export type DeskAction =
   | { type: "clips/sync"; day: string | null; clips: XvClip[] }
   /** The desk picked another day: show what this tab had for it (if anything) until its list comes */
   | { type: "day/switch"; day: string }
-  | { type: "clip/detail"; clip: XvClip };
+  | { type: "clip/detail"; clip: XvClip }
+  /** The backend's answer to an action: its decision, hold and saved draft replace the desk's guess */
+  | { type: "clip/server"; clip: XvClip };
 
 /** The "Start with" choices for a clip: the standard ones, then its own */
 export const prefixesFor = (clip: XvClip): string[] => [...STANDARD_PREFIXES, ...(clip.prefixes ?? [])];
 
 /** The draft an untouched clip opens with: its headline (or the suggestion) with its channel label, the whole clip */
 export function initialDraft(clip: XvClip): XvDraft {
+  // A draft an editor saved (live data) opens as it was left
+  if (clip.savedDraft) return { ...clip.savedDraft, source: (clip.savedDraft.source as TitleSource | undefined) ?? { kind: "suggested" } };
   const headline = clip.headline ?? clip.suggestedHeadline ?? "";
   return {
     title: headline ? buildTitle(headline, clip.channelLabel) : "",
@@ -117,6 +122,16 @@ export function deskReducer(state: DeskState, action: DeskAction): DeskState {
       const base = action.day ? switchDay(state, action.day) : state;
       return { ...base, clips: syncClips(base.clips, action.clips) };
     }
+    case "clip/server": {
+      const s = action.clip;
+      const serverFields = { status: s.status, postedAt: s.postedAt, postedText: s.postedText, postId: s.postId, postedBy: s.postedBy, rejectedReason: s.rejectedReason, heldBy: s.heldBy, savedDraft: s.savedDraft };
+      return {
+        ...state,
+        clips: state.clips.map((c) => (c.id === s.id ? { ...c, ...serverFields } : c)),
+        // A post the backend no longer has standing leaves the undo bar
+        undo: s.status === "posted" ? state.undo : state.undo.filter((u) => u.clipId !== s.id),
+      };
+    }
     case "clip/detail":
       // Only what the list leaves out: a slow answer must not undo a newer list's status or progress
       return {
@@ -161,5 +176,25 @@ export function syncClips(current: readonly XvClip[], incoming: readonly XvClip[
 /** `next` from the backend, keeping a post or reject this tab made that the backend does not know yet */
 function keepDeskChoice(had: XvClip, next: XvClip): XvClip {
   const localChoice = (had.status === "rejected" && next.status !== "rejected") || (had.status === "posted" && next.status === "new");
-  return localChoice ? { ...next, status: had.status, postedAt: had.postedAt, postedText: had.postedText, rejectedReason: had.rejectedReason } : next;
+  return localChoice ? { ...next, status: had.status, postedAt: had.postedAt, postedText: had.postedText, postId: had.postId, rejectedReason: had.rejectedReason } : next;
+}
+
+/** The tags and handles of a draft that go in the post (ticked), as the backend records them */
+export function postedParts(draft: Pick<XvDraft, "hashtags" | "mentions">): { hashtags: string[]; mentions: string[] } {
+  return { hashtags: draft.hashtags.filter((t) => t.on).map((t) => t.value), mentions: draft.mentions.filter((t) => t.on).map((t) => t.value) };
+}
+
+/** A draft as the backend keeps it: only the fields it accepts */
+export function savedDraftOf(d: XvDraft): XvSavedDraft {
+  const part = (t: { value: string; on: boolean; added?: boolean }) => ({ value: t.value, on: t.on, ...(t.added ? { added: true } : {}) });
+  return {
+    title: d.title,
+    source: d.source.kind === "said" || d.source.kind === "screen" ? { kind: d.source.kind, at: d.source.at } : { kind: d.source.kind },
+    brandOn: d.brandOn,
+    hashtags: d.hashtags.map(part),
+    mentions: d.mentions.map(part),
+    trim: { start: Math.max(0, d.trim.start), end: Math.max(d.trim.start, d.trim.end) },
+    ...(d.savedAt ? { savedAt: d.savedAt } : {}),
+    ...(d.scheduledAt ? { scheduledAt: d.scheduledAt } : {}),
+  };
 }

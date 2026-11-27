@@ -1,7 +1,7 @@
 // The X Videos backend's clip (backend apps/api/src/xvideos/view.ts) and its mapping to the desk's XvClip. Pure, no
 // fetch, so node --test can load it.
 
-import type { XvClip } from "../data/xVideosData";
+import type { XvClip, XvSavedDraft } from "../data/xVideosData";
 import { SOCIA_API_URL } from "../../../lib/socia/config";
 
 /** A clip as GET /xvideos/clips answers it (backend apps/api/src/xvideos/view.ts). Media links are API paths. */
@@ -50,6 +50,14 @@ export interface XvWireClip {
   headlineSource: "file_name" | "screen" | null;
   /** The share deleted the file (it keeps 3-4 days) */
   gone: boolean;
+  /** The desk's own decision and state (step 6): absent on a clip nobody acted on */
+  postId?: number;
+  postedAt?: string;
+  postedText?: string;
+  postedBy?: string;
+  rejectedReason?: string;
+  heldBy?: string;
+  draft?: XvSavedDraft;
 }
 
 const abs = (path: string | undefined, base: string) => (path ? `${base}${path}` : undefined);
@@ -94,7 +102,14 @@ export function toXvClip(w: XvWireClip, base = SOCIA_API_URL): XvClip {
     hashtags: w.hashtags,
     mentions: w.mentions,
     status,
-    postedAt: status === "posted" ? w.receivedAt : undefined,
+    // The desk's post time; a file done on the share (posted by hand earlier) has only its own time
+    postedAt: status === "posted" ? (w.postedAt ?? w.receivedAt) : undefined,
+    postedText: status === "posted" ? w.postedText : undefined,
+    postId: status === "posted" && typeof w.postId === "number" ? w.postId : undefined,
+    postedBy: status === "posted" ? w.postedBy : undefined,
+    rejectedReason: status === "rejected" ? w.rejectedReason : undefined,
+    heldBy: w.heldBy,
+    savedDraft: w.draft && typeof w.draft.title === "string" ? w.draft : undefined,
     loadError: w.error,
     innerFolder: w.innerFolder ?? "",
     day: w.day ?? null,
