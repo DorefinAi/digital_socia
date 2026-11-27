@@ -20,6 +20,8 @@ export interface XvWireClip {
   height?: number;
   kind: "clip";
   district: string;
+  /** Rajasthan or outside it (sets the brand tag); absent until the post is composed */
+  region?: "rajasthan" | "india";
   suggestedHeadline: string | null;
   readingProgress?: number;
   transcript: { at: number; text: string }[];
@@ -78,6 +80,7 @@ export function toXvClip(w: XvWireClip, base = SOCIA_API_URL): XvClip {
     height: w.height,
     kind: w.kind,
     district: w.district,
+    region: w.region === "india" ? "india" : w.region === "rajasthan" ? "rajasthan" : undefined,
     topic: w.title || undefined,
     suggestedHeadline: w.suggestedHeadline,
     readingProgress: w.readingProgress,

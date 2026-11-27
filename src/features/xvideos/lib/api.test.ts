@@ -193,3 +193,21 @@ test("just after midnight the newest day is today, even while the folders still 
   assert.equal(latestDay(undefined, null, "28-11-2026", "2026-11-27"), "2026-11-27");
   assert.equal(latestDay(), null);
 });
+
+test("the composed post comes through: place, region, label, tags on and off", () => {
+  const c = toXvClip(
+    wire({
+      district: "Tonk",
+      region: "rajasthan",
+      channelLabel: "Tonk News",
+      hashtags: [{ value: "#Tonk", on: true }, { value: "#RajasthanNews", on: false }],
+      mentions: [{ value: "@TonkPolice", on: true }],
+    }),
+  );
+  assert.equal(c.district, "Tonk");
+  assert.equal(c.region, "rajasthan");
+  assert.equal(c.channelLabel, "Tonk News");
+  assert.deepEqual(c.hashtags, [{ value: "#Tonk", on: true }, { value: "#RajasthanNews", on: false }]);
+  assert.deepEqual(c.mentions, [{ value: "@TonkPolice", on: true }]);
+  assert.equal(toXvClip(wire({ region: "mars" as never })).region, undefined);
+});
