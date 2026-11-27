@@ -86,10 +86,16 @@ test("the new wire fields reach the clip: inner folder, day, x mark, where the h
 });
 
 test("a loose file has no inner folder; an unmarked file is not picked; an unknown headline source reads as none", () => {
-  const c = toXvClip(wire({ innerFolder: "", picked: false, headlineSource: "screen" as never }));
+  const c = toXvClip(wire({ innerFolder: "", picked: false, headlineSource: "ocr" as never }));
   assert.equal(c.innerFolder, "");
   assert.equal(c.picked, false);
   assert.equal(c.headlineSource, null);
+});
+
+test("a headline the model wrote from the screen says so", () => {
+  const c = toXvClip(wire({ headlineSource: "screen", suggestedHeadline: "पोकरण-जोधपुर हाईवे पर सेना की एंबलेंस पलटी" }));
+  assert.equal(c.headlineSource, "screen");
+  assert.equal(c.suggestedHeadline, "पोकरण-जोधपुर हाईवे पर सेना की एंबलेंस पलटी");
 });
 
 test("a clip marked done on the share shows as posted even if its status lags", () => {

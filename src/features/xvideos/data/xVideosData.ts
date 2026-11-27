@@ -110,8 +110,8 @@ export interface XvClip {
   day?: string | null;
   /** The file name carries the desk's x mark (shown, never used to hide a clip) */
   picked?: boolean;
-  /** "file_name": the suggested headline is the file's own name, a full heading */
-  headlineSource?: "file_name" | null;
+  /** "file_name": the suggested headline is the file's own name, a full heading; "screen": written from the screen text */
+  headlineSource?: "file_name" | "screen" | null;
   /** The share already deleted the file */
   gone?: boolean;
 }

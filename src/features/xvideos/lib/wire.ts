@@ -41,8 +41,11 @@ export interface XvWireClip {
   picked: boolean;
   /** Marked done on the share: posted by hand already (status is "posted" too) */
   done: boolean;
-  /** "file_name": suggestedHeadline is the file's own full heading; null: the screen read will fill it later */
-  headlineSource: "file_name" | null;
+  /**
+   * "file_name": suggestedHeadline is the file's own full heading; "screen": the model wrote it from the clip's screen
+   * text (step 4); null: nothing yet (the screen read is still to come, or found nothing)
+   */
+  headlineSource: "file_name" | "screen" | null;
   /** The share deleted the file (it keeps 3-4 days) */
   gone: boolean;
 }
@@ -93,7 +96,7 @@ export function toXvClip(w: XvWireClip, base = SOCIA_API_URL): XvClip {
     innerFolder: w.innerFolder ?? "",
     day: w.day ?? null,
     picked: !!w.picked,
-    headlineSource: w.headlineSource === "file_name" ? "file_name" : null,
+    headlineSource: w.headlineSource === "file_name" || w.headlineSource === "screen" ? w.headlineSource : null,
     gone: !!w.gone,
   };
 }

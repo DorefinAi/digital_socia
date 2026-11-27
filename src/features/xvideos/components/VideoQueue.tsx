@@ -151,7 +151,9 @@ function Headline({ clip, savedTitle }: { clip: XvClip; savedTitle?: string }) {
       <Typography lang="hi" sx={headlineSx}>
         {clip.suggestedHeadline ?? "No headline yet"}
       </Typography>
-      {clip.suggestedHeadline && clip.headlineSource === "file_name" && <Typography sx={{ mt: 0.125, fontSize: "0.6875rem", color: "text.secondary" }}>From the file name</Typography>}
+      {clip.suggestedHeadline && clip.headlineSource && (
+        <Typography sx={{ mt: 0.125, fontSize: "0.6875rem", color: "text.secondary" }}>{clip.headlineSource === "file_name" ? "From the file name" : "Read from the screen: check it"}</Typography>
+      )}
     </>
   );
 }
